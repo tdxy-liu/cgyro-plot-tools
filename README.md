@@ -72,7 +72,7 @@ python cgyro_comparison.py
 
     *   **Flux**: 能量或粒子通量。
 
-    *   **Phi**: 电势涨落。
+    *   **Fluctuation 1D**: 场的一维涨落。
 
     *   **Fluctuation 2D**: 二维涨落云图。
 
@@ -87,7 +87,7 @@ python cgyro_comparison.py
 
     *   **Flux**: 选择 "Energy" 或 "Particle" 通量，以及 "v.s ky" 或 "v.s Time"。选择特定粒子种类或 "Main Ion (D+T)"。
 
-    *   **Phi**: 选择 "v.s ky"、"v.s Time" 或 "fft"。若选择 "fft"，可进一步配置 FFT 模式（线性/非线性）和视图（Omega vs ky/kx）。
+    *   **Fluctuation 1D**: 选择 "v.s ky"、"v.s Time" 或 "fft"。若选择 "fft"，可进一步配置 FFT 模式（线性/非线性）和视图（Omega vs ky/kx）。
 
     *   **Fluctuation 2D**: 选择物理量（Phi, Density, Energy 等）。对于特定物理量，需要选择对应的粒子种类。
 
