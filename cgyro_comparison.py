@@ -83,7 +83,7 @@ class CGYRO_Comparison:
         ttk.Label(left_panel, text="Plot Type:").pack(anchor=tk.W)
         
         self.plot_type_var = tk.StringVar(value="Frequency")
-        plot_types = ["Frequency", "Growth Rate", "Flux", "Phi", "Fluctuation 2D"]
+        plot_types = ["Frequency", "Growth Rate", "Flux", "Fluctuation 1D", "Fluctuation 2D"]
         self.plot_type_combo = ttk.Combobox(left_panel, textvariable=self.plot_type_var, values=plot_types, state="readonly")
         self.plot_type_combo.pack(fill=tk.X, pady=5)
         self.plot_type_combo.bind("<<ComboboxSelected>>", self.update_options)
@@ -160,9 +160,12 @@ class CGYRO_Comparison:
         self.flux_xaxis_var = tk.StringVar(value="v.s ky")
         self.flux_xaxis_combo = ttk.Combobox(self.options_frame, textvariable=self.flux_xaxis_var, values=["v.s ky", "v.s Time"], state="readonly", width=15)
         
-        # 3. Phi Options
-        self.phi_xaxis_var = tk.StringVar(value="v.s ky")
-        self.phi_xaxis_combo = ttk.Combobox(self.options_frame, textvariable=self.phi_xaxis_var, values=["v.s ky", "v.s Time", "fft"], state="readonly", width=15)
+        # 3. Fluctuation 1D Options
+        self.fluc_field_var = tk.StringVar(value="Phi")
+        self.fluc_field_combo = ttk.Combobox(self.options_frame, textvariable=self.fluc_field_var, values=["Phi", "Apar", "Bpar"], state="readonly", width=10)
+        
+        self.fluc_xaxis_var = tk.StringVar(value="v.s ky")
+        self.fluc_xaxis_combo = ttk.Combobox(self.options_frame, textvariable=self.fluc_xaxis_var, values=["v.s ky", "v.s Time", "fft"], state="readonly", width=15)
 
         # 4. Species Selection (Flux, Fluctuation 2D)
         self.species_label = ttk.Label(self.options_frame, text="Species:")
@@ -178,8 +181,8 @@ class CGYRO_Comparison:
         self.moment_combo = ttk.Combobox(self.options_frame, textvariable=self.moment_var,
                                          values=["Phi", "Density", "Energy", "Temperature", "Apar", "Bpar"], state="readonly")
 
-        # 6. Phi FFT Options (reused from before, but managed dynamically)
-        self.fft_options_frame = ttk.LabelFrame(self.options_frame, text="Phi FFT Settings", padding=5)
+        # 6. FFT Options (reused from before, but managed dynamically)
+        self.fft_options_frame = ttk.LabelFrame(self.options_frame, text="FFT Settings", padding=5)
         # Analysis Mode
         ttk.Label(self.fft_options_frame, text="Mode:").grid(row=0, column=0, sticky=tk.W)
         self.fft_mode_var = tk.StringVar(value="Nonlinear")
@@ -205,7 +208,7 @@ class CGYRO_Comparison:
         widgets = [
             self.norm_ky_check,
             self.flux_type_combo, self.flux_xaxis_combo,
-            self.phi_xaxis_combo,
+            self.fluc_field_combo, self.fluc_xaxis_combo,
             self.species_label, self.species_combo, self.plot_all_species_check,
             self.moment_label, self.moment_combo,
             self.fft_options_frame
@@ -230,16 +233,17 @@ class CGYRO_Comparison:
             row += 1
             self.plot_all_species_check.grid(row=row, column=0, columnspan=2, sticky=tk.W)
 
-        elif plot_type == "Phi":
-            self.phi_xaxis_combo.grid(row=row, column=0, columnspan=2, sticky=tk.W)
+        elif plot_type == "Fluctuation 1D":
+            self.fluc_field_combo.grid(row=row, column=0, sticky=tk.W)
+            self.fluc_xaxis_combo.grid(row=row, column=1, sticky=tk.W)
             row += 1
             
             # Check if FFT is selected in the sub-option
-            if self.phi_xaxis_var.get() == "fft":
+            if self.fluc_xaxis_var.get() == "fft":
                  self.fft_options_frame.grid(row=row, column=0, columnspan=2, sticky=tk.W+tk.E, pady=5)
             
-            # Bind change event for phi_xaxis_combo to update FFT frame visibility immediately
-            self.phi_xaxis_combo.bind("<<ComboboxSelected>>", lambda e: self.update_options())
+            # Bind change event for fluc_xaxis_combo to update FFT frame visibility immediately
+            self.fluc_xaxis_combo.bind("<<ComboboxSelected>>", lambda e: self.update_options())
 
         elif plot_type == "Fluctuation 2D":
             self.moment_label.grid(row=row, column=0, sticky=tk.W)
@@ -580,13 +584,15 @@ class CGYRO_Comparison:
             xaxis_str = flux_xaxis.replace("v.s", "vs")
             plot_type = f"{flux_type} Flux {xaxis_str}"
             
-        elif plot_type_selection == "Phi":
-            phi_xaxis = self.phi_xaxis_var.get()
-            if phi_xaxis == "fft":
-                plot_type = "Phi FFT"
+        elif plot_type_selection == "Fluctuation 1D":
+            field = self.fluc_field_var.get()
+            xaxis = self.fluc_xaxis_var.get()
+            
+            if xaxis == "fft":
+                plot_type = f"{field} FFT"
             else:
-                xaxis_str = phi_xaxis.replace("v.s", "vs")
-                plot_type = f"Phi {xaxis_str}"
+                xaxis_str = xaxis.replace("v.s", "vs")
+                plot_type = f"{field} {xaxis_str}"
 
         selected_indices = self.case_listbox.curselection()
         
@@ -596,8 +602,8 @@ class CGYRO_Comparison:
         else:
             selected_cases = [self.case_listbox.get(i) for i in selected_indices]
 
-        # Special handling for contour plots (Phi FFT, Fluctuation 2D)
-        if plot_type in ["Phi FFT", "Fluctuation 2D"]:
+        # Special handling for contour plots (FFT, Fluctuation 2D)
+        if "FFT" in plot_type or plot_type == "Fluctuation 2D":
             if len(selected_cases) > 1:
                 messagebox.showwarning("Warning", f"{plot_type} only supports one case at a time. Plotting the first selected case.")
                 selected_cases = list(selected_cases)[:1]
@@ -641,7 +647,7 @@ class CGYRO_Comparison:
                     print(f"Error plotting {case_name}: {e}")
                     traceback.print_exc()
 
-        if plot_type != "Phi FFT":
+        if "FFT" not in plot_type:
             handles, labels = self.ax.get_legend_handles_labels()
             if handles:
                 self.ax.legend()
@@ -1002,50 +1008,57 @@ class CGYRO_Comparison:
             self.ax.set_xlim([0, xmax])
             self.ax.set_ylim([0, ymax])
 
-    def _plot_phi_fft(self, data, label, t_indices):
-        # Implementation of phi_f_fft logic
-        # Need to compute FFT of phi over time
-        
-        # Check if we have big field data
-        if not hasattr(data, 'kxky_phi'):
-            try:
-                print(f"Loading big field data for {label}...")
-                data.getbigfield()
-            except Exception as e:
-                print(f"Could not load big field data for {label}: {e}")
-                return
+    def _plot_fluctuation_fft(self, data, label, plot_type, t_indices):
+        # Determine field name
+        field_name = plot_type.split()[0] # "Phi", "Apar", "Bpar"
 
-        if not hasattr(data, 'kxky_phi'):
-            print(f"No kxky_phi data available for {label}")
+        # Check/Load data
+        c_field = None
+        if field_name == "Phi":
+            if hasattr(data, 'kxky_phi'): c_field = data.kxky_phi
+        elif field_name == "Apar":
+            if hasattr(data, 'kxky_apar'): c_field = data.kxky_apar
+        elif field_name == "Bpar":
+            if hasattr(data, 'kxky_bpar'): c_field = data.kxky_bpar
+            
+        if c_field is None:
+             try:
+                 print(f"Loading big field data for {label}...")
+                 data.getbigfield()
+                 if field_name == "Phi" and hasattr(data, 'kxky_phi'): c_field = data.kxky_phi
+                 elif field_name == "Apar" and hasattr(data, 'kxky_apar'): c_field = data.kxky_apar
+                 elif field_name == "Bpar" and hasattr(data, 'kxky_bpar'): c_field = data.kxky_bpar
+             except Exception as e:
+                 print(f"Could not load big field data for {label}: {e}")
+                 return
+
+        if c_field is None:
+            print(f"No {field_name} data available for {label}")
             return
 
-        # kxky_phi: [2, n_radial, theta_plot, n_n, nt]
-        # We need phi(ky, t) -> FFT -> phi(ky, omega)
+        # kxky_field: [2, n_radial, theta_plot, n_n, nt] or similar
+        ndim = c_field.ndim
         
-        ndim = data.kxky_phi.ndim
-        shape = data.kxky_phi.shape
-        # print(f"DEBUG: kxky_phi shape: {shape}")
-
-        phi_t_all = None
-
+        # Helper to extract complex field at midplane
+        i_theta = data.theta_plot * 4 // 8
+        if i_theta >= data.theta_plot: i_theta = 0
+        
+        field_t_all = None
+        
         if ndim == 5:
             # Standard: [2, n_radial, theta_plot, n_n, nt]
-            i_theta = data.theta_plot * 4 // 8 # Outboard midplane approx
-            phi_t_all = data.kxky_phi[0, :, i_theta, :, :] + 1j * data.kxky_phi[1, :, i_theta, :, :]
-        
+            field_t_all = c_field[0, :, i_theta, :, :] + 1j * c_field[1, :, i_theta, :, :]
         elif ndim == 4:
-            # Standard: [n_radial, theta_plot, n_n, nt]
-            i_theta = data.theta_plot * 4 // 8 # Outboard midplane approx
-            phi_t_all = data.kxky_phi[:, i_theta, :, :]
-
+             # [n_radial, theta_plot, n_n, nt]
+             field_t_all = c_field[:, i_theta, :, :]
         else:
-            print(f"Error: Unsupported kxky_phi dimensions: {ndim} {shape}")
-            return
-        # phi_t_all shape: [n_radial, n_n, nt]
+             print(f"Error: Unsupported {field_name} dimensions: {ndim}")
+             return
+        # field_t_all shape: [n_radial, n_n, nt]
         
         # Slice time if needed
         if len(t_indices) > 0:
-            phi_t_all = phi_t_all[..., t_indices]
+            field_t_all = field_t_all[..., t_indices]
             t_array = data.t[t_indices]
         else:
             t_array = data.t
@@ -1080,11 +1093,11 @@ class CGYRO_Comparison:
 
         # Standard FFT freq first
         omega = np.fft.fftfreq(nt_slice, d=dt) * 2 * np.pi
-        phi_omega_all = np.fft.fft(phi_t_all, axis=-1)
+        field_omega_all = np.fft.fft(field_t_all, axis=-1)
         
         # Shift zero frequency to center
         omega_shifted = np.fft.fftshift(omega)
-        phi_omega_all_shifted = np.fft.fftshift(phi_omega_all, axes=-1)
+        field_omega_all_shifted = np.fft.fftshift(field_omega_all, axes=-1)
 
         # Apply sign correction
         omega_shifted *= freq_mult
@@ -1093,15 +1106,15 @@ class CGYRO_Comparison:
         # Since freq_mult is -1.0, the axis is now descending. Flip it.
         if freq_mult < 0:
             omega_shifted = np.flip(omega_shifted)
-            phi_omega_all_shifted = np.flip(phi_omega_all_shifted, axis=-1)
+            field_omega_all_shifted = np.flip(field_omega_all_shifted, axis=-1)
         
         # 1. kx=0 component
         i_r_0 = data.n_radial // 2
-        phi_kx0 = phi_omega_all_shifted[i_r_0, :, :]
-        mag_kx0 = np.abs(phi_kx0)
+        field_kx0 = field_omega_all_shifted[i_r_0, :, :]
+        mag_kx0 = np.abs(field_kx0)
 
         # 3. ky=0 component (omega vs kx)
-        # phi_omega_all_shifted: [n_radial, n_ky, n_omega]
+        # field_omega_all_shifted: [n_radial, n_ky, n_omega]
         # We need [n_radial, n_omega] for ky=0
         # ky=0 is usually at index 0, but let's verify
         ky_idx_0 = 0
@@ -1114,8 +1127,8 @@ class CGYRO_Comparison:
                     print("Warning: ky=0 not found. Using first ky index.")
                     ky_idx_0 = 0
         
-        phi_ky0 = phi_omega_all_shifted[:, ky_idx_0, :] # [n_radial, n_omega]
-        mag_ky0 = np.abs(phi_ky0)
+        field_ky0 = field_omega_all_shifted[:, ky_idx_0, :] # [n_radial, n_omega]
+        mag_ky0 = np.abs(field_ky0)
         
         # 2. Calculate quantities based on View Mode
         view_mode = self.fft_view_var.get()
@@ -1138,19 +1151,10 @@ class CGYRO_Comparison:
         
         # Standard FFT frequency ordering: 0, 1, ..., n/2-1, -n/2, ..., -1
         kx_full = np.fft.fftfreq(n_radial, d=1.0) * dkx * n_radial # fftfreq returns f/fs, we want k = 2*pi*m/L
-        # Wait, fftfreq(n, d) returns f = [0, 1, ...,   n/2-1,     -n/2, ..., -1] / (d*n)
-        # We want kx = 2*pi * f
-        # So kx = 2*pi * fftfreq(n_radial, d=1.0) ? No, physical length L matters.
-        # kx = 2*pi * m / L.
-        # dkx = 2*pi/L.
-        # fftfreq(n, d=L/n) returns [0, 1/L, ...]. Multiply by 2*pi -> [0, 2pi/L, ...]
         
         # Let's use dkx directly.
         # kx_indices = np.fft.fftfreq(n_radial, d=1.0) * n_radial # [0, 1, ..., -n/2, ...]
         # kx_full = kx_indices * dkx
-        
-        # But data.kx might already be [0, dkx, 2dkx...].
-        # If we assume standard FFT layout for the data being plotted (phi_shifted_radial is shifted later):
         
         # Actually, simpler approach:
         # We want the axis for the shifted plot.
@@ -1169,7 +1173,7 @@ class CGYRO_Comparison:
             
             if analysis_mode == "Linear":
                 # Coherent sum
-                complex_sum = np.sum(phi_omega_all_shifted, axis=0) # Sum over radial (kx)
+                complex_sum = np.sum(field_omega_all_shifted, axis=0) # Sum over radial (kx)
                 mag_plot2 = np.abs(complex_sum)
                 title2_suffix = "(Sum all kx/x=0)"
                 
@@ -1188,7 +1192,7 @@ class CGYRO_Comparison:
                         
             else: # Nonlinear
                 # Incoherent sum
-                mag_plot2 = np.sum(np.abs(phi_omega_all_shifted), axis=0)
+                mag_plot2 = np.sum(np.abs(field_omega_all_shifted), axis=0)
                 title2_suffix = "(Sum all kx/Energy)"
                 
                 # Global normalization
@@ -1209,12 +1213,12 @@ class CGYRO_Comparison:
             
             cs1 = ax1.contourf(ky_grid, omega_grid, mag_plot1, levels=50, cmap='jet')
             self.fig.colorbar(cs1, ax=ax1)
-            ax1.set_title(f'Phi FFT (kx=0): {label}')
+            ax1.set_title(f'{field_name} FFT (kx=0): {label}')
             ax1.set_ylabel(r'$\omega (c_s/a)$')
             
             cs2 = ax2.contourf(ky_grid, omega_grid, mag_plot2, levels=50, cmap='jet')
             self.fig.colorbar(cs2, ax=ax2)
-            ax2.set_title(f'Phi FFT {title2_suffix}: {label}')
+            ax2.set_title(f'{field_name} FFT {title2_suffix}: {label}')
             ax2.set_ylabel(r'$\omega (c_s/a)$')
             ax2.set_xlabel(r'$k_y \rho_s$')
             
@@ -1243,24 +1247,24 @@ class CGYRO_Comparison:
             # 1. ky=0 component
             # 2. Sum over all ky
             
-            # phi_omega_all_shifted: [n_radial, n_ky, n_omega]
+            # field_omega_all_shifted: [n_radial, n_ky, n_omega]
             # We need [n_radial, n_omega]
             
-            # phi_omega_all_shifted is [n_radial, n_ky, n_omega]
+            # field_omega_all_shifted is [n_radial, n_ky, n_omega]
             # The radial dimension is in "standard FFT order" (0, 1, ... -N/2 ...)
             # We need to shift it to match kx_shifted (which is centered at 0)
             
             # Shift radial dimension (axis 0) to center kx=0
-            phi_shifted_radial = np.fft.fftshift(phi_omega_all_shifted, axes=0)
+            field_shifted_radial = np.fft.fftshift(field_omega_all_shifted, axes=0)
             
             # ky=0 component
-            phi_ky0 = phi_shifted_radial[:, ky_idx_0, :]
-            mag_plot1 = np.abs(phi_ky0)
+            field_ky0 = field_shifted_radial[:, ky_idx_0, :]
+            mag_plot1 = np.abs(field_ky0)
             
             # Sum over all ky
             if analysis_mode == "Linear":
                 # Coherent sum
-                complex_sum = np.sum(phi_shifted_radial, axis=1) # Sum over ky
+                complex_sum = np.sum(field_shifted_radial, axis=1) # Sum over ky
                 mag_plot2 = np.abs(complex_sum)
                 title2_suffix = "(Sum all ky/y=0)"
                 
@@ -1279,7 +1283,7 @@ class CGYRO_Comparison:
                         
             else: # Nonlinear
                 # Incoherent sum
-                mag_plot2 = np.sum(np.abs(phi_shifted_radial), axis=1)
+                mag_plot2 = np.sum(np.abs(field_shifted_radial), axis=1)
                 title2_suffix = "(Sum all ky/Energy)"
                 
                 # Global normalization
@@ -1323,13 +1327,13 @@ class CGYRO_Comparison:
             
             cs1 = ax1.contourf(kx_grid, omega_grid_kx, mag_plot1, levels=50, cmap='jet')
             self.fig.colorbar(cs1, ax=ax1)
-            ax1.set_title(f'Phi FFT (ky=0): {label}')
+            ax1.set_title(f'{field_name} FFT (ky=0): {label}')
             ax1.set_ylabel(r'$\omega (c_s/a)$')
             ax1.invert_xaxis()
             
             cs2 = ax2.contourf(kx_grid, omega_grid_kx, mag_plot2, levels=50, cmap='jet')
             self.fig.colorbar(cs2, ax=ax2)
-            ax2.set_title(f'Phi FFT {title2_suffix}: {label}')
+            ax2.set_title(f'{field_name} FFT {title2_suffix}: {label}')
             ax2.set_ylabel(r'$\omega (c_s/a)$')
             ax2.set_xlabel(r'$k_x \rho_s$')
             ax2.invert_xaxis()
@@ -1465,78 +1469,160 @@ class CGYRO_Comparison:
 
         self._plot_1d(x, y, label, plot_type)
 
-    def _plot_phi_1d(self, data, label, plot_type, t_indices, t_start, t_end):
-        if not hasattr(data, 'kxky_phi'):
-            try:
-                print(f"Loading big field data for {label}...")
-                data.getbigfield()
-            except Exception as e:
-                print(f"Could not load big field data for {label}: {e}")
-                return
+    def _plot_fluctuation_1d(self, data, label, plot_type, t_indices, t_start, t_end):
+        # Determine field name from plot_type e.g. "Phi vs ky", "Apar vs Time"
+        field_name = plot_type.split()[0]
+        
+        c_field = None
+        if field_name == "Phi":
+            if hasattr(data, 'kxky_phi'): c_field = data.kxky_phi
+        elif field_name == "Apar":
+            if hasattr(data, 'kxky_apar'): c_field = data.kxky_apar
+        elif field_name == "Bpar":
+            if hasattr(data, 'kxky_bpar'): c_field = data.kxky_bpar
+            
+        if c_field is None:
+             try:
+                 print(f"Loading big field data for {label}...")
+                 data.getbigfield()
+                 if field_name == "Phi" and hasattr(data, 'kxky_phi'): c_field = data.kxky_phi
+                 elif field_name == "Apar" and hasattr(data, 'kxky_apar'): c_field = data.kxky_apar
+                 elif field_name == "Bpar" and hasattr(data, 'kxky_bpar'): c_field = data.kxky_bpar
+             except Exception as e:
+                 print(f"Could not load big field data for {label}: {e}")
+                 return
 
-        if not hasattr(data, 'kxky_phi'):
+        if c_field is None:
             return
 
-        # Extract midplane phi
-        ndim = data.kxky_phi.ndim
+        # Use helper to select field similar to data_plot.py kxky_select
+        # We focus on theta_plot midplane (or whatever logic is standard)
+        # Default midplane index
         i_theta = data.theta_plot * 4 // 8
+        if i_theta >= data.theta_plot: i_theta = 0
         
-        phi = None
-        if ndim == 5: # [2, nr, theta, ny, nt]
-             phi = data.kxky_phi[0, :, i_theta, :, :] + 1j * data.kxky_phi[1, :, i_theta, :, :]
-        elif ndim == 4: # [nr, theta, ny, nt]
-             phi = data.kxky_phi[:, i_theta, :, :]
-        else:
-             print(f"Unknown kxky_phi shape: {data.kxky_phi.shape}")
-             return
-             
-        # phi shape: [nr, ny, nt]
-        # Calculate amplitude squared |phi|^2
-        phi_sq = np.abs(phi)**2
+        # Helper to extract complex field
+        # Note: data.py kxky_select slices [1:] for radial dimension to remove p=0/kx=0 "special" element
+        def get_field_complex(d):
+            ndim = d.ndim
+            if ndim == 5: # [2, nr, theta, ny, nt]
+                 return d[0, 1:, i_theta, :, :] + 1j * d[1, 1:, i_theta, :, :]
+            elif ndim == 4: # [nr, theta, ny, nt] - unlikely for phi but possible
+                 return d[1:, i_theta, :, :]
+            elif ndim == 6: # [2, nr, theta, species, ny, nt]
+                 # Not expected for phi, but maybe for moments
+                 return d[0, 1:, i_theta, 0, :, :] + 1j * d[1, 1:, i_theta, 0, :, :]
+            else:
+                 print(f"Unknown field shape: {d.shape}")
+                 return None
         
-        if plot_type == "Phi vs ky":
-            # Sum over kx (axis 0) -> [ny, nt]
-            phi_ky_t = np.sum(phi_sq, axis=0)
+        field_data = get_field_complex(c_field)
+        if field_data is None: return
+
+        # Apply GyroBohm normalization if needed (data_plot.py does f/rhonorm)
+        # cgyrodata usually stores raw. data_plot.py:getnorm('elec') sets rhonorm = rho.
+        
+        rho_norm = 1.0
+        if hasattr(data, 'rho'):
+            rho_norm = data.rho
             
-            # Time average
+        # Normalize
+        field_data = field_data / rho_norm
+        
+        # shape: [nr-1, ny, nt]
+        # Calculate amplitude squared |field|^2
+        field_sq = np.abs(field_data)**2
+        
+        if "vs ky" in plot_type:
+            # Plot time-averaged RMS amplitude vs ky
+            # Sum over kx (axis 0) -> [ny, nt]
+            field_ky_t = np.sum(field_sq, axis=0)
+            
+            # Time average over selected window
             if len(t_indices) > 0:
-                y = np.mean(phi_ky_t[:, t_indices], axis=1)
+                # Average over time indices
+                y_vals = np.mean(field_ky_t[:, t_indices], axis=1)
                 label = f"{label} (Avg: {t_start:.1f}-{t_end:.1f})"
             else:
-                y = phi_ky_t[:, -1]
+                # Fallback to last time point
+                y_vals = field_ky_t[:, -1]
                 
-            # Plot RMS amplitude: sqrt(Sum |phi|^2)
-            y = np.sqrt(y)
+            # Plot sqrt(Sum |field|^2) -> RMS amplitude
+            y = np.sqrt(y_vals)
             
             x = data.ky
+            
             self._plot_1d(x, y, label, plot_type)
+            self.ax.set_xlabel(r'$k_y \rho_s$')
+            self.ax.set_ylabel(fr'$\sqrt{{\sum | {field_name} |^2}}$')
+            self.ax.set_yscale('log')
+            self.ax.set_xscale('log') # Usually log-log for spectra
+
             
-        elif plot_type == "Phi vs Time":
-            # Sum over kx (axis 0) and ky (axis 1) -> [nt]
-            phi_t = np.sum(phi_sq, axis=(0, 1))
+        elif "vs Time" in plot_type:
+            # Plot total RMS amplitude vs Time
+            # Matches data_plot.py plot_phi logic
             
-            # Sqrt for RMS amplitude
-            y = np.sqrt(phi_t)
+            # Separate n=0 and n>0
+            # field_sq: [nr-1, ny, nt]
+            # ny dimension corresponds to ky.
+            # ky=0 is usually index 0.
+            
+            ky_idx_0 = 0
+            if abs(data.ky[0]) > 1e-6:
+                 # Search for 0
+                 idx = np.where(np.abs(data.ky) < 1e-6)[0]
+                 if len(idx) > 0: ky_idx_0 = idx[0]
+            
+            # n=0 intensity: sum over kx (axis 0) at ky=0
+            field_sq_n0 = np.sum(field_sq[:, ky_idx_0, :], axis=0) # [nt]
+            
+            # n>0 intensity: sum over kx (axis 0) and sum over ky!=0
+            # Create mask for ky!=0
+            mask_n = np.ones(data.n_n, dtype=bool)
+            mask_n[ky_idx_0] = False
+            
+            field_sq_nn = np.sum(field_sq[:, mask_n, :], axis=(0, 1)) # [nt]
+            
+            # RMS
+            y0 = np.sqrt(field_sq_n0)
+            yn = np.sqrt(field_sq_nn)
+            
             x = data.t
             
-            # Calculate statistics for selected time window
+            # Plot
             if len(t_indices) > 0:
-                y_subset = y[t_indices]
-                mean_val = np.mean(y_subset)
-                std_val = np.std(y_subset)
+                # n=0 stats
+                y0_subset = y0[t_indices]
+                mean_y0 = np.mean(y0_subset)
+                std_y0 = np.std(y0_subset)
+                label_n0 = f"{label} (n=0) (Mean: {mean_y0:.2e}, Std: {std_y0:.2e})"
                 
-                label = f"{label} (Mean: {mean_val:.2e}, Std: {std_val:.2e})"
+                # n>0 stats
+                yn_subset = yn[t_indices]
+                mean_yn = np.mean(yn_subset)
+                std_yn = np.std(yn_subset)
+                label_nn = f"{label} (n>0) (Mean: {mean_yn:.2e}, Std: {std_yn:.2e})"
                 
-                # Plot main line
-                line, = self.ax.plot(x, y, label=label)
-                
-                # Plot dashed line for mean
                 t_mean_start = x[t_indices[0]]
                 t_mean_end = x[t_indices[-1]]
-                self.ax.plot([t_mean_start, t_mean_end], [mean_val, mean_val],
-                                linestyle='--', color=line.get_color(), linewidth=1.5)
+                
+                # Plot n=0
+                line0, = self.ax.plot(x, y0, label=label_n0, linestyle='--')
+                self.ax.plot([t_mean_start, t_mean_end], [mean_y0, mean_y0],
+                             linestyle=':', color=line0.get_color(), linewidth=1.5)
+                
+                # Plot n>0
+                linen, = self.ax.plot(x, yn, label=label_nn)
+                self.ax.plot([t_mean_start, t_mean_end], [mean_yn, mean_yn],
+                             linestyle='--', color=linen.get_color(), linewidth=1.5)
             else:
-                self.ax.plot(x, y, label=label)
+                self.ax.plot(x, y0, label=f"{label} (n=0)", linestyle='--')
+                self.ax.plot(x, yn, label=f"{label} (n>0)")
+            
+            self.ax.set_xlabel(r'$t (a/c_s)$')
+            self.ax.set_ylabel(fr'$\sqrt{{\sum | {field_name} |^2}}$')
+            self.ax.set_yscale('log')
 
     def _plot_single_case(self, data, label, plot_type, species_override_index=None):
         # Get time indices if relevant
@@ -1550,12 +1636,17 @@ class CGYRO_Comparison:
                 self._plot_frequency_growth(data, label, plot_type, t_indices, t_start, t_end)
             elif "Flux" in plot_type:
                 self._plot_flux(data, label, plot_type, t_indices, t_start, t_end, species_override_index)
-            elif plot_type in ["Phi vs ky", "Phi vs Time"]:
-                self._plot_phi_1d(data, label, plot_type, t_indices, t_start, t_end)
+            elif "vs ky" in plot_type or "vs Time" in plot_type:
+                 # Check if it is Fluctuation 1D (Phi, Apar, Bpar)
+                 if any(x in plot_type for x in ["Phi", "Apar", "Bpar"]) and "Flux" not in plot_type:
+                     self._plot_fluctuation_1d(data, label, plot_type, t_indices, t_start, t_end)
+                 else:
+                     # Fallback for flux handled above or other types
+                     pass
             elif plot_type == "Fluctuation 2D":
                 self._plot_fluctuation_2d(data, label, plot_type, t_indices, t_start, t_end)
-            elif plot_type == "Phi FFT":
-                self._plot_phi_fft(data, label, t_indices)
+            elif "FFT" in plot_type:
+                self._plot_fluctuation_fft(data, label, plot_type, t_indices)
             else:
                 # Fallback for unknown types or standard plotting if logic was simple
                 pass
