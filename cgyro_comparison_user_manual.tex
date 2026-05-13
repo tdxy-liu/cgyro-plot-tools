@@ -1,0 +1,296 @@
+\documentclass[11pt,a4paper]{ctexart}
+\usepackage[a4paper,margin=2.2cm]{geometry}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  urlcolor=blue!60!black,
+  pdftitle={CGYRO Comparison 用户手册},
+  pdfauthor={CGYRO Team}
+}
+
+\setlist[itemize]{leftmargin=1.8em}
+\setlist[enumerate]{leftmargin=2.0em}
+\setlist[description]{leftmargin=2.2em}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  columns=fullflexible
+}
+
+\title{CGYRO Comparison 用户手册（操作版）}
+\author{适用文件：\texttt{CGYRO/cgyro\_comparison.py}}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+\section{手册定位}
+本手册面向日常使用者，重点讲“如何操作”：
+\begin{itemize}
+  \item 如何启动工具；
+  \item 如何加载案例；
+  \item 如何设置选项并出图；
+  \item 常见任务的推荐操作流程；
+  \item 常见问题排查。
+\end{itemize}
+本手册\textbf{不}重点展开代码实现细节。
+
+\section{启动与准备}
+\subsection{依赖准备}
+建议确认以下组件可用：
+\begin{itemize}
+  \item Python 3
+  \item \texttt{numpy}
+  \item \texttt{matplotlib}
+  \item \texttt{tkinter}
+  \item \texttt{pygacode}
+\end{itemize}
+
+\subsection{启动命令}
+进入 \texttt{CGYRO} 目录后运行：
+\begin{lstlisting}
+python cgyro_comparison.py
+\end{lstlisting}
+
+\section{界面快速认识}
+\subsection{左侧区域}
+\begin{description}
+  \item[Loaded Cases] 已加载案例列表（支持多选，支持拖拽排序）。
+  \item[Add Case (Single)] 直接选择一个案例目录并加载。
+  \item[Add Case (Multiple)] 先选父目录，再批量多选子目录加载案例（推荐批量对比时使用）。
+  \item[Add Group] 自动加载父目录下所有有效案例子目录。
+  \item[Remove / Remove All / Reload] 删除、全删、重载案例。
+  \item[Plot Type] 选择图类型。
+  \item[Options] 动态参数区（随 Plot Type 变化）。
+  \item[Plot / Clear Plot] 绘图与清图。
+  \item[Prev/Pause/Next] 动画图型时使用。
+\end{description}
+
+\subsection{右侧区域}
+\begin{itemize}
+  \item 主绘图区（Matplotlib）
+  \item 导航工具栏（缩放、平移、保存）
+\end{itemize}
+
+\section{标准操作流程（建议）}
+\begin{enumerate}
+  \item 点击 \texttt{Add Case (Single)}、\texttt{Add Case (Multiple)} 或 \texttt{Add Group} 加载案例；
+  \item 在 \texttt{Loaded Cases} 中选择一个或多个案例；
+  \item 选择 \texttt{Plot Type}；
+  \item 在 \texttt{Options} 配置对应参数（物种、时间窗、模式等）；
+  \item 点击 \texttt{Plot}；
+  \item 需要重新绘制时，修改参数后再次点击 \texttt{Plot}；
+  \item 需要清屏时点击 \texttt{Clear Plot}。
+\end{enumerate}
+
+\section{案例加载操作}
+\subsection{Add Case（Single）}
+\begin{enumerate}
+  \item 点击 \texttt{Add Case (Single)}；
+  \item 在目录选择器中直接选中一个案例目录；
+  \item 确认后立即加载该案例。
+\end{enumerate}
+
+\subsection{Add Case（Multiple，重点）}
+\begin{enumerate}
+  \item 点击 \texttt{Add Case (Multiple)}；
+  \item 先选择“父目录”（包含多个 case 子目录的目录）；
+  \item 在弹窗列表中使用 Ctrl/Shift 多选需要加载的子目录；
+  \item 点击 OK 批量加载。
+\end{enumerate}
+
+\noindent\textbf{推荐场景（重点）：}
+\begin{itemize}
+  \item 你需要同时比较多个扫描点/多个参数组；
+  \item 你希望一次性导入一批 case，而不是逐个点选；
+  \item 你希望保留多案例顺序并快速做对比图。
+\end{itemize}
+\noindent\textbf{高效使用建议：}
+\begin{itemize}
+  \item 父目录建议只放同一批次 case，避免弹窗中目录过杂；
+  \item 批量加载后先拖拽排序，再开始画图，图例顺序会更清晰；
+  \item 若一次选太多 case 导致图面拥挤，优先用 \texttt{Remove} 做分批对比。
+\end{itemize}
+
+\subsection{Add Group（自动批量）}
+\begin{enumerate}
+  \item 点击 \texttt{Add Group}；
+  \item 选择一个父目录；
+  \item 工具会自动扫描并加载其中有效案例目录。
+\end{enumerate}
+
+\subsection{案例顺序与命名}
+\begin{itemize}
+  \item 可拖拽列表改变绘图顺序；
+  \item 同名案例会自动加后缀（如 \texttt{\_1}, \texttt{\_2}）。
+\end{itemize}
+
+\section{Plot Type 操作说明}
+\subsection{Frequency / Growth Rate}
+\begin{itemize}
+  \item 用于看 $\omega$ 或 $\gamma$ 随 $k_y$ 分布；
+  \item 可勾选 \texttt{Divided by ky} 做归一化；
+  \item 适合多案例直接比较。
+\end{itemize}
+
+\subsection{Flux}
+\begin{itemize}
+  \item \texttt{Flux Type}: Energy / Particle；
+  \item \texttt{X-axis}: \texttt{vs ky} / \texttt{vs kx (estimated)} / \texttt{vs Time}；
+  \item \texttt{Species}: 选择具体物种或 Main Ion/All Ions；
+  \item \texttt{Decompose by Field}: 看分通道曲线；
+  \item \texttt{Plot All Species (First Case Only)}: 第一个案例多物种叠加。
+\end{itemize}
+
+\subsection{Fluctuation 1D}
+\begin{itemize}
+  \item 字段：\texttt{Phi / Apar / Bpar}；
+  \item X 轴：\texttt{vs ky / vs kx / vs Time / fft}；
+  \item 选 \texttt{fft} 后会出现 FFT 参数区。
+\end{itemize}
+
+\subsection{Fluctuation 2D}
+\begin{itemize}
+  \item \texttt{View}:
+  \begin{itemize}
+    \item \texttt{vs xy}: 动画；
+    \item \texttt{vs xt}: 时空轮廓。
+  \end{itemize}
+  \item \texttt{Moment}: \texttt{Phi, Density, Energy, Temperature, Apar, Bpar}；
+  \item 当选 \texttt{Density/Energy/Temperature} 时需要选 Species。
+  \item 勾选 \texttt{Spatial axes normalize to electron scale (x,y)/\rho_e}：
+  \texttt{vs xy} 会同时把 x/y 转为电子尺度；\texttt{vs xt} 会把纵轴 x 转为电子尺度。
+\end{itemize}
+
+\subsection{Zonal ExB Shearing Rate}
+\begin{itemize}
+  \item \texttt{vs Time}: 随时间的剪切率；
+  \item \texttt{vs kx}: 剪切率谱；
+  \item \texttt{vs Gamma\_Linear}: 与线性 $\gamma$ 对照，需要设置 \texttt{Linear File}。
+\end{itemize}
+
+\subsection{Others}
+\begin{itemize}
+  \item \texttt{Error}: 积分误差；
+  \item \texttt{rcorr\_phi}: 径向相关；
+  \item \texttt{POD\_parity}: POD 奇偶性分析（对数据要求较高）。
+\end{itemize}
+
+\section{时间窗口与坐标缩放}
+\subsection{Time Start / Time End}
+\begin{itemize}
+  \item 留空：默认自动取后半段时间；
+  \item 填写后：用于平均区间/统计区间/动画区间；
+  \item \texttt{Clear Time}: 清空并回到自动模式。
+\end{itemize}
+
+\subsection{Log X / Log Y}
+\begin{itemize}
+  \item 对标准线图生效；
+  \item 用于跨数量级数据的对比观察。
+\end{itemize}
+
+\section{FFT 与线性文件操作}
+\subsection{FFT 模式建议}
+\begin{itemize}
+  \item 先用 \texttt{Nonlinear + Amplitude} 快速看主峰；
+  \item 再切换 \texttt{Power} 检查能量分布；
+  \item 需要对照时开启 \texttt{Overlay Linear Freq}。
+\end{itemize}
+
+\subsection{Linear File 设置}
+建议直接指定绝对路径。若填相对路径，程序会按内置优先级自动查找。
+
+\section{动画操作}
+在 \texttt{Fluctuation 2D (vs xy)} 模式下：
+\begin{itemize}
+  \item \texttt{Pause}：暂停/继续；
+  \item \texttt{Prev/Next}：暂停状态下逐帧回看。
+\end{itemize}
+
+\section{高频任务操作模板}
+\subsection{模板 A：多案例比较频率}
+\begin{enumerate}
+  \item 加载多个案例并多选；
+  \item \texttt{Plot Type = Frequency}；
+  \item 设置时间窗；
+  \item 点击 \texttt{Plot}。
+\end{enumerate}
+
+\subsection{模板 B：单案例看 2D 动画}
+\begin{enumerate}
+  \item 只选一个案例；
+  \item \texttt{Plot Type = Fluctuation 2D}；
+  \item \texttt{View = vs xy}；
+  \item 设置时间窗后点击 \texttt{Plot}。
+\end{enumerate}
+
+\subsection{模板 C：Zonal ExB 与线性 gamma 对照}
+\begin{enumerate}
+  \item 选一个案例；
+  \item \texttt{Plot Type = Zonal ExB Shearing Rate}；
+  \item Mode 设为 \texttt{vs Gamma\_Linear}；
+  \item 设置 \texttt{Linear File}；
+  \item 点击 \texttt{Plot}。
+\end{enumerate}
+
+\section{常见问题排查}
+\subsection*{1. 为什么多选案例后只画一个？}
+你选择的图型属于单案例图（如 FFT、Fluctuation 2D、POD parity）。改用线图类 Plot Type 可多案例同图。
+
+\subsection*{2. 提示找不到线性文件怎么办？}
+在 \texttt{Linear File} 填绝对路径最稳妥，并确认文件至少有三列数值（$k_y,\omega,\gamma$）。
+
+\subsection*{3. POD parity 无法绘制？}
+常见原因是并行方向分辨率不足（\(\theta \le 1\)）或字段数据缺失。
+
+\subsection*{4. Flux 没有曲线或很异常？}
+检查：
+\begin{itemize}
+  \item 是否选错 Species；
+  \item Time window 是否过窄；
+  \item 是否需要取消 \texttt{Decompose by Field} 先看总量。
+\end{itemize}
+
+\subsection*{5. 图太乱难看清怎么办？}
+\begin{itemize}
+  \item 减少同时选中的案例数量；
+  \item 合理设置时间窗；
+  \item 开启 \texttt{Log Y}；
+  \item 先 \texttt{Clear Plot} 再分步骤出图。
+\end{itemize}
+
+\section{使用建议（实践）}
+\begin{itemize}
+  \item 先做 \texttt{Frequency/Growth Rate} 快速筛查，再深入 FFT/2D；
+  \item 对比任务优先保持统一时窗；
+  \item 建议固定一套命名规范（case 名+参数），便于图例阅读与复现。
+\end{itemize}
+
+\section{手册维护建议}
+\begin{itemize}
+  \item 每次新增 GUI 选项后，更新本手册对应章节；
+  \item 每次新增 Plot Type 后，补充“操作模板”与“排查项”；
+  \item 建议在组内维护“标准示例案例集”，用于培训和回归测试。
+\end{itemize}
+
+\section{编译说明}
+推荐使用 XeLaTeX：
+\begin{lstlisting}
+xelatex cgyro_comparison_user_manual.tex
+\end{lstlisting}
+若目录/页码需要稳定，连续编译两次。
+
+\end{document}
