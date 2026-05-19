@@ -1,0 +1,916 @@
+#!/bin/bash
+
+# ================= 参数校验区 =================
+SCRIPT_NAME=${0##*/}
+
+show_usage() {
+    cat <<EOF
+用法:
+  ${SCRIPT_NAME} <地域代码> [算例目录] [SSH密钥文件] [节点数] [每节点GPU数] [MPI进程数]
+  ${SCRIPT_NAME} <地域代码> [选项]
+
+地域代码:
+  HF    合肥
+  SD    山东
+  TY    太原
+
+选项:
+  -d, --dir <目录>              本地算例目录，默认当前目录
+  -k, --key <文件>              SSH密钥文件，默认按地域自动选择
+  -n, --nodes <数量>            节点数，默认 1
+  -g, --gpus-per-node <数量>    每节点GPU数，仅山东节点使用，默认 1
+  -m, --mpi <数量>              MPI进程总数，默认山东为节点数*每节点GPU数，HF/TY为节点数*8
+  -t, --time <时间>             sbatch wall time，例如 02:00:00、1-00:00:00 或 120
+  -s, --slurm-script <文件>     本地Slurm脚本，默认按地域自动选择
+  --no-update-input             不自动修改远端 input.cgyro 的 TOROIDALS_PER_PROC
+  --submit-only, --no-wait      提交任务后立即返回，不等待任务结束、不拉回结果
+  -p, --pull                    只从服务器拉回上一次任务的文件，不提交新任务
+  -u, --push                    只把本地文件推送到服务器，不提交新任务
+  -r, --remote-dir <目录>       pull/push 模式下手动指定远端运行目录
+  --run-info <文件>             本地运行信息文件，默认 [算例目录]/.remote_cgyro_last_<地域>.env
+  -h, --help                    显示此帮助
+
+示例:
+  ${SCRIPT_NAME} TY
+  ${SCRIPT_NAME} TY 4
+  ${SCRIPT_NAME} SD 2 4
+  ${SCRIPT_NAME} HF -d ./case01 -n 2
+  ${SCRIPT_NAME} SD -d ./case01 -n 2 -g 4
+  ${SCRIPT_NAME} TY -n 2 -m 32
+  ${SCRIPT_NAME} SD -n 2 -g 4 -t 12:00:00
+  ${SCRIPT_NAME} TY --pull
+  ${SCRIPT_NAME} TY --pull -d ./case01
+  ${SCRIPT_NAME} TY --pull --remote-dir /work/home/jinyue_liu/CGYRO/REMOTE/CGYRO_TY_0508_204059
+  ${SCRIPT_NAME} TY --push -d ./case01
+  ${SCRIPT_NAME} TY --push --remote-dir /work/home/jinyue_liu/CGYRO/REMOTE/CGYRO_TY_test
+  ${SCRIPT_NAME} TY -d ./scan --slurm-script ./scan/scan.pbs --remote-dir /work/home/jinyue_liu/CGYRO/REMOTE/scan01
+EOF
+}
+
+if [ "$#" -eq 0 ]; then
+    show_usage
+    exit 0
+fi
+
+if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    show_usage
+    exit 0
+fi
+
+REGION=$(echo "$1" | tr 'a-z' 'A-Z')
+shift
+
+# 默认当前目录；节点数默认1；山东每节点GPU数默认1
+LOCAL_DIR="."
+SSH_KEY_OVERRIDE=""
+NODE_COUNT=1
+GPU_PER_NODE=1
+MPI_COUNT=""
+WALL_TIME=""
+SLURM_SCRIPT_OVERRIDE=""
+UPDATE_INPUT_CGYRO=1
+PULL_ONLY=0
+PUSH_ONLY=0
+SUBMIT_ONLY=0
+REMOTE_RUN_DIR_OVERRIDE=""
+RUN_INFO_FILE=""
+LOCAL_DIR_SET=0
+SSH_KEY_SET=0
+NODE_COUNT_SET=0
+GPU_PER_NODE_SET=0
+MPI_COUNT_SET=0
+SLURM_SCRIPT=""
+# ==========================================
+
+is_positive_integer() {
+    [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
+is_slurm_wall_time() {
+    [[ "$1" =~ ^[0-9]+(-[0-9]+)?(:[0-9]+){0,2}$ ]]
+}
+
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = "-d" ] || [ "$1" = "--dir" ]; then
+        shift
+        if [ -z "${1:-}" ]; then
+            echo "错误: -d/--dir 后需要指定算例目录。"
+            exit 1
+        fi
+        LOCAL_DIR="$1"
+        LOCAL_DIR_SET=1
+    elif [ "$1" = "-k" ] || [ "$1" = "--key" ]; then
+        shift
+        if [ -z "${1:-}" ]; then
+            echo "错误: -k/--key 后需要指定SSH密钥文件。"
+            exit 1
+        fi
+        SSH_KEY_OVERRIDE="$1"
+        SSH_KEY_SET=1
+    elif [ "$1" = "-n" ] || [ "$1" = "--nodes" ]; then
+        shift
+        if ! is_positive_integer "${1:-}"; then
+            echo "错误: 节点数必须是正整数。"
+            exit 1
+        fi
+        NODE_COUNT="$1"
+        NODE_COUNT_SET=1
+    elif [ "$1" = "-g" ] || [ "$1" = "--gpus-per-node" ]; then
+        shift
+        if ! is_positive_integer "${1:-}"; then
+            echo "错误: 每节点GPU数必须是正整数。"
+            exit 1
+        fi
+        GPU_PER_NODE="$1"
+        GPU_PER_NODE_SET=1
+    elif [ "$1" = "-m" ] || [ "$1" = "--mpi" ]; then
+        shift
+        if ! is_positive_integer "${1:-}"; then
+            echo "错误: MPI进程总数必须是正整数。"
+            exit 1
+        fi
+        MPI_COUNT="$1"
+        MPI_COUNT_SET=1
+    elif [ "$1" = "-t" ] || [ "$1" = "--time" ] || [ "$1" = "--wall-time" ] || [ "$1" = "--walltime" ]; then
+        shift
+        if [ -z "${1:-}" ] || ! is_slurm_wall_time "$1"; then
+            echo "错误: wall time 格式无效，示例: 02:00:00、1-00:00:00 或 120。"
+            exit 1
+        fi
+        WALL_TIME="$1"
+    elif [ "$1" = "-s" ] || [ "$1" = "--slurm-script" ] || [ "$1" = "--script" ]; then
+        shift
+        if [ -z "${1:-}" ]; then
+            echo "错误: -s/--slurm-script 后需要指定Slurm脚本文件。"
+            exit 1
+        fi
+        SLURM_SCRIPT_OVERRIDE="$1"
+    elif [ "$1" = "--no-update-input" ] || [ "$1" = "--no-update-input-cgyro" ]; then
+        UPDATE_INPUT_CGYRO=0
+    elif [ "$1" = "--submit-only" ] || [ "$1" = "--no-wait" ]; then
+        SUBMIT_ONLY=1
+    elif [ "$1" = "-p" ] || [ "$1" = "--pull" ] || [ "$1" = "--pull-only" ]; then
+        PULL_ONLY=1
+    elif [ "$1" = "-u" ] || [ "$1" = "--push" ] || [ "$1" = "--push-only" ]; then
+        PUSH_ONLY=1
+    elif [ "$1" = "-r" ] || [ "$1" = "--remote-dir" ]; then
+        shift
+        if [ -z "${1:-}" ]; then
+            echo "错误: -r/--remote-dir 后需要指定远端运行目录。"
+            exit 1
+        fi
+        REMOTE_RUN_DIR_OVERRIDE="$1"
+    elif [ "$1" = "--run-info" ]; then
+        shift
+        if [ -z "${1:-}" ]; then
+            echo "错误: --run-info 后需要指定本地运行信息文件。"
+            exit 1
+        fi
+        RUN_INFO_FILE="$1"
+    elif is_positive_integer "$1"; then
+        if [ "$NODE_COUNT_SET" -eq 0 ]; then
+            NODE_COUNT="$1"
+            NODE_COUNT_SET=1
+        elif [ "$REGION" = "SD" ] && [ "$GPU_PER_NODE_SET" -eq 0 ]; then
+            GPU_PER_NODE="$1"
+            GPU_PER_NODE_SET=1
+        elif [ "$MPI_COUNT_SET" -eq 0 ]; then
+            MPI_COUNT="$1"
+            MPI_COUNT_SET=1
+        else
+            echo "错误: 无法识别多余的数字参数: $1"
+            exit 1
+        fi
+    elif [ "$LOCAL_DIR_SET" -eq 0 ]; then
+        LOCAL_DIR="$1"
+        LOCAL_DIR_SET=1
+    elif [ "$SSH_KEY_SET" -eq 0 ]; then
+        SSH_KEY_OVERRIDE="$1"
+        SSH_KEY_SET=1
+    else
+        echo "错误: 无法识别参数: $1"
+        exit 1
+    fi
+    shift
+done
+
+if [ "$PULL_ONLY" -eq 1 ] && [ "$PUSH_ONLY" -eq 1 ]; then
+    echo "错误: --pull 和 --push 不能同时使用。"
+    exit 1
+fi
+
+if ! command -v ssh >/dev/null 2>&1; then
+    echo "错误: 未找到 ssh，请在包含 OpenSSH 的终端环境中运行。"
+    exit 1
+fi
+
+if ! command -v rsync >/dev/null 2>&1; then
+    echo "错误: 未找到 rsync，请在 WSL/Git Bash/MSYS2 或已安装 rsync 的环境中运行。"
+    exit 1
+fi
+
+if [ ! -d "$LOCAL_DIR" ]; then
+    echo "错误: 本地算例目录不存在: $LOCAL_DIR"
+    exit 1
+fi
+
+LOCAL_COMPARE_DIR=$(cd "$LOCAL_DIR" && pwd -P)
+
+if [ -z "$RUN_INFO_FILE" ]; then
+    RUN_INFO_FILE="${LOCAL_DIR}/.remote_cgyro_last_${REGION}.env"
+fi
+
+if [ -z "$MPI_COUNT" ]; then
+    if [ "$REGION" = "SD" ]; then
+        MPI_COUNT=$((NODE_COUNT * GPU_PER_NODE))
+    else
+        MPI_COUNT=$((NODE_COUNT * 8))
+    fi
+fi
+
+# ================= 路由字典区 =================
+echo "解析地域路由: [$REGION] ..."
+
+if [ "$REGION" = "HF" ]; then
+    TARGET_HOST="hfeshell.nscc-hf.cn" # 替换为合肥节点的真实IP/域名
+    TARGET_PORT="65062"
+    TARGET_DIR="/public/home/jinyue_liu/CGYRO/REMOTE"
+    SLURM_SCRIPT="/public/home/jinyue_liu/bin/Slurm_script/batch_HF.sh"
+    SSH_KEY="/public/home/jinyue_liu/bin/Slurm_script/hf_rsa.txt"
+    echo "提交合肥超算中心"
+elif [ "$REGION" = "SD" ]; then
+    TARGET_HOST="qdeshell.hpccube.com" # 替换为山东巢湖明月节点的真实IP
+    TARGET_PORT="65032"
+    TARGET_DIR="/work/home/jinyue_liu/CGYRO/REMOTE"
+    SLURM_SCRIPT="/public/home/jinyue_liu/bin/Slurm_script/batch_SD.sh"
+    SSH_KEY="/public/home/jinyue_liu/bin/Slurm_script/sd_rsa.txt"
+    echo "提交山东超算中心"
+elif [ "$REGION" = "TY" ]; then
+    TARGET_HOST="tycs2.hpccube.com" # 替换为太原节点的真实IP
+    TARGET_PORT="65141"
+    TARGET_DIR="/work/home/jinyue_liu/CGYRO/REMOTE"
+    SLURM_SCRIPT="/public/home/jinyue_liu/bin/Slurm_script/batch_TY.sh"
+    SSH_KEY="/public/home/jinyue_liu/bin/Slurm_script/ty_rsa.txt"
+    echo "提交太原超算中心"
+else
+    echo "未知的地域代码 '$REGION'！"
+    echo "使用 HF, SD 或 TY。"
+    show_usage
+    exit 1
+fi
+# ==========================================
+
+if [ -n "$SSH_KEY_OVERRIDE" ]; then
+    SSH_KEY="$SSH_KEY_OVERRIDE"
+fi
+
+if [ -n "$SLURM_SCRIPT_OVERRIDE" ]; then
+    SLURM_SCRIPT="$SLURM_SCRIPT_OVERRIDE"
+fi
+
+SLURM_SCRIPT_NAME=$(basename "$SLURM_SCRIPT")
+
+# 生成本次提交的唯一目录和任务名
+TIME_STAMP=$(date +%m%d_%H%M%S)
+DYNAMIC_JOB_NAME="CGYRO_${REGION}_${TIME_STAMP}"
+REMOTE_RUN_DIR="${TARGET_DIR}/${DYNAMIC_JOB_NAME}"
+REMOTE_SLURM_SCRIPT="${REMOTE_RUN_DIR}/${SLURM_SCRIPT_NAME}"
+LOCAL_RESULTS_DIR="$LOCAL_DIR"
+SBATCH_ARGS="--job-name=${DYNAMIC_JOB_NAME} --nodes=${NODE_COUNT} --ntasks=${MPI_COUNT}"
+
+if [ "$PULL_ONLY" -eq 0 ] && [ -n "$REMOTE_RUN_DIR_OVERRIDE" ]; then
+    REMOTE_RUN_DIR="$REMOTE_RUN_DIR_OVERRIDE"
+    REMOTE_SLURM_SCRIPT="${REMOTE_RUN_DIR}/${SLURM_SCRIPT_NAME}"
+fi
+
+if [ -n "$WALL_TIME" ]; then
+    SBATCH_ARGS="${SBATCH_ARGS} --time=${WALL_TIME}"
+fi
+
+if [ "$REGION" = "SD" ]; then
+    SBATCH_ARGS="${SBATCH_ARGS} --gpus-per-node=${GPU_PER_NODE}"
+fi
+
+if [ "$PULL_ONLY" -eq 0 ] && [ ! -f "$SLURM_SCRIPT" ]; then
+    echo "错误: 本地Slurm脚本不存在: $SLURM_SCRIPT"
+    exit 1
+fi
+
+if [ ! -f "$SSH_KEY" ]; then
+    echo "错误: SSH密钥文件不存在: $SSH_KEY"
+    exit 1
+fi
+
+chmod 600 "$SSH_KEY" 2>/dev/null || true
+
+SSH_OPTS=(-i "$SSH_KEY" -o IdentitiesOnly=yes -o ConnectTimeout=20 -p "$TARGET_PORT")
+RSYNC_SSH="ssh -i $SSH_KEY -o IdentitiesOnly=yes -o ConnectTimeout=20 -p $TARGET_PORT"
+RETRY_MAX=5
+RETRY_DELAY=30
+
+run_with_retries() {
+    local label=$1
+    local attempt=1
+    local status=0
+
+    shift
+
+    while [ "$attempt" -le "$RETRY_MAX" ]; do
+        if "$@"; then
+            return 0
+        fi
+
+        status=$?
+        if [ "$attempt" -lt "$RETRY_MAX" ]; then
+            echo "${label}失败（第 ${attempt}/${RETRY_MAX} 次），${RETRY_DELAY} 秒后重试。" >&2
+            sleep "$RETRY_DELAY"
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    echo "${label}失败，已重试 ${RETRY_MAX} 次。" >&2
+    return "$status"
+}
+
+write_run_info() {
+    local saved_results_dir
+
+    saved_results_dir="$(cd "$(dirname "$LOCAL_RESULTS_DIR")" && pwd -P)/$(basename "$LOCAL_RESULTS_DIR")"
+
+    {
+        printf '# remote_cgyro run info\n'
+        printf 'SAVED_REGION=%q\n' "$REGION"
+        printf 'SAVED_LOCAL_DIR=%q\n' "$LOCAL_COMPARE_DIR"
+        printf 'SAVED_LOCAL_COMPARE_DIR=%q\n' "$LOCAL_COMPARE_DIR"
+        printf 'SAVED_LOCAL_RESULTS_DIR=%q\n' "$saved_results_dir"
+        printf 'SAVED_REMOTE_RUN_DIR=%q\n' "$REMOTE_RUN_DIR"
+        printf 'SAVED_SLURM_SCRIPT_NAME=%q\n' "$SLURM_SCRIPT_NAME"
+        printf 'SAVED_TARGET_HOST=%q\n' "$TARGET_HOST"
+        printf 'SAVED_TARGET_PORT=%q\n' "$TARGET_PORT"
+        printf 'SAVED_CREATED_AT=%q\n' "$(date '+%F %T')"
+    } > "$RUN_INFO_FILE"
+
+    echo "已保存运行信息: $RUN_INFO_FILE"
+}
+
+load_run_info() {
+    if [ -n "$REMOTE_RUN_DIR_OVERRIDE" ]; then
+        REMOTE_RUN_DIR="$REMOTE_RUN_DIR_OVERRIDE"
+        LOCAL_RESULTS_DIR="$LOCAL_DIR"
+        return 0
+    fi
+
+    if [ ! -f "$RUN_INFO_FILE" ]; then
+        echo "错误: 未找到运行信息文件: $RUN_INFO_FILE"
+        echo "可用 --remote-dir 手动指定远端运行目录。"
+        return 1
+    fi
+
+    # shellcheck source=/dev/null
+    . "$RUN_INFO_FILE"
+
+    if [ -n "${SAVED_LOCAL_DIR:-}" ]; then
+        LOCAL_DIR="$SAVED_LOCAL_DIR"
+    fi
+    if [ -n "${SAVED_LOCAL_COMPARE_DIR:-}" ]; then
+        LOCAL_COMPARE_DIR="$SAVED_LOCAL_COMPARE_DIR"
+    fi
+    if [ -n "${SAVED_LOCAL_RESULTS_DIR:-}" ]; then
+        LOCAL_RESULTS_DIR="$SAVED_LOCAL_RESULTS_DIR"
+    fi
+    if [ -n "${SAVED_REMOTE_RUN_DIR:-}" ]; then
+        REMOTE_RUN_DIR="$SAVED_REMOTE_RUN_DIR"
+    fi
+    if [ -n "${SAVED_SLURM_SCRIPT_NAME:-}" ]; then
+        SLURM_SCRIPT_NAME="$SAVED_SLURM_SCRIPT_NAME"
+    fi
+
+    if [ -z "$REMOTE_RUN_DIR" ]; then
+        echo "错误: 运行信息文件中缺少远端运行目录: $RUN_INFO_FILE"
+        return 1
+    fi
+}
+
+pull_remote_results() {
+    local local_results_compare_dir
+    local rsync_args
+
+    mkdir -p "$LOCAL_RESULTS_DIR"
+    local_results_compare_dir=$(cd "$LOCAL_RESULTS_DIR" && pwd -P)
+
+    rsync_args=(-avz --prune-empty-dirs -e "$RSYNC_SSH" --exclude="$SLURM_SCRIPT_NAME" --exclude='.remote_cgyro_timing_baseline' --exclude='.remote_cgyro_timing_baseline.restart')
+    if [ "$local_results_compare_dir" != "$LOCAL_COMPARE_DIR" ]; then
+        rsync_args+=(--compare-dest="$LOCAL_COMPARE_DIR")
+    fi
+
+    run_with_retries "拉回结果文件" rsync "${rsync_args[@]}" "${TARGET_HOST}:${REMOTE_RUN_DIR}/" "${LOCAL_RESULTS_DIR}/"
+}
+
+push_remote_files() {
+    run_with_retries "创建远端目录" ssh "${SSH_OPTS[@]}" "$TARGET_HOST" "mkdir -p ${REMOTE_RUN_DIR}" || return 1
+    run_with_retries "同步算例文件" rsync -avz -e "$RSYNC_SSH" --exclude='*.out' --exclude='*.log' --exclude='_results_*/' "${LOCAL_DIR}/" "${TARGET_HOST}:${REMOTE_RUN_DIR}/" || return 1
+    run_with_retries "同步Slurm脚本" rsync -avz -e "$RSYNC_SSH" "$SLURM_SCRIPT" "${TARGET_HOST}:${REMOTE_SLURM_SCRIPT}" || return 1
+    run_with_retries "更新远端Slurm脚本" update_remote_slurm_script || return 1
+    run_with_retries "设置远端Slurm脚本权限" ssh "${SSH_OPTS[@]}" "$TARGET_HOST" "chmod +x ${REMOTE_SLURM_SCRIPT}" || return 1
+    if [ "$UPDATE_INPUT_CGYRO" -eq 1 ]; then
+        run_with_retries "更新远端input.cgyro" update_remote_input_cgyro || return 1
+    fi
+}
+
+query_existing_job_id_by_name() {
+    ssh "${SSH_OPTS[@]}" "$TARGET_HOST" "squeue -h -n ${DYNAMIC_JOB_NAME} -o %A 2>/dev/null | awk 'NF {print \$1; exit}'; if command -v sacct >/dev/null 2>&1; then sacct -n -X --name=${DYNAMIC_JOB_NAME} -o JobIDRaw 2>/dev/null | awk 'NF {print \$1; exit}'; fi" 2>/dev/null | awk 'NF {print $1; exit}'
+}
+
+submit_remote_job() {
+    local existing_job_id submit_output job_id
+
+    existing_job_id=$(query_existing_job_id_by_name)
+    if [ -n "$existing_job_id" ]; then
+        printf '%s\n' "$existing_job_id"
+        return 0
+    fi
+
+    if ! submit_output=$(ssh "${SSH_OPTS[@]}" "$TARGET_HOST" "cd ${REMOTE_RUN_DIR} && sbatch ${SBATCH_ARGS} ./${SLURM_SCRIPT_NAME}" 2>&1); then
+        existing_job_id=$(query_existing_job_id_by_name)
+        if [ -n "$existing_job_id" ]; then
+            echo "提交连接异常，但已找到同名任务: $existing_job_id" >&2
+            printf '%s\n' "$existing_job_id"
+            return 0
+        fi
+
+        echo "提交命令失败：$submit_output" >&2
+        return 1
+    fi
+
+    job_id=$(printf '%s\n' "$submit_output" | awk '/Submitted batch job/ {print $4; found=1; exit} END {if (!found && NF > 0 && $NF ~ /^[0-9]+$/) print $NF}')
+    if [ -z "$job_id" ]; then
+        echo "任务提交失败！返回信息：$submit_output" >&2
+        return 1
+    fi
+
+    printf '%s\n' "$job_id"
+}
+
+query_job_history_state() {
+    ssh "${SSH_OPTS[@]}" "$TARGET_HOST" "if command -v sacct >/dev/null 2>&1; then sacct -j ${JOB_ID} -n -X -o State 2>/dev/null | awk 'NF {print \$1; exit}'; else scontrol show job ${JOB_ID} 2>/dev/null | sed -n 's/.*JobState=\\([^ ]*\\).*/\\1/p' | head -n 1; fi" 2>/dev/null
+}
+
+is_final_job_state() {
+    case "$1" in
+        COMPLETED|FAILED|CANCELLED|TIMEOUT|OUT_OF_MEMORY|NODE_FAIL|PREEMPTED|BOOT_FAIL|DEADLINE)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+update_remote_slurm_script() {
+    if [ "$REGION" != "SD" ]; then
+        return 0
+    fi
+
+    ssh "${SSH_OPTS[@]}" "$TARGET_HOST" "REMOTE_SLURM_SCRIPT='${REMOTE_SLURM_SCRIPT}' MPI_COUNT='${MPI_COUNT}' NODE_COUNT='${NODE_COUNT}' bash -s" <<'REMOTE_SCRIPT'
+set -e
+
+if [ ! -f "$REMOTE_SLURM_SCRIPT" ]; then
+    echo "错误: 远端Slurm脚本不存在: $REMOTE_SLURM_SCRIPT" >&2
+    exit 1
+fi
+
+if [ "$NODE_COUNT" -le 0 ] || [ $((MPI_COUNT % NODE_COUNT)) -ne 0 ]; then
+    echo "错误: MPI进程总数必须能被节点数整除。MPI_COUNT=${MPI_COUNT}, NODE_COUNT=${NODE_COUNT}" >&2
+    exit 1
+fi
+
+NTASKS_PER_NODE=$((MPI_COUNT / NODE_COUNT))
+
+TMP_FILE="${REMOTE_SLURM_SCRIPT}.tmp.$$"
+
+awk -v value="$NTASKS_PER_NODE" '
+    NR == 1 {
+        if ($0 ~ /^#!/) {
+            print
+            print "#SBATCH --ntasks-per-node=" value
+            next
+        }
+        print "#SBATCH --ntasks-per-node=" value
+    }
+    /^[[:space:]]*#SBATCH[[:space:]]+--ntasks-per-node([=[:space:]].*)?$/ {
+        next
+    }
+    {
+        print
+    }
+' "$REMOTE_SLURM_SCRIPT" > "$TMP_FILE"
+
+mv "$TMP_FILE" "$REMOTE_SLURM_SCRIPT"
+echo "已更新山东Slurm脚本: #SBATCH --ntasks-per-node=${NTASKS_PER_NODE}"
+REMOTE_SCRIPT
+}
+
+update_remote_input_cgyro() {
+    ssh "${SSH_OPTS[@]}" "$TARGET_HOST" "REMOTE_RUN_DIR='${REMOTE_RUN_DIR}' MPI_COUNT='${MPI_COUNT}' bash -s" <<'REMOTE_SCRIPT'
+set -e
+
+gcd() {
+    local a=$1
+    local b=$2
+    local r
+
+    while [ "$b" -ne 0 ]; do
+        r=$((a % b))
+        a=$b
+        b=$r
+    done
+
+    echo "$a"
+}
+
+INPUT_FILE="${REMOTE_RUN_DIR}/input.cgyro"
+
+if [ ! -f "$INPUT_FILE" ]; then
+    INPUT_FILE=$(find "$REMOTE_RUN_DIR" -type f -name input.cgyro | head -n 1)
+fi
+
+if [ -z "$INPUT_FILE" ] || [ ! -f "$INPUT_FILE" ]; then
+    echo "错误: 远端运行目录中未找到 input.cgyro: $REMOTE_RUN_DIR" >&2
+    exit 1
+fi
+
+N_TOROIDAL=$(awk -F= '
+    /^[[:space:]]*N_TOROIDAL[[:space:]]*=/ {
+        gsub(/[[:space:]]/, "", $2)
+        print int($2)
+        exit
+    }
+' "$INPUT_FILE")
+
+if [ -z "$N_TOROIDAL" ] || [ "$N_TOROIDAL" -le 0 ]; then
+    echo "错误: 未能从 $INPUT_FILE 读取有效的 N_TOROIDAL。" >&2
+    exit 1
+fi
+
+GCD_VALUE=$(gcd "$N_TOROIDAL" "$MPI_COUNT")
+TOROIDALS_PER_PROC=$((N_TOROIDAL / GCD_VALUE))
+if [ "$TOROIDALS_PER_PROC" -lt 1 ]; then
+    TOROIDALS_PER_PROC=1
+fi
+TMP_FILE="${INPUT_FILE}.tmp.$$"
+
+awk -v value="$TOROIDALS_PER_PROC" '
+    BEGIN {
+        updated = 0
+    }
+    /^[[:space:]]*(TOROIDALS_PER_PROC|N_TOROIDAL_PER_PROCESS)[[:space:]]*=/ {
+        if (!updated) {
+            print "TOROIDALS_PER_PROC=" value
+            updated = 1
+        }
+        next
+    }
+    {
+        print
+    }
+    END {
+        if (!updated) {
+            print "TOROIDALS_PER_PROC=" value
+        }
+    }
+' "$INPUT_FILE" > "$TMP_FILE"
+
+mv "$TMP_FILE" "$INPUT_FILE"
+echo "已更新 input.cgyro: N_TOROIDAL=$N_TOROIDAL, MPI=$MPI_COUNT, TOROIDALS_PER_PROC=$TOROIDALS_PER_PROC"
+grep -n '^[[:space:]]*TOROIDALS_PER_PROC[[:space:]]*=' "$INPUT_FILE"
+REMOTE_SCRIPT
+}
+
+report_remote_timing_prediction() {
+    ssh "${SSH_OPTS[@]}" "$TARGET_HOST" "REMOTE_RUN_DIR='${REMOTE_RUN_DIR}' bash -s" <<'REMOTE_SCRIPT'
+set -e
+
+BASELINE_FILE="${REMOTE_RUN_DIR}/.remote_cgyro_timing_baseline"
+
+cd "$REMOTE_RUN_DIR"
+
+format_seconds() {
+    local total=$1
+    local days hours minutes seconds
+
+    days=$((total / 86400))
+    total=$((total % 86400))
+    hours=$((total / 3600))
+    total=$((total % 3600))
+    minutes=$((total / 60))
+    seconds=$((total % 60))
+
+    if [ "$days" -gt 0 ]; then
+        printf "%dd %02dh %02dm %02ds" "$days" "$hours" "$minutes" "$seconds"
+    else
+        printf "%02dh %02dm %02ds" "$hours" "$minutes" "$seconds"
+    fi
+}
+
+read_cgyro_param() {
+    local input_file=$1
+    local key=$2
+
+    awk -F= -v key="$key" '
+        {
+            lhs = $1
+            gsub(/[[:space:]]/, "", lhs)
+        }
+        lhs == key {
+            rhs = $2
+            sub(/[!#].*$/, "", rhs)
+            gsub(/[[:space:]]/, "", rhs)
+            print rhs
+            exit
+        }
+    ' "$input_file"
+}
+
+count_timing_rows() {
+    awk '
+        NF >= 14 && $NF ~ /^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$/ {
+            count++
+        }
+        END {
+            print count + 0
+        }
+    ' "$1"
+}
+
+write_timing_baseline() {
+    local found=0
+
+    : > "$BASELINE_FILE"
+
+    while IFS= read -r timing_file; do
+        found=1
+        count=$(count_timing_rows "$timing_file")
+        printf "%s\t%s\n" "$timing_file" "$count" >> "$BASELINE_FILE"
+    done < <(find . -type f -name out.cgyro.timing)
+
+    [ "$found" -eq 1 ]
+}
+
+restart_found() {
+    while IFS= read -r info_file; do
+        if grep -q 'INFO: (CGYRO) Restart data found.' "$info_file"; then
+            return 0
+        fi
+    done < <(find . -type f -name out.cgyro.info)
+
+    return 1
+}
+
+baseline_count_for() {
+    local timing_file=$1
+
+    if [ ! -f "$BASELINE_FILE" ]; then
+        echo 0
+        return
+    fi
+
+    awk -F '\t' -v timing_file="$timing_file" '
+        $1 == timing_file {
+            print $2 + 0
+            found = 1
+            exit
+        }
+        END {
+            if (!found) {
+                print 0
+            }
+        }
+    ' "$BASELINE_FILE"
+}
+
+if restart_found && [ ! -f "${BASELINE_FILE}.restart" ]; then
+    if write_timing_baseline; then
+        : > "${BASELINE_FILE}.restart"
+        echo "timing: restart baseline"
+    else
+        echo "timing: waiting"
+    fi
+    exit 0
+fi
+
+if [ ! -f "$BASELINE_FILE" ]; then
+    if write_timing_baseline; then
+        echo "timing: baseline"
+    else
+        echo "timing: waiting"
+    fi
+    exit 0
+fi
+
+while IFS= read -r TIMING_FILE; do
+    BASELINE_COUNT=$(baseline_count_for "$TIMING_FILE")
+
+    TOTAL_COUNT=$(count_timing_rows "$TIMING_FILE")
+
+    if [ "$TOTAL_COUNT" -lt "$BASELINE_COUNT" ]; then
+        BASELINE_COUNT=0
+    fi
+
+    INPUT_FILE="$(dirname "$TIMING_FILE")/input.cgyro"
+    if [ ! -f "$INPUT_FILE" ]; then
+        INPUT_FILE=$(find "$REMOTE_RUN_DIR" -type f -name input.cgyro | head -n 1)
+    fi
+
+    MAX_TIME=$(read_cgyro_param "$INPUT_FILE" "MAX_TIME")
+    DELTA_T=$(read_cgyro_param "$INPUT_FILE" "DELTA_T")
+    PRINT_STEP=$(read_cgyro_param "$INPUT_FILE" "PRINT_STEP")
+
+    EXPECTED_RECORDS=$(awk -v max_time="$MAX_TIME" -v delta_t="$DELTA_T" -v print_step="$PRINT_STEP" '
+        BEGIN {
+            write_interval = print_step * delta_t
+            print int(max_time / write_interval + 1e-9)
+        }
+    ')
+
+    NEW_COUNT=$((TOTAL_COUNT - BASELINE_COUNT))
+    if [ "$NEW_COUNT" -le 0 ]; then
+        continue
+    fi
+
+    STATS=$(awk -v baseline="$BASELINE_COUNT" '
+        NF >= 14 && $NF ~ /^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$/ {
+            numeric_count++
+            if (numeric_count > baseline && sample_count < 10) {
+                sum += $NF
+                sample_count++
+            }
+        }
+        END {
+            if (sample_count > 0) {
+                printf "%d %.6f", sample_count, sum / sample_count
+            }
+        }
+    ' "$TIMING_FILE")
+
+    if [ -z "$STATS" ]; then
+        continue
+    fi
+
+    SAMPLE_COUNT=$(echo "$STATS" | awk '{print $1}')
+    AVG_TOTAL=$(echo "$STATS" | awk '{print $2}')
+
+    if [ "$SAMPLE_COUNT" -lt 10 ]; then
+        echo "timing: ${NEW_COUNT}/10"
+        exit 0
+    fi
+
+    REMAINING_RECORDS=$((EXPECTED_RECORDS - NEW_COUNT))
+    if [ "$REMAINING_RECORDS" -lt 0 ]; then
+        REMAINING_RECORDS=0
+    fi
+
+    ETA_SECONDS=$(awk -v avg="$AVG_TOTAL" -v remaining="$REMAINING_RECORDS" 'BEGIN { printf "%d", avg * remaining + 0.5 }')
+    ETA_TEXT=$(format_seconds "$ETA_SECONDS")
+    FINISH_TIME=$(date -d "@$(($(date +%s) + ETA_SECONDS))" "+%F %T" 2>/dev/null || true)
+
+    if [ -n "$FINISH_TIME" ]; then
+        echo "timing: avg=${AVG_TOTAL}s, progress=${NEW_COUNT}/${EXPECTED_RECORDS}, ETA=${ETA_TEXT}, end=${FINISH_TIME}"
+    else
+        echo "timing: avg=${AVG_TOTAL}s, progress=${NEW_COUNT}/${EXPECTED_RECORDS}, ETA=${ETA_TEXT}"
+    fi
+    exit 0
+done < <(find . -type f -name out.cgyro.timing)
+
+echo "timing: waiting"
+REMOTE_SCRIPT
+}
+
+if [ "$PULL_ONLY" -eq 1 ]; then
+    load_run_info || exit 1
+    echo "[pull] 正在从 [$REGION] 拉回新增或修改的文件..."
+    pull_remote_results || exit 1
+    printf 'DONE: [%s] results saved in %s/\n' "$REGION" "$LOCAL_RESULTS_DIR"
+    exit 0
+fi
+
+if [ "$PUSH_ONLY" -eq 1 ]; then
+    echo "----------------------------------------"
+    echo "资源配置: 节点数=${NODE_COUNT}"
+    if [ "$REGION" = "SD" ]; then
+        echo "资源配置: 每节点GPU数=${GPU_PER_NODE}"
+    fi
+    echo "资源配置: MPI进程总数=${MPI_COUNT}"
+    write_run_info
+    echo "[push] 正在同步文件到 [$REGION]..."
+    push_remote_files || exit 1
+    printf 'DONE: [%s] files pushed to %s\n' "$REGION" "$REMOTE_RUN_DIR"
+    exit 0
+fi
+
+# ================= 核心执行区 =================
+echo "----------------------------------------"
+echo "资源配置: 节点数=${NODE_COUNT}"
+if [ "$REGION" = "SD" ]; then
+    echo "资源配置: 每节点GPU数=${GPU_PER_NODE}"
+fi
+echo "资源配置: MPI进程总数=${MPI_COUNT}"
+if [ -n "$WALL_TIME" ]; then
+    echo "资源配置: wall time=${WALL_TIME}"
+fi
+write_run_info
+echo "[1/4] 同步文件到 [$REGION]..."
+push_remote_files || exit 1
+
+
+echo "[2/4] 正在 [$REGION] 提交任务..."
+
+if ! JOB_ID=$(run_with_retries "提交任务" submit_remote_job); then
+    echo "任务提交失败。运行信息已保存，可稍后检查远端或使用 --pull/--remote-dir 拉回文件。"
+    exit 1
+fi
+
+if [ -z "$JOB_ID" ]; then
+    echo "任务提交失败：未能获取 Job ID。"
+    exit 1
+fi
+
+echo "提交成功，Job ID: $JOB_ID"
+
+if [ "$SUBMIT_ONLY" -eq 1 ]; then
+    printf 'REMOTE_CGYRO_JOB_ID=%s\n' "$JOB_ID"
+    printf 'REMOTE_CGYRO_REMOTE_DIR=%s\n' "$REMOTE_RUN_DIR"
+    printf 'REMOTE_CGYRO_RUN_INFO=%s\n' "$RUN_INFO_FILE"
+    printf 'DONE: [%s] job submitted, results not pulled yet\n' "$REGION"
+    exit 0
+fi
+
+echo "[3/4] 监控 [$REGION] 任务状态..."
+EMPTY_QUEUE_COUNT=0
+QUERY_FAIL_COUNT=0
+while true; do
+    JOB_STATE=$(ssh "${SSH_OPTS[@]}" "$TARGET_HOST" "squeue -j ${JOB_ID} -h -o %T" 2>/dev/null)
+    SQUEUE_STATUS=$?
+
+    case "$JOB_STATE" in
+        "")
+            if [ "$SQUEUE_STATUS" -ne 0 ]; then
+                QUERY_FAIL_COUNT=$((QUERY_FAIL_COUNT + 1))
+                JOB_HISTORY_STATE=$(query_job_history_state)
+
+                if is_final_job_state "$JOB_HISTORY_STATE"; then
+                    echo "状态查询失败，但历史状态显示任务 $JOB_ID 已结束: ${JOB_HISTORY_STATE}。"
+                    break
+                fi
+
+                if [ "$QUERY_FAIL_COUNT" -ge 5 ]; then
+                    echo "状态连续查询失败 ${QUERY_FAIL_COUNT} 次，开始拉回结果。"
+                    break
+                fi
+
+                echo "状态查询失败（第 ${QUERY_FAIL_COUNT}/5 次），等待 60 秒后重试。"
+                sleep 60
+                continue
+            fi
+
+            QUERY_FAIL_COUNT=0
+            JOB_HISTORY_STATE=$(query_job_history_state)
+
+            if is_final_job_state "$JOB_HISTORY_STATE"; then
+                echo "任务 $JOB_ID 已离开队列，最终状态: ${JOB_HISTORY_STATE}。"
+                break
+            fi
+
+            EMPTY_QUEUE_COUNT=$((EMPTY_QUEUE_COUNT + 1))
+            if [ "$EMPTY_QUEUE_COUNT" -ge 3 ]; then
+                echo "任务 $JOB_ID 连续 ${EMPTY_QUEUE_COUNT} 次不在队列中，开始拉回结果。"
+                break
+            fi
+            echo "任务 $JOB_ID 暂时不在 squeue 中，等待 60 秒后再次确认。"
+            sleep 60
+            ;;
+        PENDING)
+            EMPTY_QUEUE_COUNT=0
+            QUERY_FAIL_COUNT=0
+            echo "状态：排队中 (PENDING)... 等待 60 秒后重试。"
+            sleep 60
+            ;;
+        RUNNING)
+            EMPTY_QUEUE_COUNT=0
+            QUERY_FAIL_COUNT=0
+            echo "状态：计算中 (RUNNING)... 等待 300 秒后重试。"
+            report_remote_timing_prediction
+            sleep 300
+            ;;
+        *)
+            EMPTY_QUEUE_COUNT=0
+            QUERY_FAIL_COUNT=0
+            echo "状态：${JOB_STATE}... 等待 60 秒后重试。"
+            sleep 60
+            ;;
+    esac
+done
+
+echo "[4/4] 计算结束，正在从 [$REGION] 拉回新增或修改的文件..."
+pull_remote_results || exit 1
+
+printf 'DONE: [%s] results saved in %s/\n' "$REGION" "$LOCAL_RESULTS_DIR"

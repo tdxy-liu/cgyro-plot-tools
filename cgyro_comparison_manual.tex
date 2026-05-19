@@ -1,0 +1,551 @@
+\documentclass[11pt,a4paper]{ctexart}
+\usepackage[a4paper,margin=2.2cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  urlcolor=blue!60!black,
+  pdftitle={CGYRO Comparison 模块完整说明书},
+  pdfauthor={CGYRO Team}
+}
+
+\setlist[itemize]{leftmargin=1.8em}
+\setlist[enumerate]{leftmargin=2.0em}
+\setlist[description]{leftmargin=2.2em}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  columns=fullflexible
+}
+
+\title{CGYRO Comparison 模块完整说明书}
+\author{代码路径：\texttt{CGYRO/cgyro\_comparison*.py}}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+\section{文档说明}
+\subsection{目的}
+本文档用于完整说明 \texttt{cgyro\_comparison} 模块的：
+\begin{itemize}
+  \item 架构设计与代码组织；
+  \item GUI 功能与每个选项的行为；
+  \item 绘图后端算法、输入数据要求与输出；
+  \item 配置项、路径解析、容错与常见报错排查；
+  \item 二次开发扩展流程与建议。
+\end{itemize}
+
+\subsection{适用读者}
+\begin{itemize}
+  \item 使用 GUI 进行多案例对比绘图的使用者；
+  \item 维护/扩展模块的开发者；
+  \item 需要把结果用于报告或后续自动化流程的用户。
+\end{itemize}
+
+\subsection{覆盖文件}
+\begin{itemize}
+  \item \texttt{cgyro\_comparison.py}
+  \item \texttt{cgyro\_comparison\_bootstrap.py}
+  \item \texttt{cgyro\_comparison\_ui.py}
+  \item \texttt{cgyro\_comparison\_plotting.py}
+\end{itemize}
+
+\section{模块总览}
+\subsection{总体架构}
+主类为：
+\begin{center}
+\texttt{CGYRO\_Comparison(CgyroUiMixin, CgyroPlottingMixin)}
+\end{center}
+
+\begin{description}
+  \item[\texttt{CgyroUiMixin}] 负责窗口与控件构建、案例管理、参数联动、用户交互。
+  \item[\texttt{CgyroPlottingMixin}] 负责数据处理、算法实现、图形渲染与后端分发。
+\end{description}
+
+\subsection{入口流程}
+\texttt{cgyro\_comparison.py} 中的运行流程：
+\begin{enumerate}
+  \item 创建 Tk 根窗口 \texttt{tk.Tk()}；
+  \item 初始化 \texttt{CGYRO\_Comparison(root)}；
+  \item 进入事件循环 \texttt{root.mainloop()}。
+\end{enumerate}
+
+\subsection{运行时对象}
+\begin{itemize}
+  \item \texttt{self.cases}: \texttt{dict[str, data\_obj]}，已加载案例缓存。
+  \item \texttt{self.fig / self.ax}: 当前 Matplotlib 图对象。
+  \item \texttt{self.ani}: 动画句柄，控制播放/暂停/逐帧。
+\end{itemize}
+
+\section{依赖与环境}
+\subsection{必需依赖}
+\begin{itemize}
+  \item Python 3
+  \item \texttt{numpy}
+  \item \texttt{matplotlib}
+  \item \texttt{tkinter}
+  \item \texttt{pygacode}（核心数据读取）
+\end{itemize}
+
+\subsection{可选依赖}
+\begin{itemize}
+  \item \texttt{scipy.signal} 与 \texttt{scipy.optimize}：用于 \texttt{rcorr\_phi} 的 Hilbert 包络和指数拟合。
+\end{itemize}
+未安装 SciPy 时，相关拟合步骤会自动降级，不影响其他图型。
+
+\subsection{pygacode 导入引导}
+\texttt{cgyro\_comparison\_bootstrap.py} 会尝试向 \texttt{sys.path} 注入：
+\begin{itemize}
+  \item \texttt{../gacode/f2py}
+  \item \texttt{../gacode-master/f2py}
+\end{itemize}
+然后导入：
+\begin{itemize}
+  \item \texttt{pygacode.cgyro.data.cgyrodata}
+  \item \texttt{pygacode.cgyro.data\_plot.cgyrodata\_plot}
+\end{itemize}
+
+\subsection{fallback mock}
+若 pygacode 不可用，会创建最小 mock 类用于 GUI 调试。注意：
+\begin{itemize}
+  \item mock 仅用于界面联调；
+  \item 不代表真实物理结果。
+\end{itemize}
+
+\section{默认配置与常量}
+\begin{longtable}{>{\ttfamily}p{0.35\linewidth} p{0.57\linewidth}}
+\toprule
+常量名 & 说明 \\
+\midrule
+\endhead
+DEFAULT\_APP\_TITLE & 窗口标题，默认 \texttt{"CGYRO Comparison Tool"}。 \\
+DEFAULT\_WINDOW\_GEOMETRY & 窗口初始大小，默认 \texttt{"1200x800"}。 \\
+DEFAULT\_CASE\_PICKER\_ROOT & 案例选择初始目录，默认 \texttt{/data/share/<当前用户名>}。 \\
+DEFAULT\_LINEAR\_GAMMA\_FILE & 线性参考文件默认名 \texttt{omega\_gamma\_vs\_ky.txt}。 \\
+DEFAULT\_EXPORT\_DIRNAME & 默认导出目录名 \texttt{CGYRO\_vs\_CGYRO\_exports}。 \\
+\bottomrule
+\end{longtable}
+
+\section{安装与启动}
+\subsection{推荐启动方式}
+在 \texttt{CGYRO} 目录执行：
+\begin{lstlisting}
+python cgyro_comparison.py
+\end{lstlisting}
+
+\subsection{模块导入方式}
+代码支持两种导入风格：
+\begin{itemize}
+  \item 脚本式：\texttt{from cgyro\_comparison\_ui import ...}
+  \item 包式：\texttt{from .cgyro\_comparison\_ui import ...}
+\end{itemize}
+
+\section{GUI 详细说明}
+\subsection{布局}
+\begin{itemize}
+  \item 左侧：案例管理 + 绘图控制 + 动画按钮。
+  \item 右侧：Matplotlib 画布 + toolbar。
+\end{itemize}
+
+\subsection{File 菜单}
+\begin{itemize}
+  \item \texttt{Add Case (Single)}
+  \item \texttt{Add Case (Multiple)}
+  \item \texttt{Add Group}
+  \item \texttt{Exit}
+\end{itemize}
+
+\subsection{案例管理区}
+\begin{description}
+  \item[\texttt{Add Case (Single)}] 直接选择一个案例目录并加载，适合逐个补充。
+  \item[\texttt{Add Case (Multiple)}] 先选父目录，再在子目录列表中 Ctrl/Shift 多选，批量加载多个案例（推荐用于扫描对比）。
+  \item[\texttt{Add Group}] 自动加载父目录下所有“疑似案例目录”，适合全量导入。
+  \item[\texttt{Remove}] 删除当前选中案例。
+  \item[\texttt{Remove All}] 清空案例缓存并确认。
+  \item[\texttt{Reload}] 使用原路径重载数据对象。
+\end{description}
+
+\subsection{Add Case (Multiple) 推荐用法（重点）}
+\begin{enumerate}
+  \item 点击 \texttt{Add Case (Multiple)}。
+  \item 先选择“父目录”（该目录下应包含多个 case 子目录）。
+  \item 在弹窗列表中使用 Ctrl/Shift 选择需要比较的多个子目录。
+  \item 点击确认后一次性完成批量加载。
+  \item 在左侧案例列表中拖拽排序，再执行 \texttt{Plot} 进行对比。
+\end{enumerate}
+\noindent\textbf{建议：} 当你做参数扫描、不同物理模型对比、同一 shot 多阶段对比时，优先使用 \texttt{Add Case (Multiple)}，效率明显高于逐个单独添加。
+
+\subsection{案例目录判定规则}
+若目录包含以下任意文件，则视作候选案例：
+\begin{itemize}
+  \item \texttt{input.cgyro}
+  \item \texttt{out.cgyro.freq}
+  \item \texttt{input.gacode}
+\end{itemize}
+
+\subsection{案例命名冲突}
+同名目录会自动改名为 \texttt{name\_1, name\_2, ...}，保证 \texttt{self.cases} 键唯一。
+
+\subsection{案例列表拖拽重排}
+支持鼠标拖拽改变案例顺序。该顺序也会影响默认绘图顺序和图例顺序。
+
+\section{Plot Type 与分发机制}
+\subsection{GUI 到内部 token 的转换}
+\texttt{\_build\_effective\_plot\_type()} 将 GUI 选项映射为内部字符串。
+
+\begin{longtable}{p{0.22\linewidth} p{0.28\linewidth} p{0.42\linewidth}}
+\toprule
+GUI 主类型 & 内部 token 示例 & 备注 \\
+\midrule
+\endhead
+Frequency & \texttt{Frequency} & 支持 \texttt{Divided by ky} \\
+Growth Rate & \texttt{Growth Rate} & 支持 \texttt{Divided by ky} \\
+Flux & \texttt{Energy Flux vs ky} 等 & 支持 Decomp、Species \\
+Fluctuation 1D & \texttt{Phi vs ky}, \texttt{Apar FFT} & FFT 为特殊分支 \\
+Fluctuation 2D & \texttt{Fluctuation 2D} / \texttt{Fluctuation 2D vs xt} & 轮廓类图 \\
+Zonal ExB Shearing Rate & \texttt{ZF ExB Shearing Rate} 等 & 三种子模式 \\
+Others & \texttt{Integration Error} 等 & Error/rcorr/POD \\
+\bottomrule
+\end{longtable}
+
+\subsection{单案例限制}
+以下图型仅支持单案例：
+\begin{itemize}
+  \item FFT（\texttt{* FFT}）
+  \item \texttt{Fluctuation 2D} / \texttt{Fluctuation 2D vs xt}
+  \item \texttt{POD Parity}
+\end{itemize}
+若选中多个案例，程序会告警并只绘制第一个。
+
+\subsection{后端分发}
+\texttt{CgyroPlottingMixin.\_dispatch\_single\_case\_plot()} 按 token 路由到具体函数：
+\begin{itemize}
+  \item \texttt{\_plot\_frequency\_growth}
+  \item \texttt{\_plot\_flux}
+  \item \texttt{\_plot\_fluctuation\_1d}
+  \item \texttt{\_plot\_fluctuation\_fft}
+  \item \texttt{\_plot\_fluctuation\_2d / \_plot\_xt\_fluctuation\_contours}
+  \item \texttt{\_plot\_zf\_exb\_shearing\_*}
+  \item \texttt{\_plot\_other\_error / \_plot\_other\_rcorr\_phi / \_plot\_other\_apar\_pod\_parity}
+\end{itemize}
+
+\section{动态选项全量说明}
+\subsection{通用选项}
+\begin{description}
+  \item[Time Start / Time End] 用于时间平均区间、统计区间、动画帧区间。
+  \item[Clear Time] 清空时窗，回退自动策略（后 50\%）。
+  \item[Log X / Log Y] 最终线图坐标轴缩放。
+\end{description}
+
+\subsection{Flux 选项}
+\begin{itemize}
+  \item \texttt{Flux Type}: Energy / Particle。
+  \item \texttt{X-axis}: \texttt{vs ky}, \texttt{vs kx (estimated)}, \texttt{vs Time}。
+  \item \texttt{Species}: 单一物种 / Main Ion(D+T) / All Ions。
+  \item \texttt{Decompose by Field}: 分解 ES/EM 通道。
+  \item \texttt{Plot All Species (First Case Only)}: 第一案例多物种叠加。
+\end{itemize}
+
+\subsection{Fluctuation 1D 选项}
+\begin{itemize}
+  \item 字段：\texttt{Phi}, \texttt{Apar}, \texttt{Bpar}
+  \item X 轴：\texttt{vs ky}, \texttt{vs kx}, \texttt{vs Time}, \texttt{fft}
+\end{itemize}
+
+\subsection{FFT 选项}
+\begin{description}
+  \item[Mode] \texttt{Linear}（coherent）或 \texttt{Nonlinear}（incoherent）。
+  \item[View] \texttt{Omega vs ky} 或 \texttt{Omega vs kx}。
+  \item[Spectrum] \texttt{Amplitude} 或 \texttt{Power}。
+  \item[Overlay Linear Freq] 叠加线性参考频率。
+  \item[Linear File] 线性参考文件路径。
+\end{description}
+
+\subsection{Fluctuation 2D 选项}
+\begin{itemize}
+  \item View：\texttt{vs xy}（动画）、\texttt{vs xt}（时空轮廓）。
+  \item Moment：\texttt{Phi, Density, Energy, Temperature, Apar, Bpar}。
+  \item 当 moment 为 \texttt{Density/Energy/Temperature}，需选择 Species。
+  \item 勾选 \texttt{Spatial axes normalize to electron scale (x,y)/\rho_e} 后：
+  空间坐标按电子尺度显示。对于 \texttt{vs xy}，x/y 同时从 $\rho_s$ 转为 $\rho_e$；
+  对于 \texttt{vs xt}，纵轴 $x$ 从 $\rho_s$ 转为 $\rho_e$。
+\end{itemize}
+
+\subsection{Zonal ExB 选项}
+\begin{itemize}
+  \item \texttt{vs Time}
+  \item \texttt{vs kx}
+  \item \texttt{vs Gamma\_Linear}（需要线性文件）
+\end{itemize}
+
+\subsection{Others 选项}
+\begin{itemize}
+  \item \texttt{Error}
+  \item \texttt{rcorr\_phi}: 字段（Phi/Apar/Bpar） + Theta 索引
+  \item \texttt{POD\_parity}: 字段（Apar/Phi） + kx/ky 选择
+\end{itemize}
+
+\section{物种选择逻辑}
+\subsection{候选集合}
+\texttt{\_update\_species\_list()} 会计算“所有已加载案例的公共物种集合”，并输出到下拉框。
+
+\subsection{特殊选项}
+\begin{itemize}
+  \item \texttt{Main Ion (D+T)}：按物种名识别 Deuterium/Tritium。
+  \item \texttt{All Ions}：按电荷 \(Z>0\) 识别所有离子。
+\end{itemize}
+
+\subsection{物种名映射}
+根据 \((Z,M)\) 近似映射为 Electron/Hydrogen/Deuterium/...；无法识别时显示
+\texttt{Ion (Z=?, M=?)}。
+
+\section{时间窗口与自动回退}
+\texttt{\_get\_time\_indices(t)} 行为：
+\begin{enumerate}
+  \item 空输入：默认后 50\% 时间段。
+  \item 超范围输入：钳制到 \([t_{\min},t_{\max}]\)。
+  \item 起止反向或重合：回退后 50\%。
+  \item 仍无有效索引：使用后半段索引作为兜底。
+\end{enumerate}
+
+\section{主要绘图后端详解}
+\subsection{Frequency / Growth Rate}
+\begin{itemize}
+  \item 数据源：\texttt{data.freq}, \texttt{data.ky}
+  \item 支持二维/三维布局的 \texttt{freq} 自动识别；
+  \item 时间窗有效时做均值；
+  \item 可选除以 \(k_y\)。
+\end{itemize}
+
+\subsection{Flux}
+\subsubsection{vs ky / vs Time}
+\begin{itemize}
+  \item 数据源：\texttt{data.ky\_flux}
+  \item 若未加载，自动尝试 \texttt{data.getflux()}。
+  \item 维度预期：5D（species, moment, field, ky, t）。
+\end{itemize}
+
+\subsubsection{vs kx (estimated)}
+\begin{itemize}
+  \item 不依赖 \texttt{ky\_flux}；
+  \item 从场与矩估算 ES/EM 分量并求和：
+  \[
+  \Gamma_{tot}=\Gamma_{ES}+\Gamma_{EM,A}+\Gamma_{EM,B}.
+  \]
+  \item 仅绘制 \(k_x \ge 0\) 支路。
+\end{itemize}
+
+\subsection{Fluctuation 1D}
+通过 \texttt{kxky\_phi/apar/bpar}（必要时触发 \texttt{getbigfield()}）构建：
+\begin{itemize}
+  \item vs ky：对 \(k_x\) 求和并在时窗内平均；
+  \item vs kx：对 \(k_y\) 求和并在时窗内平均；
+  \item vs Time：输出 \(n=0\) 与 \(n>0\) 两条 RMS 时间曲线。
+\end{itemize}
+
+\subsection{Fluctuation FFT}
+\begin{itemize}
+  \item 支持 \( \omega\)-\(k_y \) 与 \( \omega\)-\(k_x \) 视图；
+  \item 支持 Amplitude / Power；
+  \item Linear 模式使用 coherent 叠加，Nonlinear 模式使用 incoherent 叠加；
+  \item 可叠加线性参考频率曲线。
+\end{itemize}
+
+\subsection{Fluctuation 2D}
+\begin{description}
+  \item[\texttt{vs xy}] 根据时间索引生成动画，支持暂停/单步。
+  \item[\texttt{vs xt}] 先重构 \(x\) 方向剖面，再画时空轮廓。
+\end{description}
+
+\subsection{Zonal ExB}
+核心定义：
+\[
+\Omega(k_x,t)=-k_x^2\phi_{ZF}(k_x,t),\qquad
+\omega_{ZF}(t)=\sqrt{\sum_{k_x}|\Omega(k_x,t)|^2}.
+\]
+三种输出：
+\begin{itemize}
+  \item vs Time：\(\omega_{ZF}(t)\)；
+  \item vs kx：\(\Omega(k_x,t)\) 的时窗均值谱；
+  \item vs Gamma\_Linear：\(\langle\omega_{ZF}\rangle_t\) 与 \(\gamma_{lin}(k_y)\) 同图。
+\end{itemize}
+
+\subsection{Others: Error / rcorr\_phi / POD parity}
+\begin{itemize}
+  \item Error：绘制 \texttt{err1/err2}，并默认 y 轴对数。
+  \item rcorr\_phi：径向相关函数；若 SciPy 可用则做包络拟合，输出相关长度。
+  \item POD parity：SVD 模态奇偶性判据
+  \[
+  P_n=\frac{|\int a_n(z)\,dz|}{\int |a_n(z)|\,dz}.
+  \]
+  分类阈值：\(P>0.7\) tearing-like，\(P<0.3\) ballooning-like，其余 mixed。
+\end{itemize}
+
+\section{线性参考文件解析}
+\subsection{文件格式}
+每一行取前 3 个浮点数作为：
+\[
+k_y,\ \omega,\ \gamma.
+\]
+注释行以 \texttt{\#} 开头。
+
+\subsection{路径查找优先级}
+\texttt{\_resolve\_linear\_gamma\_file\_path()} 查找顺序：
+\begin{enumerate}
+  \item 若是绝对路径：直接检查；
+  \item 案例目录；
+  \item 案例目录上一级；
+  \item 当前工作目录；
+  \item \texttt{\$CWD/DEFAULT\_EXPORT\_DIRNAME/<filename>}。
+\end{enumerate}
+
+\section{数据形状与兼容策略}
+\subsection{核心目标}
+不同版本/来源的数据形状可能不一致，模块通过 \texttt{\_coerce\_kxky\_complex()} 和
+\texttt{\_load\_kxky\_complex()} 做统一处理。
+
+\subsection{支持的典型形状}
+\begin{itemize}
+  \item 复数 4D：\([nr,\theta,ky,t]\)
+  \item 复数 5D：\([nr,\theta,species,ky,t]\)
+  \item 打包实虚 5D：\([2,nr,\theta,ky,t]\)
+  \item 打包实虚 6D：\([2,nr,\theta,species,ky,t]\)
+\end{itemize}
+
+\subsection{失败处理}
+若形状无法识别：
+\begin{itemize}
+  \item 打印 \texttt{Unsupported ... shape}；
+  \item 跳过当前案例该图型；
+  \item GUI 保持可继续使用。
+\end{itemize}
+
+\section{容错与提示体系}
+\subsection{提示方式}
+\begin{itemize}
+  \item 终端 \texttt{print}: 数据缺失、形状不符、拟合失败、回退行为等。
+  \item \texttt{messagebox.showwarning/showerror}: 影响用户决策的提示（如单案例限制、theta 分辨率不足）。
+\end{itemize}
+
+\subsection{典型容错行为}
+\begin{itemize}
+  \item 大字段缺失时自动尝试 \texttt{getbigfield()}。
+  \item \texttt{ky\_flux} 缺失时自动尝试 \texttt{getflux()}。
+  \item 时间窗口非法时自动回退。
+  \item 线性文件缺失时给出清晰提示并返回，不中断 GUI。
+\end{itemize}
+
+\section{性能与使用建议}
+\begin{itemize}
+  \item 大案例 + 2D 动画 + FFT 同时操作时内存压力较大，建议分步骤操作。
+  \item 多案例对比优先使用线图（Frequency/Growth/Flux），再对单案例做 2D/FFT 深入分析。
+  \item 需要重复分析时，优先使用 \texttt{Reload} 而不是重新选择目录。
+\end{itemize}
+
+\section{开发者扩展指南}
+\subsection{新增图型标准流程}
+\begin{enumerate}
+  \item 在 \texttt{CgyroUiMixin.\_init\_options()} 创建控件；
+  \item 在 \texttt{update\_options()} 控制显隐；
+  \item 在 \texttt{\_build\_effective\_plot\_type()} 添加 token 映射；
+  \item 在 \texttt{\_dispatch\_single\_case\_plot()} 注册 handler；
+  \item 在 \texttt{\_apply\_axis\_labels()} 补默认标签；
+  \item 必要时增加数据加载/形状兼容函数。
+\end{enumerate}
+
+\subsection{推荐代码原则}
+\begin{itemize}
+  \item 函数级职责单一，复用已有 helper；
+  \item 对数组维度、有限值、空数据做显式检查；
+  \item 遵循“可回退、不中断 GUI”原则；
+  \item 失败信息要可定位（案例名 + 函数语义）。
+\end{itemize}
+
+\section{函数索引（核心）}
+\subsection{UI 侧}
+\begin{longtable}{>{\ttfamily}p{0.33\linewidth} p{0.58\linewidth}}
+\toprule
+函数 & 作用 \\
+\midrule
+\endhead
+\_create\_layout & 创建主窗口、左侧控件、右侧画布与 toolbar。 \\
+\_init\_options & 初始化所有动态选项控件。 \\
+update\_options & 根据 Plot Type 刷新选项布局。 \\
+add\_case / add\_group & 加载单个或批量案例目录。 \\
+reload\_cases & 按原路径重载案例对象。 \\
+\_build\_effective\_plot\_type & GUI 选项到内部 token 的转换。 \\
+\_resolve\_species\_indices & 将物种文本选择解析为索引列表。 \\
+\bottomrule
+\end{longtable}
+
+\subsection{Plotting 侧}
+\begin{longtable}{>{\ttfamily}p{0.33\linewidth} p{0.58\linewidth}}
+\toprule
+函数 & 作用 \\
+\midrule
+\endhead
+plot\_comparison & 主绘图入口，处理单案例限制和最终渲染。 \\
+\_dispatch\_single\_case\_plot & 内部 token 到后端函数的路由。 \\
+\_plot\_frequency\_growth & 频率/增长率绘图。 \\
+\_plot\_flux & Flux 三模式绘图主入口。 \\
+\_plot\_flux\_vs\_kx\_estimated & 估算型 Flux-kx 谱。 \\
+\_plot\_fluctuation\_1d & 一维涨落图。 \\
+\_plot\_fluctuation\_fft & 频谱图。 \\
+\_plot\_fluctuation\_2d & xy 动画。 \\
+\_plot\_xt\_fluctuation\_contours & xt 轮廓图。 \\
+\_plot\_zf\_exb\_shearing\_* & Zonal ExB 三子模式。 \\
+\_plot\_other\_error / rcorr / pod & Others 三子模式。 \\
+\_coerce\_kxky\_complex & 统一复杂数组形状。 \\
+\_load\_kxky\_complex & 懒加载 + fallback 读取。 \\
+\bottomrule
+\end{longtable}
+
+\section{常见问题排查（FAQ）}
+\subsection*{Q1：为什么多选案例后只显示一个？}
+你选的是 contour 类图型（FFT / Fluctuation 2D / POD），当前设计仅支持单案例。
+
+\subsection*{Q2：\texttt{vs Gamma\_Linear} 没有曲线？}
+请检查：
+\begin{itemize}
+  \item \texttt{Linear File} 是否有效；
+  \item 文件行是否包含可解析的 \(k_y,\omega,\gamma\) 三列；
+  \item 终端是否提示找不到文件或无有效行。
+\end{itemize}
+
+\subsection*{Q3：POD parity 报并行分辨率不足？}
+该模式要求 \(\theta>1\)。若案例本身并行采样过低，程序会阻止绘图并提示 warning。
+
+\subsection*{Q4：rcorr\_phi 没有给出相关长度？}
+通常是 SciPy 未安装，或拟合失败。相关曲线仍可显示。
+
+\subsection*{Q5：为什么看不到某些字段（Apar/Bpar）？}
+案例可能未输出对应场，或字段维度与当前解析逻辑不匹配。请查看终端中的 shape 提示。
+
+\section{版本维护建议}
+\begin{itemize}
+  \item 每次新增 Plot Type 后更新本说明书中的“映射表”和“动态选项”章节。
+  \item 每次变更默认常量后同步“默认配置”章节。
+  \item 建议在项目根目录保存一份示例输入和示例图作为回归检查基线。
+\end{itemize}
+
+\section{编译说明}
+推荐使用 XeLaTeX：
+\begin{lstlisting}
+xelatex cgyro_comparison_manual.tex
+\end{lstlisting}
+如需目录/引用稳定，可连续编译两次。
+
+\end{document}

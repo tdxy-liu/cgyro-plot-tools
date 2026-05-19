@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local editor/project files
+.vscode/
+.idea/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
