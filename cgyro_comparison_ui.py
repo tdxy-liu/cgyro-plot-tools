@@ -192,6 +192,13 @@ class CgyroUiMixin:
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit)
 
+        data_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Data", menu=data_menu)
+        data_menu.add_command(
+            label="transfer bin to readable",
+            command=self.transfer_bin_to_readable,
+        )
+
     def _init_options(self):
         """Initialize all plot-option widgets and bind dynamic callbacks."""
         self.options_frame.columnconfigure(0, weight=1)

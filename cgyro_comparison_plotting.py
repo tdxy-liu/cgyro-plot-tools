@@ -5868,8 +5868,34 @@ class CgyroPlottingMixin:
             e_t = np.sum(chan[1, :, 0, :], axis=0)
             e_n = np.sum(chan[1, :, 1, :], axis=0)
 
-            # S denominator: total species, idx5 channel (0-based 4), consistent with triad_v3
-            s_total = np.sum(chan[:, :, 4, :], axis=(0, 1))
+            # S denominator definition (user-requested):
+            #   S(t) = sum_a sum_p sum_{n!=0} T_a * deltaS_{a,k}(p,n,t)
+            # where deltaS_{a,k} is triad idx5 (0-based channel 4).
+            ds_all = np.real(f_complex[:, :, 4, :, :n_t_use])  # [species, radial, n, t]
+            if ds_all.shape[2] > 1:
+                ds_nonzonal = ds_all[:, :, 1:, :]  # n != 0
+            else:
+                ds_nonzonal = ds_all[:, :, 0:0, :]
+
+            temp_a = np.asarray(getattr(data, 'temp', []), dtype=float).reshape(-1)
+            t_weight = np.ones(int(n_species), dtype=float)
+            n_temp = min(int(temp_a.size), int(n_species))
+            if n_temp > 0:
+                t_weight[:n_temp] = temp_a[:n_temp]
+            # Guard against invalid profile values while preserving sign of deltaS.
+            t_weight = np.where(np.isfinite(t_weight), t_weight, 1.0)
+
+            if ds_nonzonal.shape[2] > 0:
+                s_total = np.sum(
+                    ds_nonzonal * t_weight[:, np.newaxis, np.newaxis, np.newaxis],
+                    axis=(0, 1, 2),
+                )
+            else:
+                # Fallback for degenerate grids without n>0 entries.
+                s_total = np.sum(
+                    ds_all * t_weight[:, np.newaxis, np.newaxis, np.newaxis],
+                    axis=(0, 1, 2),
+                )
 
             d_t_avg = float(np.mean(d_t[t_idx]))
             d_n_avg = float(np.mean(d_n[t_idx]))

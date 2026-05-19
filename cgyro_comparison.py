@@ -11,13 +11,15 @@ import tkinter as tk
 try:
     from cgyro_comparison_ui import CgyroUiMixin
     from cgyro_comparison_plotting import CgyroPlottingMixin
+    from cgyro_data_export import CgyroDataExportMixin
 except ImportError:
     # Support package-style import, e.g. `from CGYRO.cgyro_comparison import ...`.
     from .cgyro_comparison_ui import CgyroUiMixin
     from .cgyro_comparison_plotting import CgyroPlottingMixin
+    from .cgyro_data_export import CgyroDataExportMixin
 
 
-class CGYRO_Comparison(CgyroUiMixin, CgyroPlottingMixin):
+class CGYRO_Comparison(CgyroUiMixin, CgyroDataExportMixin, CgyroPlottingMixin):
     """Main GUI/controller class for interactive CGYRO case comparison."""
 
 
