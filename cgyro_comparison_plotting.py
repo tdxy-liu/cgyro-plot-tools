@@ -34,6 +34,24 @@ except Exception:
 
 
 class CgyroPlottingMixin:
+    def _average_mode_name(self):
+        """Return current amplitude-averaging mode name from UI."""
+        try:
+            mode = str(self.fluc_average_var.get()).strip().lower()
+        except Exception:
+            mode = "root mean square"
+        if mode == "mean absolute":
+            return "Mean Absolute"
+        return "Root Mean Square"
+
+    def _use_mean_absolute_average(self):
+        """True when using Mean Absolute averaging mode."""
+        return self._average_mode_name() == "Mean Absolute"
+
+    def _average_mode_short_tag(self):
+        """Compact tag for legends/labels."""
+        return "MA" if self._use_mean_absolute_average() else "RMS"
+
     def _reset_figure_layout_defaults(self):
         """
         Restore figure-level subplot/layout state to Matplotlib defaults.
@@ -652,6 +670,9 @@ class CgyroPlottingMixin:
         elif plot_type == "ZF ExB Shearing Spectrum":
             x_label = r"$k_x \rho_s$"
             y_label = r"$\omega_{E\times B}^{ZF}\ (c_s/a)$"
+        elif plot_type == "ZF Phi Spectrum (theta0)":
+            x_label = r"$k_x \rho_s$"
+            y_label = r"$\langle |\phi_{ZF}(k_x,\theta=0)|/\rho_s \rangle_t$"
         elif plot_type == "ZF ExB Fig4 (kx=ky)":
             x_label = r"$k\rho_s\ (k_x=k_y)$"
             y_label = r"$\langle\omega_{E\times B}^{ZF}\rangle,\ k_x\langle V_{ZF}\rangle,\ \gamma_{lin}\ (c_s/a)$"
@@ -3418,6 +3439,12 @@ class CgyroPlottingMixin:
             
         # Normalize
         field_data = field_data / rho_norm
+        avg_mode = self._average_mode_name()
+        avg_tag = self._average_mode_short_tag()
+        if self._use_mean_absolute_average():
+            y_label_rho_norm = fr'$\sum \langle | {field_name}/\rho_s | \rangle_t$'
+        else:
+            y_label_rho_norm = fr'$\sqrt{{\sum \langle | {field_name}/\rho_s |^2 \rangle_t}}$'
         
         # shape: [nr-1, ny, nt]
         # Calculate amplitude squared |field|^2
@@ -3427,21 +3454,28 @@ class CgyroPlottingMixin:
         t_valid = t_valid[(t_valid >= 0) & (t_valid < field_sq.shape[-1])]
         
         if "vs ky" in plot_type:
-            # Plot time-averaged RMS amplitude vs ky
+            # Plot time-averaged amplitude vs ky.
             # Sum over kx (axis 0) -> [ny, nt]
-            field_ky_t = np.sum(field_sq, axis=0)
+            if self._use_mean_absolute_average():
+                field_ky_t = np.sum(np.abs(field_data), axis=0)
+            else:
+                field_ky_t = np.sum(field_sq, axis=0)
             
             # Time average over selected window
             if len(t_valid) > 0:
-                # Average over time indices
-                y_vals = np.mean(field_ky_t[:, t_valid], axis=1)
-                label = self._append_avg_suffix(label, t_start, t_end, prefix="Avg")
+                if self._use_mean_absolute_average():
+                    y_vals = np.mean(field_ky_t[:, t_valid], axis=1)
+                else:
+                    y_vals = np.sqrt(np.mean(field_ky_t[:, t_valid], axis=1))
+                label = self._append_avg_suffix(label, t_start, t_end, prefix=f"Avg-{avg_tag}")
             else:
                 # Fallback to last time point
-                y_vals = field_ky_t[:, -1]
-                
-            # Plot sqrt(Sum |field|^2) -> RMS amplitude
-            y = np.sqrt(y_vals)
+                if self._use_mean_absolute_average():
+                    y_vals = np.abs(field_ky_t[:, -1])
+                else:
+                    y_vals = np.sqrt(np.maximum(field_ky_t[:, -1], 0.0))
+
+            y = y_vals
             
             x = ky
             if x.size != y.size:
@@ -3451,22 +3485,31 @@ class CgyroPlottingMixin:
             
             self._plot_1d(x, y, label, plot_type)
             self.ax.set_xlabel(r'$k_y \rho_s$')
-            self.ax.set_ylabel(fr'$\sqrt{{\sum | {field_name} |^2}}$')
+            self.ax.set_ylabel(y_label_rho_norm)
             # self.ax.set_yscale('log')
             # self.ax.set_xscale('log') # Usually log-log for spectra
 
         elif "vs kx" in plot_type:
-            # Plot time-averaged RMS amplitude vs kx
+            # Plot time-averaged amplitude vs kx.
             # Sum over ky (axis 1) -> [kx, nt]
-            field_kx_t = np.sum(field_sq, axis=1)
+            if self._use_mean_absolute_average():
+                field_kx_t = np.sum(np.abs(field_data), axis=1)
+            else:
+                field_kx_t = np.sum(field_sq, axis=1)
 
             if len(t_valid) > 0:
-                y_vals = np.mean(field_kx_t[:, t_valid], axis=1)
-                label = self._append_avg_suffix(label, t_start, t_end, prefix="Avg")
+                if self._use_mean_absolute_average():
+                    y_vals = np.mean(field_kx_t[:, t_valid], axis=1)
+                else:
+                    y_vals = np.sqrt(np.mean(field_kx_t[:, t_valid], axis=1))
+                label = self._append_avg_suffix(label, t_start, t_end, prefix=f"Avg-{avg_tag}")
             else:
-                y_vals = field_kx_t[:, -1]
+                if self._use_mean_absolute_average():
+                    y_vals = np.abs(field_kx_t[:, -1])
+                else:
+                    y_vals = np.sqrt(np.maximum(field_kx_t[:, -1], 0.0))
 
-            y = np.sqrt(y_vals)
+            y = y_vals
 
             n_kx = y.size
             x = np.asarray(getattr(data, 'kx', [])).reshape(-1)
@@ -3483,7 +3526,7 @@ class CgyroPlottingMixin:
 
             self._plot_1d(x, y, label, plot_type)
             self.ax.set_xlabel(r'$k_x \rho_s$')
-            self.ax.set_ylabel(fr'$\sqrt{{\sum | {field_name} |^2}}$')
+            self.ax.set_ylabel(y_label_rho_norm)
 
         
         elif "vs Time" in plot_type:
@@ -3503,18 +3546,24 @@ class CgyroPlottingMixin:
             ky_idx_0 = min(ky_idx_0, field_sq.shape[1] - 1)
             
             # n=0 intensity: sum over kx (axis 0) at ky=0
-            field_sq_n0 = np.sum(field_sq[:, ky_idx_0, :], axis=0) # [nt]
+            if self._use_mean_absolute_average():
+                field_abs_n0 = np.sum(np.abs(field_data[:, ky_idx_0, :]), axis=0)  # [nt]
+            else:
+                field_sq_n0 = np.sum(field_sq[:, ky_idx_0, :], axis=0)  # [nt]
             
             # n>0 intensity: sum over kx (axis 0) and sum over ky!=0
             # Create mask for ky!=0
             mask_n = np.ones(field_sq.shape[1], dtype=bool)
             mask_n[ky_idx_0] = False
             
-            field_sq_nn = np.sum(field_sq[:, mask_n, :], axis=(0, 1)) # [nt]
-            
-            # RMS
-            y0 = np.sqrt(field_sq_n0)
-            yn = np.sqrt(field_sq_nn)
+            if self._use_mean_absolute_average():
+                field_abs_nn = np.sum(np.abs(field_data[:, mask_n, :]), axis=(0, 1))  # [nt]
+                y0 = np.abs(field_abs_n0)
+                yn = np.abs(field_abs_nn)
+            else:
+                field_sq_nn = np.sum(field_sq[:, mask_n, :], axis=(0, 1))  # [nt]
+                y0 = np.sqrt(field_sq_n0)
+                yn = np.sqrt(field_sq_nn)
             
             x = np.asarray(getattr(data, 't', [])).reshape(-1)
             if x.size == 0:
@@ -3537,7 +3586,7 @@ class CgyroPlottingMixin:
                 avg_inner = self._format_avg_suffix(t_mean_start, t_mean_end, prefix="Avg").strip(" ()")
                 label_n0 = (
                     f"{label} (n=0) "
-                    f"({avg_inner}, "
+                    f"({avg_inner}, {avg_mode}, "
                     f"Mean: {mean_y0:.2e}, Std: {std_y0:.2e})"
                 )
 
@@ -3547,7 +3596,7 @@ class CgyroPlottingMixin:
                 std_yn = np.std(yn_subset)
                 label_nn = (
                     f"{label} (n>0) "
-                    f"({avg_inner}, "
+                    f"({avg_inner}, {avg_mode}, "
                     f"Mean: {mean_yn:.2e}, Std: {std_yn:.2e})"
                 )
                 
@@ -3565,7 +3614,7 @@ class CgyroPlottingMixin:
                 self.ax.plot(x, yn, label=f"{label} (n>0)")
             
             self.ax.set_xlabel(r'$t (a/c_s)$')
-            self.ax.set_ylabel(fr'$\sqrt{{\sum | {field_name} |^2}}$')
+            self.ax.set_ylabel(y_label_rho_norm)
             # self.ax.set_yscale('log')
 
     def _get_zf_exb_phi_kx_t(self, data, label):
@@ -3640,8 +3689,27 @@ class CgyroPlottingMixin:
                 f"using closest ky={ky[ky_idx_0]:.4g}"
             )
 
-        # Zonal component: ky~0 and average over theta.
-        phi_zonal = np.mean(phi[:, :, ky_idx_0, :], axis=1)  # [n_radial, n_time]
+        # Zonal component: ky~0 and theta=0 slice (use nearest available theta grid point).
+        theta_arr = np.asarray(getattr(data, 'ftheta_plot', []), dtype=float).reshape(-1)
+        n_theta = int(phi.shape[1]) if phi.ndim >= 4 else 0
+        itheta0 = 0
+        theta0_val = np.nan
+        if n_theta > 0 and theta_arr.size > 0:
+            n_use = min(n_theta, theta_arr.size)
+            theta_use = theta_arr[:n_use]
+            itheta0 = int(np.argmin(np.abs(theta_use)))
+            theta0_val = float(theta_use[itheta0])
+        elif n_theta > 0:
+            # Fallback when explicit theta grid is unavailable.
+            itheta0 = 0
+
+        if np.isfinite(theta0_val) and abs(theta0_val) > 1.0e-6:
+            print(
+                f"Info: theta=0 not found exactly for {label}; "
+                f"using closest theta={theta0_val:.4g} (index={itheta0})."
+            )
+
+        phi_zonal = phi[:, itheta0, ky_idx_0, :]  # [n_radial, n_time]
 
         kx = np.asarray(getattr(data, 'kx', []), dtype=float).reshape(-1)
         n_radial = phi_zonal.shape[0]
@@ -3667,9 +3735,8 @@ class CgyroPlottingMixin:
             kx = 2.0 * np.pi * p_index / length
             phi_kx_t = phi_zonal
 
-        rho = float(getattr(data, 'rho', 1.0))
-        if np.isfinite(rho) and abs(rho) > 1e-12:
-            phi_kx_t = phi_kx_t / rho
+        # Align with collect.get_zfshear: keep raw zonal phi here
+        # (collect applies rho normalization in the final gamma_zf/zf_shear formula path).
 
         t = np.asarray(getattr(data, 't', []), dtype=float).reshape(-1)
         if t.size == 0:
@@ -4191,9 +4258,13 @@ class CgyroPlottingMixin:
         if kx is None:
             return None, None
 
-        # CGYRO does not provide a standalone C_xy metric output; use normalized estimate.
-        omega_kx_t = -(kx[:, None] ** 2) * phi_kx_t
-        shear_rate = np.sqrt(np.sum(np.abs(omega_kx_t) ** 2, axis=0))
+        # Match collect.get_zfshear():
+        # zf_kx(t) contribution uses |phi(kx,t)| and shearing scalar is
+        # sum_kx kx^2 * |phi(kx,t)| / rho.
+        rho = float(getattr(data, 'rho', 1.0))
+        if (not np.isfinite(rho)) or abs(rho) <= 1e-12:
+            rho = 1.0
+        shear_rate = np.sum((kx[:, None] ** 2) * np.abs(phi_kx_t), axis=0) / rho
 
         n_t = min(t.size, shear_rate.size)
         if n_t <= 0:
@@ -4212,6 +4283,60 @@ class CgyroPlottingMixin:
             data, label, t_indices, t_start, t_end
         )
 
+    def _compute_zf_phi_theta0_kx_profile(self, data, label, t_indices, t_start, t_end):
+        """
+        Compute time-averaged |phi_ZF|/rho_s profile vs kx at theta=0.
+
+        Returns dict with:
+        - x: sorted kx axis
+        - y_phi: sorted <|phi_ZF|/rho_s>_t
+        - label: label with avg suffix when a valid time window exists
+        - kx_raw, phi_kx_t, valid_t, n_t: raw arrays for downstream reuse
+        """
+        kx, phi_kx_t, t = self._get_zf_exb_phi_kx_t(data, label)
+        if kx is None:
+            return None
+
+        rho = float(getattr(data, 'rho', 1.0))
+        if (not np.isfinite(rho)) or abs(rho) <= 1.0e-12:
+            rho = 1.0
+
+        phi_abs_kx_t = np.abs(phi_kx_t) / rho
+        n_t = min(t.size, phi_abs_kx_t.shape[-1])
+        if n_t <= 0:
+            print(f"No time samples available for {label}")
+            return None
+
+        valid_t = np.asarray(t_indices, dtype=int)
+        valid_t = valid_t[(valid_t >= 0) & (valid_t < n_t)]
+        if valid_t.size > 0:
+            y_phi = np.mean(phi_abs_kx_t[:, valid_t], axis=1)
+            label_out = self._append_avg_suffix(label, t_start, t_end, prefix="Avg")
+        else:
+            y_phi = phi_abs_kx_t[:, -1]
+            label_out = label
+
+        x = np.asarray(kx, dtype=float).reshape(-1)
+        y_phi = np.asarray(y_phi, dtype=float).reshape(-1)
+        if x.size != y_phi.size:
+            n = min(x.size, y_phi.size)
+            x = x[:n]
+            y_phi = y_phi[:n]
+
+        order = np.argsort(x)
+        x = x[order]
+        y_phi = y_phi[order]
+
+        return {
+            'x': x,
+            'y_phi': y_phi,
+            'label': label_out,
+            'kx_raw': np.asarray(kx, dtype=float).reshape(-1),
+            'phi_kx_t': np.asarray(phi_kx_t),
+            'valid_t': valid_t,
+            'n_t': int(n_t),
+        }
+
     def _plot_zf_exb_shearing_rate_kx_spectrum(self, data, label, t_indices, t_start, t_end):
         """
         Plot time-averaged zonal ExB shearing spectrum versus `kx`.
@@ -4219,44 +4344,28 @@ class CgyroPlottingMixin:
         This uses `| -kx^2 * phi_zonal(kx,t) |` as the spectral proxy and
         keeps the non-negative `kx` branch for conventional presentation.
         """
-        kx, phi_kx_t, t = self._get_zf_exb_phi_kx_t(data, label)
-        if kx is None:
+        prof = self._compute_zf_phi_theta0_kx_profile(data, label, t_indices, t_start, t_end)
+        if prof is None:
             return
 
-        # CGYRO does not provide a standalone C_xy metric output; use normalized estimate.
-        omega_kx_t = np.abs(-(kx[:, None] ** 2) * phi_kx_t)
-        n_t = min(t.size, omega_kx_t.shape[-1])
-        if n_t <= 0:
-            print(f"No time samples available for {label}")
-            return
+        x = prof['x']
+        y_phi = prof['y_phi']
+        label_plot = prof['label']
+        y = (x ** 2) * y_phi
 
-        valid_t = np.asarray(t_indices, dtype=int)
-        valid_t = valid_t[(valid_t >= 0) & (valid_t < n_t)]
-        if valid_t.size > 0:
-            y = np.mean(omega_kx_t[:, valid_t], axis=1)
-            label = self._append_avg_suffix(label, t_start, t_end, prefix="Avg")
-        else:
-            y = omega_kx_t[:, -1]
-
-        x = np.asarray(kx, dtype=float).reshape(-1)
-        if x.size != y.size:
-            n = min(x.size, y.size)
-            x = x[:n]
-            y = y[:n]
-
-        # Match literature-style plotting (positive kx branch).
-        if np.any(x < 0.0) and np.any(x > 0.0):
-            mask = x >= 0.0
-            x = x[mask]
-            y = y[mask]
-
-        order = np.argsort(x)
-        x = x[order]
-        y = y[order]
-
-        self._plot_1d(x, y, label, "ZF ExB Shearing Spectrum")
+        self._plot_1d(x, y, label_plot, "ZF ExB Shearing Spectrum")
         self.ax.set_xlabel(r'$k_x \rho_s$')
         self.ax.set_ylabel(r'$\omega_{E\times B}^{ZF}\ (c_s/a)$')
+
+    def _plot_zf_phi_kx_theta0_spectrum(self, data, label, t_indices, t_start, t_end):
+        """Plot collect-style zonal potential spectrum |phi_ZF| vs kx at theta=0."""
+        prof = self._compute_zf_phi_theta0_kx_profile(data, label, t_indices, t_start, t_end)
+        if prof is None:
+            return
+
+        self._plot_1d(prof['x'], prof['y_phi'], prof['label'], "ZF Phi Spectrum (theta0)")
+        self.ax.set_xlabel(r'$k_x \rho_s$')
+        self.ax.set_ylabel(r'$\langle |\phi_{ZF}(k_x,\theta=0)|/\rho_s \rangle_t$')
 
     def _plot_zf_exb_fig4_kx_eq_ky(self, data, label, t_indices, t_start, t_end):
         """
@@ -4279,7 +4388,7 @@ class CgyroPlottingMixin:
 
         Optional:
         - If user inputs one `ky`, draw a vertical marker and append
-          `omegaZF/gamma_lin` and `kxVzf/gamma_lin` to legend labels.
+          `omegaZF/gamma_lin` and `kx*<Vzf>/gamma_lin` to legend labels.
         """
         # Optional ky marker requested by user for ratio outputs.
         ky_target = None
@@ -4290,36 +4399,31 @@ class CgyroPlottingMixin:
         except Exception:
             ky_target = None
 
-        # 1) Nonlinear zonal shearing spectrum averaged over selected time window.
-        kx, phi_kx_t, t = self._get_zf_exb_phi_kx_t(data, label)
-        if kx is None:
+        # 1) Reuse phi-vs-kx(theta=0) profile for consistent kx grid and averaging.
+        prof = self._compute_zf_phi_theta0_kx_profile(data, label, t_indices, t_start, t_end)
+        if prof is None:
             return
 
-        omega_kx_t = np.abs(-(kx[:, None] ** 2) * phi_kx_t)
-        # V_ZF(t) = 0.5 * sqrt(sum_kx |kx * rho_D * phi_bar(kx, ktheta=0, t)|^2).
-        # In current normalization, rho_D is treated as 1.0.
-        vzf_t = 0.5 * np.sqrt(np.sum(np.abs(kx[:, None] * phi_kx_t) ** 2, axis=0))
-        n_t = min(t.size, omega_kx_t.shape[-1])
-        if n_t <= 0:
-            print(f"No time samples available for {label}")
-            return
+        x_zf = np.asarray(prof['x'], dtype=float).reshape(-1)
+        y_phi = np.asarray(prof['y_phi'], dtype=float).reshape(-1)
+        y_zf = (x_zf ** 2) * y_phi
 
-        valid_t = np.asarray(t_indices, dtype=int)
-        valid_t = valid_t[(valid_t >= 0) & (valid_t < n_t)]
+        kx_raw = np.asarray(prof['kx_raw'], dtype=float).reshape(-1)
+        phi_kx_t = np.asarray(prof['phi_kx_t'])
+        valid_t = np.asarray(prof['valid_t'], dtype=int).reshape(-1)
+        n_t = int(prof['n_t'])
+        vzf_t = 0.5 * np.sqrt(np.sum(np.abs(kx_raw[:, None] * phi_kx_t[:, :n_t]) ** 2, axis=0))
+
         avg_suffix = self._format_avg_suffix(t_start, t_end, prefix="Avg")
         if valid_t.size > 0:
-            omega_kx = np.mean(omega_kx_t[:, valid_t], axis=1)
             vzf_mean = float(np.mean(vzf_t[valid_t]))
             zf_label = f"{label} " + r"$\langle\omega_{ZF}(k_x)\rangle$" + avg_suffix
             vzf_label = f"{label} " + r"$k_x\langle V_{ZF}\rangle$" + avg_suffix
         else:
-            omega_kx = omega_kx_t[:, -1]
             vzf_mean = float(np.mean(vzf_t[:n_t]))
             zf_label = f"{label} " + r"$\langle\omega_{ZF}(k_x)\rangle$"
             vzf_label = f"{label} " + r"$k_x\langle V_{ZF}\rangle$"
 
-        x_zf = np.asarray(kx, dtype=float).reshape(-1)
-        y_zf = np.asarray(omega_kx, dtype=float).reshape(-1)
         y_kx_vzf = np.asarray(x_zf * vzf_mean, dtype=float).reshape(-1)
         n = min(x_zf.size, y_zf.size, y_kx_vzf.size)
         x_zf = x_zf[:n]
@@ -4975,6 +5079,7 @@ class CgyroPlottingMixin:
         T = np.real(f_used[:, 0, n_sel, :])      # [radial, t]
         N_raw = np.real(f_used[:, 1, n_sel, :])  # non-zonal pairs transfer
         Ent = np.real(f_used[:, 2, n_sel, :])    # [radial, t]
+        S_raw = np.real(f_used[:, 4, n_sel, :])  # idx5: entropy-like state quantity
         Wkt = np.real(f_used[:, 3, n_sel, :])    # dW_em/dt, [radial, t]
         diss_r = np.real(f_used[:, 5, n_sel, :]) # [radial, t]
         diss_th = np.real(f_used[:, 6, n_sel, :])
@@ -4983,6 +5088,7 @@ class CgyroPlottingMixin:
         T0 = np.sum(T, axis=0)
         N0 = np.sum(N_raw, axis=0)
         Ent0 = np.sum(Ent, axis=0)
+        S0 = np.sum(S_raw, axis=0)
         Wkt0 = np.sum(Wkt, axis=0)
         diss_r0 = np.sum(diss_r, axis=0)
         diss_th0 = np.sum(diss_th, axis=0)
@@ -5061,6 +5167,7 @@ class CgyroPlottingMixin:
             'T0': np.asarray(T0[:n_time_use], dtype=float),
             'N0': n0_use,
             'Ent0': ent0_use,
+            'S0': np.asarray(S0[:n_time_use], dtype=float),
             'Wkt0': np.asarray(Wkt0[:n_time_use], dtype=float),
             'diss_r0': np.asarray(diss_r0[:n_time_use], dtype=float),
             'diss_th0': np.asarray(diss_th0[:n_time_use], dtype=float),
@@ -5451,8 +5558,8 @@ class CgyroPlottingMixin:
             y_label = r"$\mathcal{N}^{NZ\rightarrow Z}$"
             qty_name = "N"
         elif qty_txt == 'entropy':
-            y_time = np.asarray(terms['dSg_dt'], dtype=float)
-            y_label = r"$dS_g/dt$"
+            y_time = np.asarray(terms.get('S0', terms['dSg_dt']), dtype=float)
+            y_label = r"$S_g$"
             qty_name = "entropy"
         else:
             y_time = np.asarray(terms['T0'], dtype=float) - np.asarray(terms['N0'], dtype=float)
@@ -5868,37 +5975,24 @@ class CgyroPlottingMixin:
             e_t = np.sum(chan[1, :, 0, :], axis=0)
             e_n = np.sum(chan[1, :, 1, :], axis=0)
 
-            # S denominator definition (strict, from idx3):
-            #   idx3 = d(T_a * deltaS_{a,k})/dt
-            #   S(t) = sum_{a,p,n!=0} T_a*deltaS_{a,k}(p,n,t)
-            # So we first sum idx3 over (a,p,n!=0), then integrate in time.
-            dts_all = np.real(f_complex[:, :, 2, :, :n_t_use])  # [species, radial, n, t]
-            if dts_all.shape[2] > 1:
-                dts_nonzonal = dts_all[:, :, 1:, :]  # n != 0
+            # S denominator (direct from idx5):
+            #   S(t) = sum_{a,p,n!=0} Re[idx5](a,p,n,t)
+            s_all = np.real(f_complex[:, :, 4, :, :n_t_use])  # [species, radial, n, t]
+            if s_all.shape[2] > 1:
+                s_nonzonal = s_all[:, :, 1:, :]  # n != 0
             else:
-                dts_nonzonal = dts_all[:, :, 0:0, :]
-
-            if dts_nonzonal.shape[2] > 0:
-                dS_dt_total = np.sum(dts_nonzonal, axis=(0, 1, 2))  # [t]
+                s_nonzonal = s_all[:, :, 0:0, :]
+            if s_nonzonal.shape[2] > 0:
+                s_total_idx5 = np.sum(s_nonzonal, axis=(0, 1, 2))  # [t]
             else:
                 # Fallback for degenerate grids without n>0 entries.
-                dS_dt_total = np.sum(dts_all, axis=(0, 1, 2))  # [t]
-
-            # Time integral with non-uniform dt support.
-            s_total = np.zeros_like(dS_dt_total, dtype=float)
-            if s_total.size > 1:
-                dt = np.diff(t_axis)
-                dt = np.where(np.isfinite(dt), dt, 0.0)
-                dt = np.where(dt > 0.0, dt, 0.0)
-                # Trapezoidal cumulative integral; integration constant set to 0.
-                incr = 0.5 * (dS_dt_total[:-1] + dS_dt_total[1:]) * dt
-                s_total[1:] = np.cumsum(incr)
+                s_total_idx5 = np.sum(s_all, axis=(0, 1, 2))  # [t]
 
             d_t_avg = float(np.mean(d_t[t_idx]))
             d_n_avg = float(np.mean(d_n[t_idx]))
             e_t_avg = float(np.mean(e_t[t_idx]))
             e_n_avg = float(np.mean(e_n[t_idx]))
-            s_avg = float(np.mean(s_total[t_idx]))
+            s_avg = float(np.mean(s_total_idx5[t_idx]))
             if (not np.isfinite(s_avg)) or abs(s_avg) <= 1.0e-12:
                 skipped += 1
                 continue
@@ -5974,10 +6068,7 @@ class CgyroPlottingMixin:
                 for k, v in grp_key:
                     parts.append(f"{k}={v:.4g}" if np.isfinite(v) else f"{k}=NA")
                 curve_suffix = ", ".join(parts)
-            t0_vals = [float(r['t0']) for r in rows if np.isfinite(r.get('t0', np.nan))]
-            t1_vals = [float(r['t1']) for r in rows if np.isfinite(r.get('t1', np.nan))]
-            if len(t0_vals) > 0 and len(t1_vals) > 0:
-                curve_suffix = f"{curve_suffix}, Avg: {min(t0_vals):.1f}-{max(t1_vals):.1f}"
+            # Keep legend concise in vs-2D mode: no time-window text in curve labels.
 
             xu = np.asarray(x_u, dtype=float)
             self.ax.plot(xu, np.asarray(nd_u, dtype=float), '-s', color='k', linewidth=1.8, markersize=6.0, label=rf'$\mathcal{{N}}_D/S$ ({curve_suffix})')
@@ -6049,6 +6140,9 @@ class CgyroPlottingMixin:
                 data, label, t_indices, t_start, t_end
             ),
             "ZF ExB Shearing Spectrum": lambda: self._plot_zf_exb_shearing_rate_kx_spectrum(
+                data, label, t_indices, t_start, t_end
+            ),
+            "ZF Phi Spectrum (theta0)": lambda: self._plot_zf_phi_kx_theta0_spectrum(
                 data, label, t_indices, t_start, t_end
             ),
             "ZF ExB Fig4 (kx=ky)": lambda: self._plot_zf_exb_fig4_kx_equals_ky_comparison(

@@ -38,6 +38,7 @@ class CgyroUiMixin:
         self.root = root
         self.root.title(DEFAULT_APP_TITLE)
         self.root.geometry(DEFAULT_WINDOW_GEOMETRY)
+        self.fluc_average_var = tk.StringVar(value="Root Mean Square")
 
         self.cases = {}  # Dictionary to store loaded cases: {name: cgyrodata_object}
         self.ani = None # Animation object
@@ -199,6 +200,21 @@ class CgyroUiMixin:
             command=self.transfer_bin_to_readable,
         )
 
+        average_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Average", menu=average_menu)
+        average_menu.add_radiobutton(
+            label="Mean Absolute",
+            variable=self.fluc_average_var,
+            value="Mean Absolute",
+            command=self.update_options,
+        )
+        average_menu.add_radiobutton(
+            label="Root Mean Square",
+            variable=self.fluc_average_var,
+            value="Root Mean Square",
+            command=self.update_options,
+        )
+
     def _init_options(self):
         """Initialize all plot-option widgets and bind dynamic callbacks."""
         self.options_frame.columnconfigure(0, weight=1)
@@ -282,6 +298,13 @@ class CgyroUiMixin:
         
         self.fluc_xaxis_var = tk.StringVar(value="v.s ky")
         self.fluc_xaxis_combo = ttk.Combobox(self.options_frame, textvariable=self.fluc_xaxis_var, values=["v.s ky", "v.s kx", "v.s Time", "fft"], state="readonly", width=15)
+        self.fluc_formula_frame = ttk.Frame(self.options_frame)
+        self.fluc_formula_fig = plt.Figure(figsize=(3.2, 1.4), dpi=100)
+        self.fluc_formula_ax = self.fluc_formula_fig.add_subplot(111)
+        self.fluc_formula_ax.axis("off")
+        self.fluc_formula_fig.patch.set_facecolor("white")
+        self.fluc_formula_canvas = FigureCanvasTkAgg(self.fluc_formula_fig, master=self.fluc_formula_frame)
+        self.fluc_formula_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
         # 4. Species Selection (Flux, Fluctuation 2D)
         self.species_label = ttk.Label(self.options_frame, text="Species:")
@@ -376,7 +399,7 @@ class CgyroUiMixin:
         self.zf_xaxis_combo = ttk.Combobox(
             self.options_frame,
             textvariable=self.zf_xaxis_var,
-            values=["vs Time", "vs kx", "vs gamma_lin"],
+            values=["vs Time", "vs kx", "phi vs kx(theta=0)", "vs gamma_lin"],
             state="readonly",
             width=15
         )
@@ -629,6 +652,7 @@ class CgyroUiMixin:
             self.flux_scan_xparam_label, self.flux_scan_xparam_combo,
             self.flux_formula_frame,
             self.fluc_field_combo, self.fluc_xaxis_combo,
+            self.fluc_formula_frame,
             self.species_label, self.species_combo, self.plot_all_species_check,
             self.fluc2d_view_label, self.fluc2d_view_combo,
             self.fluc2d_x_elec_check,
@@ -694,6 +718,32 @@ class CgyroUiMixin:
             y -= dy
         self.flux_formula_canvas.draw_idle()
 
+    def _render_fluctuation_1d_formula_math(self):
+        """Render formula notes for Fluctuation 1D averaging definition."""
+        mode = str(self.fluc_average_var.get()).strip().lower()
+        if mode == "mean absolute":
+            lines = [
+                r"Fluctuation 1D: Mean Absolute",
+                r"$A(k)=\left\langle \sum |\phi/\rho_s| \right\rangle_t$",
+                r"Global average mode also affects ZF averaged amplitudes.",
+            ]
+        else:
+            lines = [
+                r"Fluctuation 1D: Root Mean Square",
+                r"$A(k)=\sqrt{\left\langle \sum |\phi/\rho_s|^2 \right\rangle_t}$",
+                r"Global average mode also affects ZF averaged amplitudes.",
+            ]
+
+        ax = self.fluc_formula_ax
+        ax.clear()
+        ax.axis("off")
+        y = 0.98
+        for i, line in enumerate(lines):
+            fs = 8.8 if i == 0 else 8.0
+            ax.text(0.01, y, line, transform=ax.transAxes, ha="left", va="top", fontsize=fs)
+            y -= 0.28
+        self.fluc_formula_canvas.draw_idle()
+
     def _render_fft_formula_math(self):
         """Render math notes for FFT amplitude/power interpretation."""
         spectrum_mode = self.fft_spectrum_var.get().strip().lower()
@@ -738,6 +788,14 @@ class CgyroUiMixin:
                 r"$\Omega(k_x,t)=-k_x^2\,\phi_{ZF}(k_x,t)$",
                 r"$\bar{\omega}_{ZF}(k_x)=\left\langle |\Omega(k_x,t)|\right\rangle_{t\in[t_1,t_2]}$",
                 r"Plotted on non-negative branch: $k_x\geq 0$.",
+            ]
+        elif mode == "phi vs kx(theta=0)":
+            lines = [
+                r"$\phi_{ZF}$ vs $k_x$ at $\theta=0$",
+                r"$\phi_{ZF}(k_x,t)=\phi(k_x,k_y\!\approx\!0,\theta\!=\!0,t)$",
+                r"$\bar{\phi}_{ZF}(k_x)=\left\langle |\phi_{ZF}(k_x,t)|/\rho_s\right\rangle_{t\in[t_1,t_2]}$",
+                r"Uses closest available $\theta$ grid point to 0 if needed.",
+                r"Plotted on full $k_x$ range (negative and positive).",
             ]
         elif mode == "vs gamma_lin":
             lines = [
@@ -873,9 +931,8 @@ class CgyroUiMixin:
                 r"$\mathrm{For\ each\ case,\ average\ over\ selected}\ [t_0,t_1]$",
                 r"$T_{a}^{NZ\rightarrow Z}(t)=\sum_{k_x}\Re\{f[a,k_x,\mathrm{idx1},n,t]\}$",
                 r"$N_{a}^{NZ\rightarrow Z}(t)=\sum_{k_x}\Re\{f[a,k_x,\mathrm{idx2},n,t]\}$",
-                r"$\mathrm{idx3}(a,k_x,n,t)=\dfrac{d\!\left(T_a\,\delta S_{a,k_\perp}\right)}{dt}$",
-                r"$\dfrac{dS}{dt}(t)=\sum_{a}\sum_{k_x}\sum_{n\neq 0}\Re\{f[a,k_x,\mathrm{idx3},n,t]\}$",
-                r"$S(t)=\int^t \dfrac{dS}{dt}(t')\,dt'\ \propto\ \sum_{a}\sum_{k_x}\sum_{n\neq 0}T_a\delta S_{a,k_\perp}$",
+                r"$\delta S_a(k_x,n,t)\equiv \Re\{f[a,k_x,\mathrm{idx5},n,t]\}$",
+                r"$S(t)=\sum_{a}\sum_{k_x}\sum_{n\neq 0}\delta S_a(k_x,n,t)$",
                 r"$\left(T_{a}^{NZ\rightarrow Z}/S\right)=\langle T_{a}^{NZ\rightarrow Z}\rangle_t/\langle S\rangle_t$",
                 r"$\left(N_{a}^{NZ\rightarrow Z}/S\right)=\langle N_{a}^{NZ\rightarrow Z}\rangle_t/\langle S\rangle_t$",
                 r"$\mathrm{Plotted:}\ \mathcal{N}_D/S,\ \mathcal{T}_D/S,\ \mathcal{N}_e/S,\ \mathcal{T}_e/S$",
@@ -1023,6 +1080,9 @@ class CgyroUiMixin:
                  row += 1
                  self._render_fft_formula_math()
                  self.fft_formula_frame.grid(row=row, column=0, columnspan=4, sticky=tk.W + tk.E, pady=(4, 0))
+            else:
+                 self._render_fluctuation_1d_formula_math()
+                 self.fluc_formula_frame.grid(row=row, column=0, columnspan=4, sticky=tk.W + tk.E, pady=(4, 0))
 
         elif plot_type == "Fluctuation 2D":
             self.fluc2d_view_label.grid(row=row, column=0, sticky=tk.W)
@@ -1399,6 +1459,9 @@ class CgyroUiMixin:
             if zf_xaxis == "vs kx":
                 plot_type = "ZF ExB Shearing Spectrum"
                 display_plot_type = "Zonal ExB Shearing Rate (vs kx)"
+            elif zf_xaxis == "phi vs kx(theta=0)":
+                plot_type = "ZF Phi Spectrum (theta0)"
+                display_plot_type = "Zonal ExB Shearing Rate (phi vs kx, theta=0)"
             elif zf_xaxis == "vs gamma_lin":
                 plot_type = "ZF ExB Fig4 (kx=ky)"
                 display_plot_type = "Zonal ExB Shearing Rate (vs gamma_lin)"
