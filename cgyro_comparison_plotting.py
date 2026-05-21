@@ -47,10 +47,13 @@ CONTOUR_COLOR_PALETTE = [
 ]
 GRID_COLOR = "#808080"
 GRID_LINEWIDTH = 0.5
+GRID_ALPHA = 0.5
 AXIS_BORDER_LINEWIDTH = 1.5
-PLOT_LINEWIDTH = 3.0
-TICK_LABEL_FONTSIZE = 18
-MAIN_FONT_FONTSIZE = 22
+PLOT_LINEWIDTH = 2.0
+PLOT_MARKER_SIZE = 4.0
+TICK_LABEL_FONTSIZE = 14
+MAIN_FONT_FONTSIZE = 14
+LEGEND_FONT_FONTSIZE = 10
 FONT_FAMILY = "Arial"
 
 try:
@@ -117,12 +120,13 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
             'font.size': MAIN_FONT_FONTSIZE,
             'axes.titlesize': MAIN_FONT_FONTSIZE,
             'axes.labelsize': MAIN_FONT_FONTSIZE,
-            'legend.fontsize': MAIN_FONT_FONTSIZE,
+            'legend.fontsize': LEGEND_FONT_FONTSIZE,
             'xtick.labelsize': TICK_LABEL_FONTSIZE,
             'ytick.labelsize': TICK_LABEL_FONTSIZE,
             'axes.linewidth': AXIS_BORDER_LINEWIDTH,
             'grid.color': GRID_COLOR,
             'grid.linewidth': GRID_LINEWIDTH,
+            'grid.alpha': GRID_ALPHA,
             'grid.linestyle': '-',
             'axes.axisbelow': True,
             'lines.linewidth': PLOT_LINEWIDTH,
@@ -145,7 +149,7 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
             except Exception:
                 pass
             try:
-                ax.grid(True, color=GRID_COLOR, linewidth=GRID_LINEWIDTH)
+                ax.grid(True, color=GRID_COLOR, linewidth=GRID_LINEWIDTH, alpha=GRID_ALPHA)
             except Exception:
                 pass
             for side in ['left', 'right', 'top', 'bottom']:
@@ -179,16 +183,19 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
                 if leg is not None:
                     for txt in leg.get_texts():
                         txt.set_fontname(FONT_FAMILY)
-                        txt.set_fontsize(MAIN_FONT_FONTSIZE)
+                        txt.set_fontsize(LEGEND_FONT_FONTSIZE)
                     ttl = leg.get_title()
                     if ttl is not None:
                         ttl.set_fontname(FONT_FAMILY)
-                        ttl.set_fontsize(MAIN_FONT_FONTSIZE)
+                        ttl.set_fontsize(LEGEND_FONT_FONTSIZE)
             except Exception:
                 pass
             try:
                 for ln in ax.get_lines():
                     ln.set_linewidth(PLOT_LINEWIDTH)
+                    mk = str(ln.get_marker())
+                    if mk not in ["None", "none", "", " "]:
+                        ln.set_markersize(PLOT_MARKER_SIZE)
             except Exception:
                 pass
 
@@ -759,7 +766,7 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
         if "vs Time" in plot_type:
             self.ax.plot(x_plot, y_plot, label=label) # No marker for time traces
         else:
-            self.ax.plot(x_plot, y_plot, marker='o', label=label)
+            self.ax.plot(x_plot, y_plot, marker='o', markersize=PLOT_MARKER_SIZE, label=label)
 
     def _get_flux_species_subscript(self):
         """Build TeX-friendly species subscript token for flux y-axis labels."""
@@ -845,7 +852,7 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
             y_label = r"$\langle |\phi_{ZF}(k_x,\theta=0)|/\rho_s \rangle_t$"
         elif plot_type in ["ZF ExB vs gamma_lin (kx=ky)", "ZF ExB Fig4 (kx=ky)"]:
             x_label = r"$k\rho_s\ (k_x=k_y)$"
-            y_label = r"$\langle\omega_{E\times B}^{ZF}\rangle,\ k_x\langle V_{ZF}\rangle,\ \gamma_{lin}\ (c_s/a)$"
+            y_label = r"$\langle\omega_{E\times B}^{ZF}\rangle,\ k_y\langle V_{ZF}\rangle,\ \gamma_{lin}\ (c_s/a)$"
         elif plot_type == "Integration Error":
             x_label = r"$t\ (a/c_s)$"
             y_label = r"$\mathrm{Integration~Error}$"
@@ -911,8 +918,15 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
                 for axi in axes:
                     h, _l = axi.get_legend_handles_labels()
                     if h:
-                        axi.legend(loc='best')
-                    axi.grid(True, color=GRID_COLOR, linewidth=GRID_LINEWIDTH)
+                        axi.legend(
+                            loc='best',
+                            fontsize=LEGEND_FONT_FONTSIZE,
+                            borderpad=0.25,
+                            labelspacing=0.2,
+                            handlelength=1.8,
+                            handletextpad=0.45,
+                        )
+                    axi.grid(True, color=GRID_COLOR, linewidth=GRID_LINEWIDTH, alpha=GRID_ALPHA)
                     try:
                         axi.set_axisbelow(True)
                     except Exception:
@@ -928,8 +942,17 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
 
         handles, _labels = self.ax.get_legend_handles_labels()
         if handles:
-            self.ax.legend()
-        self.ax.grid(True, color=GRID_COLOR, linewidth=GRID_LINEWIDTH)
+            self.ax.legend(
+                loc='best',
+                fontsize=LEGEND_FONT_FONTSIZE,
+                borderaxespad=0.25,
+                borderpad=0.25,
+                labelspacing=0.2,
+                handlelength=1.8,
+                handletextpad=0.45,
+                framealpha=0.9,
+            )
+        self.ax.grid(True, color=GRID_COLOR, linewidth=GRID_LINEWIDTH, alpha=GRID_ALPHA)
         self.ax.set_axisbelow(True)
 
         title = f"Comparison: {display_plot_type}"
@@ -2366,6 +2389,9 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
                 data, label, t_indices, t_start, t_end
             ),
             "Energy Balance Single": lambda: self._plot_energy_balance_single_mode(
+                data, label, t_indices, t_start, t_end
+            ),
+            "Energy Balance Transfer Check": lambda: self._plot_energy_balance_transfer_check(
                 data, label, t_indices, t_start, t_end
             ),
             "Fluctuation 2D": lambda: self._plot_fluctuation_2d(

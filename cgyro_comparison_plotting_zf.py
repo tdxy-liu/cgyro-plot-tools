@@ -256,10 +256,10 @@ class ZfPlotting:
         avg_suffix = self._format_avg_suffix(t_start, t_end, prefix="Avg")
         if valid_t.size > 0:
             zf_label = f"{label} " + r"$\langle\omega_{ZF}(k_x)\rangle$" + avg_suffix
-            vzf_label = f"{label} " + r"$k_x\langle V_{ZF}\rangle$" + avg_suffix
+            vzf_label = f"{label} " + r"$k_y\langle V_{ZF}\rangle$" + avg_suffix
         else:
             zf_label = f"{label} " + r"$\langle\omega_{ZF}(k_x)\rangle$"
-            vzf_label = f"{label} " + r"$k_x\langle V_{ZF}\rangle$"
+            vzf_label = f"{label} " + r"$k_y\langle V_{ZF}\rangle$"
 
         y_kx_vzf = np.asarray(x_zf * vzf_mean, dtype=float).reshape(-1)
         n = min(x_zf.size, y_zf.size, y_kx_vzf.size)
@@ -345,14 +345,14 @@ class ZfPlotting:
                     f"{label}: ky={ky_target:.6g}, "
                     f"gamma_lin={g_lin_sel:.6g}, "
                     f"omegaZF={wzf_sel:.6g}, "
-                    f"kxVzf={kxvzf_sel:.6g}, "
+                    f"kyVzf={kxvzf_sel:.6g}, "
                     f"omegaZF/gamma_lin={ratio_wzf:.6g}, "
-                    f"kxVzf/gamma_lin={ratio_kxvzf:.6g}"
+                    f"kyVzf/gamma_lin={ratio_kxvzf:.6g}"
                 )
             else:
                 print(
                     f"{label}: ky={ky_target:.6g}, "
-                    "cannot compute omegaZF/gamma_lin and kxVzf/gamma_lin "
+                    "cannot compute omegaZF/gamma_lin and kyVzf/gamma_lin "
                     "because gamma_lin is missing/zero at selected ky."
                 )
 
@@ -361,7 +361,7 @@ class ZfPlotting:
         if ratio_wzf is not None and np.isfinite(ratio_wzf):
             zf_label_plot += rf" $[\omega_{{ZF}}/\gamma_{{lin}}={ratio_wzf:.3g}]$"
         if ratio_kxvzf is not None and np.isfinite(ratio_kxvzf):
-            vzf_label_plot += rf" $[k_xV_{{ZF}}/\gamma_{{lin}}={ratio_kxvzf:.3g}]$"
+            vzf_label_plot += rf" $[k_yV_{{ZF}}/\gamma_{{lin}}={ratio_kxvzf:.3g}]$"
 
         self.ax.plot(
             x_lin,
@@ -387,7 +387,7 @@ class ZfPlotting:
         )
         self.ax.set_xlim(right=x_max)
         self.ax.set_xlabel(r"$k\rho_s\ \ (k_x=k_y)$")
-        self.ax.set_ylabel(r"$\langle\omega_{ZF}\rangle,\ k_x\langle V_{ZF}\rangle,\ \gamma_{lin}\ (c_s/a)$")
+        self.ax.set_ylabel(r"$\langle\omega_{ZF}\rangle,\ k_y\langle V_{ZF}\rangle,\ \gamma_{lin}\ (c_s/a)$")
 
         if ky_target is not None:
             try:

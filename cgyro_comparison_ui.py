@@ -459,6 +459,7 @@ class CgyroUiMixin:
                 "ZF energy balance",
                 r"vs $\gamma_{eff}^Z$ and $\gamma_{eff}^{NZ}$",
                 "Single plot",
+                "Energy transfer check",
                 "v.s 2D",
             ],
             state="readonly",
@@ -497,6 +498,29 @@ class CgyroUiMixin:
             values=["vs Time", "vs ky"],
             state="readonly",
             width=12,
+        )
+        self.energy_balance_transfer_quantity_label = ttk.Label(self.options_frame, text="Quantity:")
+        self.energy_balance_transfer_quantity_var = tk.StringVar(value="T-N")
+        self.energy_balance_transfer_quantity_combo = ttk.Combobox(
+            self.options_frame,
+            textvariable=self.energy_balance_transfer_quantity_var,
+            values=["T", "N", "T-N"],
+            state="readonly",
+            width=12,
+        )
+        self.energy_balance_transfer_kx_label = ttk.Label(self.options_frame, text="kx:")
+        self.energy_balance_transfer_kx_var = tk.StringVar(value="0")
+        self.energy_balance_transfer_kx_entry = ttk.Entry(
+            self.options_frame,
+            textvariable=self.energy_balance_transfer_kx_var,
+            width=10,
+        )
+        self.energy_balance_transfer_ky_label = ttk.Label(self.options_frame, text="ky:")
+        self.energy_balance_transfer_ky_var = tk.StringVar(value="0.12")
+        self.energy_balance_transfer_ky_entry = ttk.Entry(
+            self.options_frame,
+            textvariable=self.energy_balance_transfer_ky_var,
+            width=10,
         )
         self.energy_balance_formula_frame = ttk.Frame(self.options_frame)
         self.energy_balance_formula_frame.columnconfigure(0, weight=1)
@@ -668,6 +692,9 @@ class CgyroUiMixin:
             self.energy_balance_spec_label, self.energy_balance_spec_combo,
             self.energy_balance_single_quantity_label, self.energy_balance_single_quantity_combo,
             self.energy_balance_single_xaxis_label, self.energy_balance_single_xaxis_combo,
+            self.energy_balance_transfer_quantity_label, self.energy_balance_transfer_quantity_combo,
+            self.energy_balance_transfer_kx_label, self.energy_balance_transfer_kx_entry,
+            self.energy_balance_transfer_ky_label, self.energy_balance_transfer_ky_entry,
             self.energy_balance_formula_frame,
             self.others_plot_label, self.others_plot_combo,
             self.others_rcorr_field_label, self.others_rcorr_field_combo,
@@ -679,6 +706,14 @@ class CgyroUiMixin:
         ]
         for w in widgets:
             w.grid_remove()
+
+    @staticmethod
+    def _safe_mathtext_line(line):
+        """Normalize formula-panel strings for older Matplotlib mathtext parsers."""
+        text = str(line)
+        text = re.sub(r"\\ge(?![A-Za-z])", r"\\geq", text)
+        text = re.sub(r"\\le(?![A-Za-z])", r"\\leq", text)
+        return text
 
     def _render_flux_kx_formula_math(self):
         """Render math notes for the estimated `Flux vs kx` mode."""
@@ -693,16 +728,18 @@ class CgyroUiMixin:
         )
 
         lines = [
-            r"Flux vs $k_x$ (estimated)",
+            r"Flux vs $k_x$ (estimated, follows code path)",
+            r"Input fields loaded as $[k_x,\theta,k_y,t]$ (species fields first summed over selected species).",
             r"$\Gamma_{\mathrm{ES}}(k_x,t)=\left\langle \sum_{k_y}"
             r"\Re\!\left[m_{\mathrm{ES}}^*(i k_y)\!\left(-\phi\right)\right]\right\rangle_{\theta}$",
             r"$\Gamma_{\mathrm{EM},A}(k_x,t)=\left\langle \sum_{k_y}"
             r"\Re\!\left[m_A^*(i k_y)\!\left(A_{\parallel}\right)\right]\right\rangle_{\theta}$",
             r"$\Gamma_{\mathrm{EM},B}(k_x,t)=\left\langle \sum_{k_y}"
             r"\Re\!\left[m_B^*(i k_y)B_{\parallel}\right]\right\rangle_{\theta}$",
-            r"$\Gamma_{\mathrm{tot}}=\Gamma_{\mathrm{ES}}+\Gamma_{\mathrm{EM},A}+\Gamma_{\mathrm{EM},B}$",
-            r"$\bar{\Gamma}(k_x)=\left\langle \Gamma_{\mathrm{tot}}(k_x,t)"
-            r"\right\rangle_{t\in[t_1,t_2]},\;\;k_x\geq 0$",
+            r"$\Gamma_{\mathrm{tot}}(k_x,t)=\Gamma_{\mathrm{ES}}+\Gamma_{\mathrm{EM},A}+\Gamma_{\mathrm{EM},B}$",
+            r"Time average in code: $\bar{\Gamma}(k_x)=\langle\Gamma_{\mathrm{tot}}(k_x,t)\rangle_{t\in[t_0,t_1]}$;",
+            r"if no valid time window, uses last time slice $t=t_{\mathrm{end}}$.",
+            r"Final display keeps non-negative branch only: $k_x \geq 0$.",
             moment_note,
             norm_note,
         ]
@@ -714,7 +751,7 @@ class CgyroUiMixin:
         dy = 0.14
         for i, line in enumerate(lines):
             fs = 9 if i == 0 else 8.5
-            ax.text(0.01, y, line, transform=ax.transAxes, ha="left", va="top", fontsize=fs)
+            ax.text(0.01, y, self._safe_mathtext_line(line), transform=ax.transAxes, ha="left", va="top", fontsize=fs)
             y -= dy
         self.flux_formula_canvas.draw_idle()
 
@@ -723,15 +760,24 @@ class CgyroUiMixin:
         mode = str(self.fluc_average_var.get()).strip().lower()
         if mode == "mean absolute":
             lines = [
-                r"Fluctuation 1D: Mean Absolute",
-                r"$A(k)=\left\langle \sum |\phi/\rho_s| \right\rangle_t$",
-                r"Global average mode also affects ZF averaged amplitudes.",
+                r"Fluctuation 1D: Mean Absolute (code definition)",
+                r"Field slice used in code: $F(k_x,k_y,t)$ from midplane $\theta$ and radial index $[1:]$.",
+                r"Normalization in code: $F\leftarrow F/\rho_s$ (uses case `rho`; if invalid, fallback $1$).",
+                r"vs $k_y$: $A(k_y)=\left\langle\sum_{k_x}|F(k_x,k_y,t)|\right\rangle_{t\in[t_0,t_1]}$.",
+                r"vs $k_x$: $A(k_x)=\left\langle\sum_{k_y}|F(k_x,k_y,t)|\right\rangle_{t\in[t_0,t_1]}$.",
+                r"vs Time: $n=0$ and $n>0$ channels are split, each sums over $k_x$ (and $k_y\neq0$ for $n>0$).",
+                r"If selected window is empty, code uses last time slice.",
             ]
         else:
             lines = [
-                r"Fluctuation 1D: Root Mean Square",
-                r"$A(k)=\sqrt{\left\langle \sum |\phi/\rho_s|^2 \right\rangle_t}$",
-                r"Global average mode also affects ZF averaged amplitudes.",
+                r"Fluctuation 1D: Root Mean Square (code definition)",
+                r"Field slice used in code: $F(k_x,k_y,t)$ from midplane $\theta$ and radial index $[1:]$.",
+                r"Normalization in code: $F\leftarrow F/\rho_s$ (uses case `rho`; if invalid, fallback $1$).",
+                r"vs $k_y$: $A(k_y)=\sqrt{\left\langle\sum_{k_x}|F(k_x,k_y,t)|^2\right\rangle_{t\in[t_0,t_1]}}$.",
+                r"vs $k_x$: $A(k_x)=\sqrt{\left\langle\sum_{k_y}|F(k_x,k_y,t)|^2\right\rangle_{t\in[t_0,t_1]}}$.",
+                r"vs Time: $A_{n=0}(t)=\sqrt{\sum_{k_x}|F(k_x,k_y=0,t)|^2}$,",
+                r"$A_{n>0}(t)=\sqrt{\sum_{k_x}\sum_{k_y\neq0}|F(k_x,k_y,t)|^2}$.",
+                r"If selected window is empty, code uses last time slice.",
             ]
 
         ax = self.fluc_formula_ax
@@ -740,7 +786,7 @@ class CgyroUiMixin:
         y = 0.98
         for i, line in enumerate(lines):
             fs = 8.8 if i == 0 else 8.0
-            ax.text(0.01, y, line, transform=ax.transAxes, ha="left", va="top", fontsize=fs)
+            ax.text(0.01, y, self._safe_mathtext_line(line), transform=ax.transAxes, ha="left", va="top", fontsize=fs)
             y -= 0.28
         self.fluc_formula_canvas.draw_idle()
 
@@ -774,7 +820,7 @@ class CgyroUiMixin:
         dy = 0.16
         for i, line in enumerate(lines):
             fs = 9 if i == 0 else 8.5
-            ax.text(0.01, y, line, transform=ax.transAxes, ha="left", va="top", fontsize=fs)
+            ax.text(0.01, y, self._safe_mathtext_line(line), transform=ax.transAxes, ha="left", va="top", fontsize=fs)
             y -= dy
         self.fft_formula_canvas.draw_idle()
 
@@ -783,37 +829,45 @@ class CgyroUiMixin:
         mode = (mode_text or "").strip().lower()
         if mode == "vs kx":
             lines = [
-                r"Zonal ExB Shearing Rate (vs $k_x$)",
-                r"$\phi_{ZF}(k_x,t)=\langle \phi(k_x,k_y\!\approx\!0,\theta,t)\rangle_{\theta}$",
-                r"$\Omega(k_x,t)=-k_x^2\,\phi_{ZF}(k_x,t)$",
-                r"$\bar{\omega}_{ZF}(k_x)=\left\langle |\Omega(k_x,t)|\right\rangle_{t\in[t_1,t_2]}$",
-                r"Plotted on non-negative branch: $k_x\geq 0$.",
+                r"Zonal ExB Shearing Rate (vs $k_x$, exact code path)",
+                r"Source in code: $k_y$ index $0$,",
+                r"$\theta$ index $i_\theta=4N_\theta/8$, radial slice $[1:]$.",
+                r"Code normalization: $\phi_{ZF}(k_x,t)=|\phi(k_x,t)|/\rho_s$ (uses case `rho`).",
+                r"$\omega_{ZF}(k_x)=k_x^2\left\langle\phi_{ZF}(k_x,t)\right\rangle_{t\in[t_0,t_1]}$.",
+                r"If window empty, uses last time slice; display keeps $k_x \geq 0$ branch.",
             ]
         elif mode == "phi vs kx(theta=0)":
             lines = [
-                r"$\phi_{ZF}$ vs $k_x$ at $\theta=0$",
-                r"$\phi_{ZF}(k_x,t)=\phi(k_x,k_y\!\approx\!0,\theta\!=\!0,t)$",
-                r"$\bar{\phi}_{ZF}(k_x)=\left\langle |\phi_{ZF}(k_x,t)|/\rho_s\right\rangle_{t\in[t_1,t_2]}$",
-                r"Uses closest available $\theta$ grid point to 0 if needed.",
+                r"$\phi_{ZF}$ vs $k_x$ (theta label, exact code path)",
+                r"Code uses $k_y$ index $0$, $\theta$ index $i_\theta=4N_\theta/8$, radial slice $[1:]$.",
+                r"$\bar{\phi}_{ZF}(k_x)=\left\langle |\phi(k_x,t)|/\rho_s\right\rangle_{t\in[t_0,t_1]}$.",
+                r"If window empty, uses last time slice.",
                 r"Plotted on full $k_x$ range (negative and positive).",
             ]
         elif mode == "vs gamma_lin":
             lines = [
-                r"vs $\gamma_{lin}$ (set $k_x=k_y$)",
-                r"Curves: $\gamma_{lin}(k_y)$, $\langle \omega_{ZF}(k_x)\rangle$, $k_x\langle V_{ZF}\rangle$",
-                r"$\phi_{ZF}\!\rightarrow\!\Omega(k_x,t)=-k_x^2\phi_{ZF}(k_x,t)$",
-                r"$\omega_{ZF}(k_x,t)=\left|(k_x\rho_D)^2\,\delta\bar{\phi}_{k_x,k_\theta=0}(t)\right|$",
-                r"$V_{ZF}(t)=0.5\sqrt{\sum_{k_x}\left|k_x\rho_D\bar{\phi}_{k_x,k_\theta=0}(t)\right|^2}$",
-                r"Optional input: $k_y^\star$ for ratios $\omega_{ZF}(k_y^\star)/\gamma_{lin}(k_y^\star)$",
-                r"and $k_xV_{ZF}(k_y^\star)/\gamma_{lin}(k_y^\star)$.",
-                r"Time-average in selected window; compare on shared $k\rho_s$ axis ($k_x=k_y$).",
+                r"vs $\gamma_{lin}$ (code compares on shared axis with $k_x=k_y$)",
+                r"$\phi(k_x,t)$ source in code: $k_y$ index $0$,",
+                r"$\theta$ index $i_\theta=4N_\theta/8$, radial slice $[1:]$.",
+                r"Code normalization: $\phi_{abs}(k_x,t)=|\phi(k_x,t)|/\rho$.",
+                r"If time window is valid:",
+                r"$\bar{\phi}(k_x)=\left\langle \phi_{abs}(k_x,t)\right\rangle_{t\in[t_0,t_1]}$.",
+                r"Else: $\bar{\phi}(k_x)=\phi_{abs}(k_x,t_{last})$.",
+                r"$\omega_{ZF}(k_x)=k_x^2\,\bar{\phi}(k_x)$.",
+                r"$V_{ZF}^{mean}=0.5\sqrt{\sum_{k_x}|k_x\,\bar{\phi}(k_x)|^2}$.",
+                r"Plotted third curve: $k_y V_{ZF}^{mean}$ on the same $k_x=k_y$ grid.",
+                r"$\gamma_{lin}(k_y)$ is read from file;",
+                r"finite values only, then $k_y \geq 0$ is kept.",
+                r"If $k_y^\star$ is set, the ratios use interpolation at $k_y^\star$.",
             ]
         else:
             lines = [
-                r"Zonal ExB Shearing Rate (vs Time)",
-                r"$\phi_{ZF}(k_x,t)=\langle \phi(k_x,k_y\!\approx\!0,\theta,t)\rangle_{\theta}$",
-                r"$\Omega(k_x,t)=-k_x^2\,\phi_{ZF}(k_x,t)$",
-                r"$\omega_{ZF}(t)=\left(\sum_{k_x}|\Omega(k_x,t)|^2\right)^{1/2}$",
+                r"Zonal ExB Shearing Rate (vs Time, exact code path)",
+                r"Source in code: $k_y$ index $0$,",
+                r"$\theta$ index $i_\theta=4N_\theta/8$, radial slice $[1:]$.",
+                r"Normalization in code:",
+                r"$\phi_{ZF}(k_x,t)=|\phi(k_x,t)|/\rho_s$ (uses case `rho`).",
+                r"$\omega_{ZF}(t)=\sum_{k_x}k_x^2\phi_{ZF}(k_x,t)$.",
             ]
 
         ax = self.zf_formula_ax
@@ -821,35 +875,42 @@ class CgyroUiMixin:
         ax.axis("off")
 
         # Keep long FIG4 notes readable in narrow option panes.
-        fig_h = 1.8
+        fig_h = 2.2
         y = 0.96
-        dy = 0.18
+        dy = 0.16
         title_fs = 9
-        line_fs = 8.5
+        line_fs = 8.2
         if mode == "vs gamma_lin":
-            # Keep FIG4 notes compact to prevent bottom clipping in small windows.
-            fig_h = 2.25
-            dy = 0.13
-            title_fs = 8.4
-            line_fs = 7.7
+            fig_h = 3.8
+            dy = 0.075
+            title_fs = 8.2
+            line_fs = 7.4
         try:
             self.zf_formula_fig.set_size_inches(3.2, fig_h, forward=True)
-            self.zf_formula_fig.subplots_adjust(left=0.02, right=0.97, top=0.97, bottom=0.08)
+            # Leave a little extra inner margin so long math lines are less likely
+            # to be clipped near the widget scrollbars.
+            self.zf_formula_fig.subplots_adjust(left=0.02, right=0.92, top=0.97, bottom=0.14)
         except Exception:
             pass
 
-        # Keep the last line visible regardless of line count / math-text size.
-        if len(lines) > 1:
-            dy_auto = min(dy, 0.80 / float(len(lines) - 1))
-        else:
-            dy_auto = dy
-
         for i, line in enumerate(lines):
             fs = title_fs if i == 0 else line_fs
-            ax.text(0.01, y, line, transform=ax.transAxes, ha="left", va="top", fontsize=fs)
-            y -= dy_auto
+            ax.text(0.01, y, self._safe_mathtext_line(line), transform=ax.transAxes, ha="left", va="top", fontsize=fs)
+            extra = 0.018 if any(token in line for token in (r"\sqrt", r"\left", r"\langle", r"\frac")) else 0.0
+            y -= dy + extra
         try:
-            self.zf_formula_widget.configure(scrollregion=self.zf_formula_widget.bbox("all"))
+            pad_px = 48
+            bbox = self.zf_formula_widget.bbox("all")
+            if bbox is not None:
+                self.zf_formula_widget.configure(
+                    scrollregion=(bbox[0], bbox[1], bbox[2] + pad_px, bbox[3] + pad_px)
+                )
+            else:
+                fig_w_px = int(self.zf_formula_fig.get_figwidth() * self.zf_formula_fig.dpi)
+                fig_h_px = int(self.zf_formula_fig.get_figheight() * self.zf_formula_fig.dpi)
+                self.zf_formula_widget.configure(
+                    scrollregion=(0, 0, fig_w_px + pad_px, fig_h_px + pad_px)
+                )
             self.zf_formula_widget.xview_moveto(0.0)
             self.zf_formula_widget.yview_moveto(0.0)
         except Exception:
@@ -886,7 +947,7 @@ class CgyroUiMixin:
             else:
                 fs = 8.0
                 dy_line = 0.11
-            ax.text(0.01, y, line, transform=ax.transAxes, ha="left", va="top", fontsize=fs)
+            ax.text(0.01, y, self._safe_mathtext_line(line), transform=ax.transAxes, ha="left", va="top", fontsize=fs)
             y -= dy_line
         self.pod_formula_canvas.draw_idle()
 
@@ -978,12 +1039,15 @@ class CgyroUiMixin:
             else:
                 fs = 7.8
                 dy_line = 0.105
-            ax.text(0.01, y, line, transform=ax.transAxes, ha="left", va="top", fontsize=fs)
+            ax.text(0.01, y, self._safe_mathtext_line(line), transform=ax.transAxes, ha="left", va="top", fontsize=fs)
             y -= dy_line
         try:
+            pad_px = 28
             fig_w_px = int(self.energy_balance_formula_fig.get_figwidth() * self.energy_balance_formula_fig.dpi)
             fig_h_px = int(self.energy_balance_formula_fig.get_figheight() * self.energy_balance_formula_fig.dpi)
-            self.energy_balance_formula_widget.configure(scrollregion=(0, 0, fig_w_px, fig_h_px))
+            self.energy_balance_formula_widget.configure(
+                scrollregion=(0, 0, fig_w_px + pad_px, fig_h_px + pad_px)
+            )
             self.energy_balance_formula_widget.xview_moveto(0.0)
             self.energy_balance_formula_widget.yview_moveto(0.0)
         except Exception:
@@ -1122,16 +1186,16 @@ class CgyroUiMixin:
             is_gamma_eff_mode = (r"\gamma_{eff}" in mode) or ("gamma_eff" in mode)
             is_energy_2d_mode = (mode == "v.s 2d")
             is_single_plot_mode = (mode == "single plot")
+            is_transfer_check_mode = (mode == "energy transfer check")
             xaxis_single = str(self.energy_balance_single_xaxis_var.get()).strip().lower()
             if is_gamma_eff_mode:
                 n_label_txt = "ky:"
-            elif is_single_plot_mode and xaxis_single == "vs ky":
-                n_label_txt = "n index:"
             else:
                 n_label_txt = "n index:"
             self.energy_balance_n_label.configure(text=n_label_txt)
-            self.energy_balance_n_label.grid(row=row, column=0, sticky=tk.W)
-            self.energy_balance_n_entry.grid(row=row, column=1, sticky=tk.W)
+            if not is_transfer_check_mode:
+                self.energy_balance_n_label.grid(row=row, column=0, sticky=tk.W)
+                self.energy_balance_n_entry.grid(row=row, column=1, sticky=tk.W)
             self.energy_balance_spec_label.grid(row=row, column=2, sticky=tk.W, padx=(10, 0))
             self.energy_balance_spec_combo.grid(row=row, column=3, sticky=tk.W)
             row += 1
@@ -1140,6 +1204,15 @@ class CgyroUiMixin:
                 self.energy_balance_single_quantity_combo.grid(row=row, column=1, sticky=tk.W)
                 self.energy_balance_single_xaxis_label.grid(row=row, column=2, sticky=tk.W, padx=(10, 0))
                 self.energy_balance_single_xaxis_combo.grid(row=row, column=3, sticky=tk.W)
+                row += 1
+            if is_transfer_check_mode:
+                self.energy_balance_transfer_quantity_label.grid(row=row, column=0, sticky=tk.W)
+                self.energy_balance_transfer_quantity_combo.grid(row=row, column=1, sticky=tk.W)
+                self.energy_balance_transfer_kx_label.grid(row=row, column=2, sticky=tk.W, padx=(10, 0))
+                self.energy_balance_transfer_kx_entry.grid(row=row, column=3, sticky=tk.W)
+                row += 1
+                self.energy_balance_transfer_ky_label.grid(row=row, column=0, sticky=tk.W)
+                self.energy_balance_transfer_ky_entry.grid(row=row, column=1, sticky=tk.W)
                 row += 1
             if is_gamma_eff_mode:
                 self.linear_gamma_file_label.grid(row=row, column=0, sticky=tk.W)
@@ -1482,6 +1555,12 @@ class CgyroUiMixin:
                 xax_plot = xax.replace("v.s", "vs")
                 plot_type = f"Energy Balance Single {qty} {xax_plot}"
                 display_plot_type = f"Energy balance: Single plot ({qty}, {xax})"
+            elif mode == "energy transfer check":
+                qty = str(self.energy_balance_transfer_quantity_var.get()).strip()
+                kx = str(self.energy_balance_transfer_kx_var.get()).strip()
+                ky = str(self.energy_balance_transfer_ky_var.get()).strip()
+                plot_type = "Energy Balance Transfer Check"
+                display_plot_type = f"Energy balance: Energy transfer check ({qty}, kx={kx}, ky={ky})"
             elif mode == "v.s 2d":
                 plot_type = "Energy Balance vs 2D"
                 display_plot_type = "Energy balance: vs 2D"

@@ -36,8 +36,8 @@ class EnergyPlotting:
         except Exception:
             return 0
 
-    def _load_triad_if_needed(self, data, label):
-        """Ensure triad and ky_flux arrays are loaded for energy-balance plotting."""
+    def _load_triad_common(self, data, label, require_flux):
+        """Load triad data, optionally with ky_flux."""
         if not hasattr(data, 'triad'):
             if not self._ensure_bigfield_loaded(data, label):
                 # `getbigfield()` may fail on other large-field files before it reaches
@@ -84,6 +84,9 @@ class EnergyPlotting:
                 hint = f" (case_dir={case_dir})" if case_dir else ""
                 print(f"No triad data available for {label}. Need bin/out.cgyro.triad.{hint}")
                 return False
+        if not require_flux:
+            return True
+
         if not hasattr(data, 'ky_flux'):
             try:
                 data.getflux()
@@ -94,53 +97,38 @@ class EnergyPlotting:
             return False
         return True
 
+    def _load_triad_if_needed(self, data, label):
+        """Ensure triad and ky_flux arrays are loaded for energy-balance plotting."""
+        return self._load_triad_common(data, label, require_flux=True)
+
     def _load_triad_only_if_needed(self, data, label):
         """Ensure triad array is loaded (without requiring ky_flux)."""
-        if not hasattr(data, 'triad'):
-            if not self._ensure_bigfield_loaded(data, label):
-                pass
+        return self._load_triad_common(data, label, require_flux=False)
 
-        if not hasattr(data, 'triad'):
-            triad_loaded = False
-            try:
-                if hasattr(data, 'extract'):
-                    _tmsg, fmt, raw = data.extract('.cgyro.triad')
-                    if fmt != 'null':
-                        n_n = int(getattr(data, 'n_n', 0))
-                        n_radial = int(getattr(data, 'n_radial', 0))
-                        n_species = int(getattr(data, 'n_species', 0))
-                        n_time = int(getattr(data, 'n_time', 0))
-                        if n_n > 0 and n_radial > 0 and n_species > 0:
-                            block = 2 * n_n * n_radial * n_species * 8
-                            if n_time <= 0 and block > 0:
-                                n_time = int(raw.size // block)
-                                if n_time > 0:
-                                    try:
-                                        data.n_time = n_time
-                                    except Exception:
-                                        pass
-                            nd = block * n_time
-                            if raw.size >= nd:
-                                if raw.size > nd:
-                                    raw = raw[:nd]
-                                data.triad = np.reshape(
-                                    raw,
-                                    (2, n_species, n_radial, 8, n_n, n_time),
-                                    order='F',
-                                )
-                                triad_loaded = True
-            except Exception as e:
-                print(f"Triad-only fallback read failed for {label}: {e}")
+    def _triad_species_view(self, triad, spec, label):
+        """Return complex triad data for one species or total species sum."""
+        if triad.ndim != 6 or triad.shape[0] != 2:
+            print(f"Unsupported triad shape for {label}: {triad.shape}")
+            return None, None
 
-            if (not triad_loaded) and (not hasattr(data, 'triad')):
-                try:
-                    case_dir = self._resolve_case_dir(data)
-                except Exception:
-                    case_dir = ""
-                hint = f" (case_dir={case_dir})" if case_dir else ""
-                print(f"No triad data available for {label}. Need bin/out.cgyro.triad.{hint}")
-                return False
-        return True
+        n_species = int(triad.shape[1])
+        if spec < 0:
+            return triad[0].sum(axis=0) + 1j * triad[1].sum(axis=0), "total species"
+        if spec >= n_species:
+            print(f"Energy balance species index out of range for {label}: {spec}, n_species={n_species}")
+            return None, None
+        return triad[0, spec] + 1j * triad[1, spec], f"species {spec}"
+
+    @staticmethod
+    def _nearest_finite_index(axis, value):
+        """Return the index of the finite axis value closest to `value`."""
+        axis = np.asarray(axis, dtype=float).reshape(-1)
+        finite_mask = np.isfinite(axis)
+        if not np.any(finite_mask):
+            return None
+        axis_finite = axis[finite_mask]
+        idx_local = int(np.argmin(np.abs(axis_finite - float(value))))
+        return int(np.where(finite_mask)[0][idx_local])
 
     def _plot_energy_balance_gamma_eff_v3(self, data, label, t_indices, t_start, t_end):
         """
@@ -1302,4 +1290,133 @@ class EnergyPlotting:
 
         if skipped > 0:
             print(f"Energy balance vs 2D: skipped {skipped} case(s) due to missing/invalid triad or scan data.")
+
+    def _plot_energy_balance_transfer_check(self, data, label, t_indices, t_start, t_end):
+        """Plot the transfer map directly from bin.cgyro.triad in kx-ky space."""
+        if not self._load_triad_only_if_needed(data, label):
+            return
+
+        triad = np.asarray(data.triad)
+        if triad.ndim != 6 or triad.shape[0] != 2:
+            print(f"Unsupported triad shape for {label}: {triad.shape}")
+            return
+        _ri, n_species, n_radial, n_chan, n_n, n_t = triad.shape
+        if n_chan < 8 or n_species < 2:
+            print(f"Unsupported triad shape for {label}: {triad.shape}")
+            return
+
+        qty = str(self.energy_balance_transfer_quantity_var.get()).strip().upper()
+        try:
+            kx_sel = float(str(self.energy_balance_transfer_kx_var.get()).strip())
+            ky_sel = float(str(self.energy_balance_transfer_ky_var.get()).strip())
+        except Exception:
+            print(f"Invalid kx/ky input for {label}")
+            return
+
+        spec = self._parse_energy_balance_species()
+        f, spec_label = self._triad_species_view(triad, spec, label)
+        if f is None:
+            return
+
+        kx_axis, radial_idx = self._build_kx_axis(data, n_radial, label)
+        ky_axis = self._positive_ky_axis(getattr(data, 'kynorm', getattr(data, 'ky', [])))
+        if kx_axis is None or radial_idx is None or ky_axis is None:
+            print(f"Missing kx/ky axes for {label}")
+            return
+
+        kx_axis = np.asarray(kx_axis, dtype=float).reshape(-1)
+        ky_axis = np.asarray(ky_axis, dtype=float).reshape(-1)
+        radial_idx = np.asarray(radial_idx, dtype=int).reshape(-1)
+        if kx_axis.size <= 0 or ky_axis.size <= 0 or radial_idx.size <= 0:
+            print(f"Empty kx/ky axes for {label}")
+            return
+
+        n_x = min(int(kx_axis.size), int(radial_idx.size))
+        n_y = min(int(ky_axis.size), int(n_n))
+        if n_x <= 0 or n_y <= 0:
+            print(f"Empty kx/ky axes for {label}")
+            return
+        kx_axis = kx_axis[:n_x]
+        ky_axis = ky_axis[:n_y]
+        radial_idx = radial_idx[:n_x]
+
+        valid_t = np.asarray(t_indices, dtype=int).reshape(-1)
+        valid_t = valid_t[(valid_t >= 0) & (valid_t < n_t)]
+        if valid_t.size <= 0:
+            valid_t = np.arange(max(1, n_t // 2), n_t, dtype=int)
+        if valid_t.size <= 0:
+            valid_t = np.arange(n_t, dtype=int)
+        if valid_t.size <= 0:
+            print(f"No time samples for {label}")
+            return
+
+        f = f[radial_idx, :, :, :]  # keep only the displayed radial slots
+        t_map = np.real(f[:, 0, :n_y, :n_t])  # [kx, ky, t]
+        n_map = np.real(f[:, 1, :n_y, :n_t])
+
+        if qty == 'T':
+            z_map = t_map
+            title = r"$\mathcal{T}_k$ from bin.cgyro.triad idx1"
+        elif qty == 'N':
+            z_map = n_map
+            title = r"$\mathcal{N}_k$ / NZ-pair term from bin.cgyro.triad idx2"
+        else:
+            z_map = t_map - n_map
+            title = r"$(\mathcal{T}_k-\mathcal{N}_k)$ from bin.cgyro.triad"
+
+        z_avg = np.mean(z_map[:, :, valid_t], axis=2)
+        if np.all(~np.isfinite(z_avg)):
+            print(f"No valid transfer data for {label}")
+            return
+
+        self.fig.clear()
+        self._reset_figure_layout_defaults()
+        self.ax = self.fig.add_subplot(111)
+        try:
+            self.ax.set_facecolor('white')
+        except Exception:
+            pass
+
+        finite = z_avg[np.isfinite(z_avg)]
+        vmax = float(np.nanmax(np.abs(finite))) if finite.size > 0 else 0.0
+        if (not np.isfinite(vmax)) or vmax <= 0.0:
+            vmax = 1.0
+
+        pcm = self.ax.pcolormesh(
+            kx_axis,
+            ky_axis,
+            z_avg.T,
+            shading='auto',
+            cmap='bwr',
+            vmin=-vmax,
+            vmax=vmax,
+        )
+        cbar = self.fig.colorbar(pcm, ax=self.ax)
+        cbar.set_label(r"$\langle T\rangle_t$")
+
+        kx_mark_idx = self._nearest_finite_index(kx_axis, kx_sel)
+        ky_mark_idx = self._nearest_finite_index(ky_axis, ky_sel)
+        if kx_mark_idx is None or ky_mark_idx is None:
+            print(f"Could not map selected kx/ky for {label}")
+            return
+        kx_mark = float(kx_axis[kx_mark_idx])
+        ky_mark = float(ky_axis[ky_mark_idx])
+        self.ax.scatter(
+            [kx_mark],
+            [ky_mark],
+            marker='D',
+            s=70,
+            facecolor='k',
+            edgecolor='white',
+            linewidth=0.8,
+            zorder=5,
+            label=rf"selected $k=({kx_mark:.3g},{ky_mark:.3g})$",
+        )
+        self.ax.axhline(0.0, color='k', linewidth=0.8, alpha=0.35)
+        self.ax.axvline(0.0, color='k', linewidth=0.8, alpha=0.35)
+        self.ax.set_xlabel(getattr(data, 'kxstr', r'$k_x \rho_s$'))
+        self.ax.set_ylabel(getattr(data, 'kystr', r'$k_y \rho_s$'))
+        self.ax.set_title(f"{label}: {title} ({spec_label})")
+        self.ax.legend(loc='best', framealpha=0.85)
+
 
