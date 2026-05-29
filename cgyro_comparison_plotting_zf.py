@@ -102,9 +102,7 @@ class ZfPlotting:
 
         # zf_kx(t) contribution uses |phi(kx,t)| and shearing scalar is
         # sum_kx kx^2 * |phi(kx,t)| / rho.
-        rho = float(getattr(data, "rho", 1.0))
-        if (not np.isfinite(rho)) or abs(rho) <= 1e-12:
-            rho = 1.0
+        rho = self._rho_scalar_for_norm(data, label)
         shear_rate = np.sum((kx[:, None] ** 2) * np.abs(phi_kx_t), axis=0) / rho
 
         n_t = min(t.size, shear_rate.size)
@@ -134,9 +132,7 @@ class ZfPlotting:
         if kx is None:
             return None
 
-        rho = float(getattr(data, "rho", 1.0))
-        if (not np.isfinite(rho)) or abs(rho) <= 1.0e-12:
-            rho = 1.0
+        rho = self._rho_scalar_for_norm(data, label)
 
         phi_abs_kx_t = np.abs(phi_kx_t) / rho
         n_t = min(t.size, phi_abs_kx_t.shape[-1])
@@ -237,9 +233,7 @@ class ZfPlotting:
         valid_t = np.asarray(prof["valid_t"], dtype=int).reshape(-1)
         n_t = int(prof["n_t"])
 
-        rho = float(getattr(data, "rho", 1.0))
-        if (not np.isfinite(rho)) or abs(rho) <= 1.0e-12:
-            rho = 1.0
+        rho = self._rho_scalar_for_norm(data, label)
 
         phi_abs_kx_t = np.abs(np.asarray(phi_kx_t)[:, :n_t]) / rho
         if valid_t.size > 0:

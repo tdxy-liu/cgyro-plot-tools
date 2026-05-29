@@ -315,6 +315,16 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
             return ky
         return np.abs(ky)
 
+    def _rho_scalar_for_norm(self, data, label=""):
+        """Return the rho scalar used by rho-based normalization, with one-time logging."""
+        rho = float(getattr(data, 'rho', 1.0))
+        if (not np.isfinite(rho)) or abs(rho) <= 1.0e-12:
+            rho = 1.0
+        if label and not getattr(data, '_cmp_rho_norm_logged', False):
+            print(f"Info: {label} uses rho = {rho:.6g} for normalization.")
+            setattr(data, '_cmp_rho_norm_logged', True)
+        return rho
+
     def _use_flux_real_ion_norm(self):
         """Return True when flux should be renormalized by real-ion GyroBohm units."""
         try:
@@ -786,7 +796,7 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
         if not selected:
             return "s"
 
-        if selected == "Main Ion (D+T)":
+        if selected.startswith("Main Ion"):
             return "i"
         if selected == "All Ions":
             return "i"
@@ -875,7 +885,7 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
                 if use_real_ion_norm:
                     y_label = rf"$\Gamma_{{{sub}}}/\Gamma_{{GB,\mathrm{{ri}}}}$"
                 else:
-                    y_label = rf"$\Gamma_{{{sub}}}/Q_{{GB}}$"
+                    y_label = rf"$\Gamma_{{{sub}}}/\Gamma_{{GB}}$"
         elif "vs ky" in plot_type:
             x_label = r"$k_y \rho_s$"
         elif "vs kx" in plot_type:
@@ -2391,7 +2401,7 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
             "Energy Balance Single": lambda: self._plot_energy_balance_single_mode(
                 data, label, t_indices, t_start, t_end
             ),
-            "Energy Balance Transfer Check": lambda: self._plot_energy_balance_transfer_check(
+            "Energy Balance FULLT": lambda: self._plot_energy_balance_fullt(
                 data, label, t_indices, t_start, t_end
             ),
             "Fluctuation 2D": lambda: self._plot_fluctuation_2d(

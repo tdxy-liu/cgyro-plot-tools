@@ -762,7 +762,7 @@ class FluxPlotting:
             if use_real_ion_norm:
                 self.ax.set_ylabel(rf"$\Gamma_{{{sub}}}/\Gamma_{{GB,\mathrm{{ri}}}}$")
             else:
-                self.ax.set_ylabel(rf"$\Gamma_{{{sub}}}/Q_{{GB}}$")
+                self.ax.set_ylabel(rf"$\Gamma_{{{sub}}}/\Gamma_{{GB}}$")
 
         if skipped > 0:
             print(f"Flux vs 2D: skipped {skipped} case(s) due to missing parameter/flux/time data.")

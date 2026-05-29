@@ -33,6 +33,34 @@ except ImportError:
 
 
 class CgyroUiMixin:
+    def _create_formula_panel(self, master, figsize=(4.0, 2.4), dpi=100):
+        """Create a scrollable matplotlib formula panel with consistent behavior."""
+        frame = ttk.Frame(master)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(0, weight=1)
+
+        fig = plt.Figure(figsize=figsize, dpi=dpi)
+        ax = fig.add_subplot(111)
+        ax.axis("off")
+        fig.patch.set_facecolor("white")
+
+        viewport = tk.Canvas(frame, highlightthickness=0, borderwidth=0, bg="white")
+        viewport.grid(row=0, column=0, sticky=tk.NSEW, padx=(0, 2), pady=(0, 2))
+
+        canvas = FigureCanvasTkAgg(fig, master=viewport)
+        widget = canvas.get_tk_widget()
+        window_id = viewport.create_window((0, 0), window=widget, anchor=tk.NW)
+        viewport._formula_inner_widget = widget
+        viewport._formula_window_id = window_id
+
+        vscroll = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=viewport.yview)
+        vscroll.grid(row=0, column=1, sticky=tk.NS)
+        hscroll = ttk.Scrollbar(frame, orient=tk.HORIZONTAL, command=viewport.xview)
+        hscroll.grid(row=1, column=0, sticky=tk.EW, padx=(0, 2))
+        viewport.configure(xscrollcommand=hscroll.set, yscrollcommand=vscroll.set)
+
+        return frame, fig, ax, canvas, viewport, vscroll, hscroll
+
     def __init__(self, root):
         """Initialize UI state, widgets, and menus."""
         self.root = root
@@ -284,13 +312,15 @@ class CgyroUiMixin:
             text="Normalized by real ion (max-density ion)",
             variable=self.flux_norm_real_ion_var,
         )
-        self.flux_formula_frame = ttk.Frame(self.options_frame)
-        self.flux_formula_fig = plt.Figure(figsize=(3.2, 2.4), dpi=100)
-        self.flux_formula_ax = self.flux_formula_fig.add_subplot(111)
-        self.flux_formula_ax.axis("off")
-        self.flux_formula_fig.patch.set_facecolor("white")
-        self.flux_formula_canvas = FigureCanvasTkAgg(self.flux_formula_fig, master=self.flux_formula_frame)
-        self.flux_formula_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        (
+            self.flux_formula_frame,
+            self.flux_formula_fig,
+            self.flux_formula_ax,
+            self.flux_formula_canvas,
+            self.flux_formula_widget,
+            self.flux_formula_vscroll,
+            self.flux_formula_hscroll,
+        ) = self._create_formula_panel(self.options_frame, figsize=(4.0, 2.4))
 
         # 3. Fluctuation 1D Options
         self.fluc_field_var = tk.StringVar(value="Phi")
@@ -298,13 +328,15 @@ class CgyroUiMixin:
         
         self.fluc_xaxis_var = tk.StringVar(value="v.s ky")
         self.fluc_xaxis_combo = ttk.Combobox(self.options_frame, textvariable=self.fluc_xaxis_var, values=["v.s ky", "v.s kx", "v.s Time", "fft"], state="readonly", width=15)
-        self.fluc_formula_frame = ttk.Frame(self.options_frame)
-        self.fluc_formula_fig = plt.Figure(figsize=(3.2, 1.4), dpi=100)
-        self.fluc_formula_ax = self.fluc_formula_fig.add_subplot(111)
-        self.fluc_formula_ax.axis("off")
-        self.fluc_formula_fig.patch.set_facecolor("white")
-        self.fluc_formula_canvas = FigureCanvasTkAgg(self.fluc_formula_fig, master=self.fluc_formula_frame)
-        self.fluc_formula_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        (
+            self.fluc_formula_frame,
+            self.fluc_formula_fig,
+            self.fluc_formula_ax,
+            self.fluc_formula_canvas,
+            self.fluc_formula_widget,
+            self.fluc_formula_vscroll,
+            self.fluc_formula_hscroll,
+        ) = self._create_formula_panel(self.options_frame, figsize=(4.0, 2.2))
 
         # 4. Species Selection (Flux, Fluctuation 2D)
         self.species_label = ttk.Label(self.options_frame, text="Species:")
@@ -385,13 +417,15 @@ class CgyroUiMixin:
             width=8,
         )
         self.fft_linear_file_browse.grid(row=5, column=1, sticky=tk.W, pady=(2, 0))
-        self.fft_formula_frame = ttk.Frame(self.options_frame)
-        self.fft_formula_fig = plt.Figure(figsize=(3.2, 2.0), dpi=100)
-        self.fft_formula_ax = self.fft_formula_fig.add_subplot(111)
-        self.fft_formula_ax.axis("off")
-        self.fft_formula_fig.patch.set_facecolor("white")
-        self.fft_formula_canvas = FigureCanvasTkAgg(self.fft_formula_fig, master=self.fft_formula_frame)
-        self.fft_formula_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        (
+            self.fft_formula_frame,
+            self.fft_formula_fig,
+            self.fft_formula_ax,
+            self.fft_formula_canvas,
+            self.fft_formula_widget,
+            self.fft_formula_vscroll,
+            self.fft_formula_hscroll,
+        ) = self._create_formula_panel(self.options_frame, figsize=(4.0, 2.2))
 
         # 7. Zonal ExB shearing options
         self.zf_xaxis_label = ttk.Label(self.options_frame, text="Mode:")
@@ -421,32 +455,15 @@ class CgyroUiMixin:
             textvariable=self.zf_gamma_lin_ky_var,
             width=12,
         )
-        self.zf_formula_frame = ttk.Frame(self.options_frame)
-        self.zf_formula_frame.columnconfigure(0, weight=1)
-        self.zf_formula_frame.rowconfigure(0, weight=1)
-        self.zf_formula_fig = plt.Figure(figsize=(3.2, 1.8), dpi=100)
-        self.zf_formula_ax = self.zf_formula_fig.add_subplot(111)
-        self.zf_formula_ax.axis("off")
-        self.zf_formula_fig.patch.set_facecolor("white")
-        self.zf_formula_canvas = FigureCanvasTkAgg(self.zf_formula_fig, master=self.zf_formula_frame)
-        self.zf_formula_widget = self.zf_formula_canvas.get_tk_widget()
-        self.zf_formula_widget.grid(row=0, column=0, sticky=tk.NSEW, padx=(0, 2), pady=(0, 2))
-        self.zf_formula_vscroll = ttk.Scrollbar(
+        (
             self.zf_formula_frame,
-            orient=tk.VERTICAL,
-            command=self.zf_formula_widget.yview,
-        )
-        self.zf_formula_vscroll.grid(row=0, column=1, sticky=tk.NS)
-        self.zf_formula_hscroll = ttk.Scrollbar(
-            self.zf_formula_frame,
-            orient=tk.HORIZONTAL,
-            command=self.zf_formula_widget.xview,
-        )
-        self.zf_formula_hscroll.grid(row=1, column=0, sticky=tk.EW, padx=(0, 2))
-        self.zf_formula_widget.configure(
-            xscrollcommand=self.zf_formula_hscroll.set,
-            yscrollcommand=self.zf_formula_vscroll.set,
-        )
+            self.zf_formula_fig,
+            self.zf_formula_ax,
+            self.zf_formula_canvas,
+            self.zf_formula_widget,
+            self.zf_formula_vscroll,
+            self.zf_formula_hscroll,
+        ) = self._create_formula_panel(self.options_frame, figsize=(4.0, 2.2))
 
         # 8. Energy-balance options (triad_v2-based)
         self.energy_balance_mode_label = ttk.Label(self.options_frame, text="Mode:")
@@ -459,7 +476,7 @@ class CgyroUiMixin:
                 "ZF energy balance",
                 r"vs $\gamma_{eff}^Z$ and $\gamma_{eff}^{NZ}$",
                 "Single plot",
-                "Energy transfer check",
+                "FULLT transfer map",
                 "v.s 2D",
             ],
             state="readonly",
@@ -499,60 +516,31 @@ class CgyroUiMixin:
             state="readonly",
             width=12,
         )
-        self.energy_balance_transfer_quantity_label = ttk.Label(self.options_frame, text="Quantity:")
-        self.energy_balance_transfer_quantity_var = tk.StringVar(value="T-N")
+        self.energy_balance_transfer_quantity_label = ttk.Label(self.options_frame, text="FULLT:")
+        self.energy_balance_transfer_quantity_var = tk.StringVar(value="Re")
         self.energy_balance_transfer_quantity_combo = ttk.Combobox(
             self.options_frame,
             textvariable=self.energy_balance_transfer_quantity_var,
-            values=["T", "N", "T-N"],
+            values=["Re", "Im", "Abs"],
             state="readonly",
             width=12,
         )
-        self.energy_balance_transfer_kx_label = ttk.Label(self.options_frame, text="kx:")
-        self.energy_balance_transfer_kx_var = tk.StringVar(value="0")
-        self.energy_balance_transfer_kx_entry = ttk.Entry(
-            self.options_frame,
-            textvariable=self.energy_balance_transfer_kx_var,
-            width=10,
-        )
-        self.energy_balance_transfer_ky_label = ttk.Label(self.options_frame, text="ky:")
-        self.energy_balance_transfer_ky_var = tk.StringVar(value="0.12")
+        self.energy_balance_transfer_ky_label = ttk.Label(self.options_frame, text="fixed ky:")
+        self.energy_balance_transfer_ky_var = tk.StringVar(value="0")
         self.energy_balance_transfer_ky_entry = ttk.Entry(
             self.options_frame,
             textvariable=self.energy_balance_transfer_ky_var,
             width=10,
         )
-        self.energy_balance_formula_frame = ttk.Frame(self.options_frame)
-        self.energy_balance_formula_frame.columnconfigure(0, weight=1)
-        self.energy_balance_formula_frame.rowconfigure(0, weight=1)
-        self.energy_balance_formula_fig = plt.Figure(figsize=(4.4, 4.0), dpi=100)
-        self.energy_balance_formula_ax = self.energy_balance_formula_fig.add_subplot(111)
-        self.energy_balance_formula_ax.axis("off")
-        self.energy_balance_formula_fig.patch.set_facecolor("white")
-        self.energy_balance_formula_canvas = FigureCanvasTkAgg(
+        (
+            self.energy_balance_formula_frame,
             self.energy_balance_formula_fig,
-            master=self.energy_balance_formula_frame,
-        )
-        self.energy_balance_formula_widget = self.energy_balance_formula_canvas.get_tk_widget()
-        self.energy_balance_formula_widget.grid(
-            row=0, column=0, sticky=tk.NSEW, padx=(0, 2), pady=(0, 2)
-        )
-        self.energy_balance_formula_vscroll = ttk.Scrollbar(
-            self.energy_balance_formula_frame,
-            orient=tk.VERTICAL,
-            command=self.energy_balance_formula_widget.yview,
-        )
-        self.energy_balance_formula_vscroll.grid(row=0, column=1, sticky=tk.NS)
-        self.energy_balance_formula_hscroll = ttk.Scrollbar(
-            self.energy_balance_formula_frame,
-            orient=tk.HORIZONTAL,
-            command=self.energy_balance_formula_widget.xview,
-        )
-        self.energy_balance_formula_hscroll.grid(row=1, column=0, sticky=tk.EW, padx=(0, 2))
-        self.energy_balance_formula_widget.configure(
-            xscrollcommand=self.energy_balance_formula_hscroll.set,
-            yscrollcommand=self.energy_balance_formula_vscroll.set,
-        )
+            self.energy_balance_formula_ax,
+            self.energy_balance_formula_canvas,
+            self.energy_balance_formula_widget,
+            self.energy_balance_formula_vscroll,
+            self.energy_balance_formula_hscroll,
+        ) = self._create_formula_panel(self.options_frame, figsize=(4.4, 4.0))
 
         # 9. Others options
         self.others_plot_label = ttk.Label(self.options_frame, text="Others:")
@@ -603,13 +591,15 @@ class CgyroUiMixin:
             textvariable=self.others_pod_ky_var,
             width=12,
         )
-        self.pod_formula_frame = ttk.Frame(self.options_frame)
-        self.pod_formula_fig = plt.Figure(figsize=(3.2, 2.2), dpi=100)
-        self.pod_formula_ax = self.pod_formula_fig.add_subplot(111)
-        self.pod_formula_ax.axis("off")
-        self.pod_formula_fig.patch.set_facecolor("white")
-        self.pod_formula_canvas = FigureCanvasTkAgg(self.pod_formula_fig, master=self.pod_formula_frame)
-        self.pod_formula_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        (
+            self.pod_formula_frame,
+            self.pod_formula_fig,
+            self.pod_formula_ax,
+            self.pod_formula_canvas,
+            self.pod_formula_widget,
+            self.pod_formula_vscroll,
+            self.pod_formula_hscroll,
+        ) = self._create_formula_panel(self.options_frame, figsize=(4.0, 2.4))
 
         # Bind once; avoid repeated callback registration inside update_options.
         self.flux_xaxis_combo.bind("<<ComboboxSelected>>", self.update_options)
@@ -693,7 +683,6 @@ class CgyroUiMixin:
             self.energy_balance_single_quantity_label, self.energy_balance_single_quantity_combo,
             self.energy_balance_single_xaxis_label, self.energy_balance_single_xaxis_combo,
             self.energy_balance_transfer_quantity_label, self.energy_balance_transfer_quantity_combo,
-            self.energy_balance_transfer_kx_label, self.energy_balance_transfer_kx_entry,
             self.energy_balance_transfer_ky_label, self.energy_balance_transfer_ky_entry,
             self.energy_balance_formula_frame,
             self.others_plot_label, self.others_plot_combo,
@@ -714,6 +703,134 @@ class CgyroUiMixin:
         text = re.sub(r"\\ge(?![A-Za-z])", r"\\geq", text)
         text = re.sub(r"\\le(?![A-Za-z])", r"\\leq", text)
         return text
+
+    @staticmethod
+    def _formula_visual_length(line):
+        """Rough display-length estimate used to shrink long formula notes."""
+        text = str(line)
+        text = re.sub(r"\$+", "", text)
+        text = re.sub(r"\\mathrm\{([^{}]*)\}", r"\1", text)
+        text = re.sub(r"\\bf\{([^{}]*)\}", r"\1", text)
+        text = re.sub(r"\\[A-Za-z]+", "X", text)
+        text = re.sub(r"[{}_^]", "", text)
+        return max(1, len(text))
+
+    def _formula_font_size(self, line, base_fs, width_chars=62, min_fs=5.8):
+        """Scale formula-panel font size so long lines are not clipped."""
+        visual_len = self._formula_visual_length(line)
+        if visual_len <= width_chars:
+            return base_fs
+        return max(min_fs, min(base_fs, base_fs * float(width_chars) / float(visual_len)))
+
+    def _draw_formula_panel(
+        self,
+        fig,
+        ax,
+        canvas,
+        lines,
+        *,
+        widget=None,
+        base_fig_w=4.4,
+        min_fig_h=2.0,
+        title_fs=8.8,
+        line_fs=7.8,
+        title_dy=0.115,
+        line_dy=0.105,
+        frac_fs=7.2,
+        frac_dy=0.125,
+        width_chars=62,
+        min_fs=5.8,
+    ):
+        """Render formula notes in a wide, unclipped axes with sane scroll extents."""
+        def line_style(index, text):
+            if index == 0:
+                return title_fs, title_dy
+            if (
+                r"\dfrac" in text
+                or r"\frac" in text
+                or r"\sqrt" in text
+                or r"\sum" in text
+                or r"\left" in text
+                or r"\langle" in text
+            ):
+                return frac_fs, frac_dy
+            return line_fs, line_dy
+
+        # Work in pixels first. Mathtext rows with sqrt/sum/fractions are much
+        # taller than ordinary text; estimating in axes-fraction units causes
+        # overlap when the Tk widget is narrow.
+        dpi = float(fig.dpi)
+        top_px = 24.0
+        bottom_px = 24.0
+        row_specs = []
+        total_px = top_px + bottom_px
+        max_visual_len = 1
+        for idx, text in enumerate(lines):
+            fs_base, dy_factor = line_style(idx, text)
+            fs = self._formula_font_size(text, fs_base, width_chars=width_chars, min_fs=min_fs)
+            visual_len = self._formula_visual_length(text)
+            max_visual_len = max(max_visual_len, visual_len)
+            fs_px = float(fs) * dpi / 72.0
+            if idx == 0:
+                row_px = max(24.0, fs_px * 2.4)
+            else:
+                row_px = max(20.0, fs_px * 2.0)
+            if any(token in text for token in (r"\sqrt", r"\dfrac", r"\frac")):
+                row_px = max(row_px, fs_px * 6.2)
+            if r"\sum" in text:
+                row_px = max(row_px, fs_px * 5.4)
+            if any(token in text for token in (r"\left", r"\langle")):
+                row_px = max(row_px, fs_px * 3.1)
+            row_specs.append((text, fs, row_px))
+            total_px += row_px
+
+        fig_h = max(min_fig_h, total_px / dpi)
+        fig_w = max(base_fig_w, min(9.0, 0.9 + 0.047 * float(max_visual_len)))
+        try:
+            fig.set_size_inches(fig_w, fig_h, forward=True)
+            ax.set_position([0.05, 0.04, 0.92, 0.93])
+        except Exception:
+            pass
+
+        ax.clear()
+        ax.axis("off")
+        current_px = top_px
+        fig_h_px_for_text = max(1.0, fig_h * dpi)
+        for line, fs, row_px in row_specs:
+            y = 1.0 - current_px / fig_h_px_for_text
+            ax.text(
+                0.01,
+                y,
+                self._safe_mathtext_line(line),
+                transform=ax.transAxes,
+                ha="left",
+                va="top",
+                fontsize=fs,
+                clip_on=False,
+            )
+            current_px += row_px
+
+        try:
+            pad_px = 36
+            fig_w_px = int(fig.get_figwidth() * fig.dpi)
+            fig_h_px = int(fig.get_figheight() * fig.dpi)
+            target = widget if widget is not None else canvas.get_tk_widget()
+            inner = getattr(target, "_formula_inner_widget", None)
+            window_id = getattr(target, "_formula_window_id", None)
+            if inner is not None:
+                inner.configure(width=fig_w_px, height=fig_h_px)
+            if window_id is not None and hasattr(target, "itemconfigure"):
+                target.itemconfigure(window_id, width=fig_w_px, height=fig_h_px)
+            if hasattr(target, "configure"):
+                target.configure(scrollregion=(0, 0, fig_w_px + pad_px, fig_h_px + pad_px))
+            if hasattr(target, "xview_moveto"):
+                target.xview_moveto(0.0)
+            if hasattr(target, "yview_moveto"):
+                target.yview_moveto(0.0)
+        except Exception:
+            pass
+
+        canvas.draw_idle()
 
     def _render_flux_kx_formula_math(self):
         """Render math notes for the estimated `Flux vs kx` mode."""
@@ -744,16 +861,19 @@ class CgyroUiMixin:
             norm_note,
         ]
 
-        ax = self.flux_formula_ax
-        ax.clear()
-        ax.axis("off")
-        y = 0.98
-        dy = 0.14
-        for i, line in enumerate(lines):
-            fs = 9 if i == 0 else 8.5
-            ax.text(0.01, y, self._safe_mathtext_line(line), transform=ax.transAxes, ha="left", va="top", fontsize=fs)
-            y -= dy
-        self.flux_formula_canvas.draw_idle()
+        self._draw_formula_panel(
+            self.flux_formula_fig,
+            self.flux_formula_ax,
+            self.flux_formula_canvas,
+            lines,
+            widget=self.flux_formula_widget,
+            base_fig_w=3.8,
+            min_fig_h=2.4,
+            title_fs=8.8,
+            line_fs=7.6,
+            line_dy=0.08,
+            width_chars=56,
+        )
 
     def _render_fluctuation_1d_formula_math(self):
         """Render formula notes for Fluctuation 1D averaging definition."""
@@ -780,15 +900,20 @@ class CgyroUiMixin:
                 r"If selected window is empty, code uses last time slice.",
             ]
 
-        ax = self.fluc_formula_ax
-        ax.clear()
-        ax.axis("off")
-        y = 0.98
-        for i, line in enumerate(lines):
-            fs = 8.8 if i == 0 else 8.0
-            ax.text(0.01, y, self._safe_mathtext_line(line), transform=ax.transAxes, ha="left", va="top", fontsize=fs)
-            y -= 0.28
-        self.fluc_formula_canvas.draw_idle()
+        self._draw_formula_panel(
+            self.fluc_formula_fig,
+            self.fluc_formula_ax,
+            self.fluc_formula_canvas,
+            lines,
+            widget=self.fluc_formula_widget,
+            base_fig_w=3.8,
+            min_fig_h=1.8,
+            title_fs=8.8,
+            line_fs=7.3,
+            line_dy=0.11,
+            frac_dy=0.18,
+            width_chars=56,
+        )
 
     def _render_fft_formula_math(self):
         """Render math notes for FFT amplitude/power interpretation."""
@@ -813,16 +938,19 @@ class CgyroUiMixin:
                 r"$\widetilde{A}(\omega)=A(\omega)/\max_{\omega}A(\omega)$",
             ]
 
-        ax = self.fft_formula_ax
-        ax.clear()
-        ax.axis("off")
-        y = 0.98
-        dy = 0.16
-        for i, line in enumerate(lines):
-            fs = 9 if i == 0 else 8.5
-            ax.text(0.01, y, self._safe_mathtext_line(line), transform=ax.transAxes, ha="left", va="top", fontsize=fs)
-            y -= dy
-        self.fft_formula_canvas.draw_idle()
+        self._draw_formula_panel(
+            self.fft_formula_fig,
+            self.fft_formula_ax,
+            self.fft_formula_canvas,
+            lines,
+            widget=self.fft_formula_widget,
+            base_fig_w=3.8,
+            min_fig_h=2.0,
+            title_fs=8.8,
+            line_fs=8.0,
+            line_dy=0.11,
+            width_chars=56,
+        )
 
     def _render_zf_formula_math(self, mode_text):
         """Render math notes for selected zonal ExB shearing sub-mode."""
@@ -870,52 +998,20 @@ class CgyroUiMixin:
                 r"$\omega_{ZF}(t)=\sum_{k_x}k_x^2\phi_{ZF}(k_x,t)$.",
             ]
 
-        ax = self.zf_formula_ax
-        ax.clear()
-        ax.axis("off")
-
-        # Keep long FIG4 notes readable in narrow option panes.
-        fig_h = 2.2
-        y = 0.96
-        dy = 0.16
-        title_fs = 9
-        line_fs = 8.2
-        if mode == "vs gamma_lin":
-            fig_h = 3.8
-            dy = 0.075
-            title_fs = 8.2
-            line_fs = 7.4
-        try:
-            self.zf_formula_fig.set_size_inches(3.2, fig_h, forward=True)
-            # Leave a little extra inner margin so long math lines are less likely
-            # to be clipped near the widget scrollbars.
-            self.zf_formula_fig.subplots_adjust(left=0.02, right=0.92, top=0.97, bottom=0.14)
-        except Exception:
-            pass
-
-        for i, line in enumerate(lines):
-            fs = title_fs if i == 0 else line_fs
-            ax.text(0.01, y, self._safe_mathtext_line(line), transform=ax.transAxes, ha="left", va="top", fontsize=fs)
-            extra = 0.018 if any(token in line for token in (r"\sqrt", r"\left", r"\langle", r"\frac")) else 0.0
-            y -= dy + extra
-        try:
-            pad_px = 48
-            bbox = self.zf_formula_widget.bbox("all")
-            if bbox is not None:
-                self.zf_formula_widget.configure(
-                    scrollregion=(bbox[0], bbox[1], bbox[2] + pad_px, bbox[3] + pad_px)
-                )
-            else:
-                fig_w_px = int(self.zf_formula_fig.get_figwidth() * self.zf_formula_fig.dpi)
-                fig_h_px = int(self.zf_formula_fig.get_figheight() * self.zf_formula_fig.dpi)
-                self.zf_formula_widget.configure(
-                    scrollregion=(0, 0, fig_w_px + pad_px, fig_h_px + pad_px)
-                )
-            self.zf_formula_widget.xview_moveto(0.0)
-            self.zf_formula_widget.yview_moveto(0.0)
-        except Exception:
-            pass
-        self.zf_formula_canvas.draw_idle()
+        self._draw_formula_panel(
+            self.zf_formula_fig,
+            self.zf_formula_ax,
+            self.zf_formula_canvas,
+            lines,
+            widget=self.zf_formula_widget,
+            base_fig_w=4.4,
+            min_fig_h=3.8 if mode == "vs gamma_lin" else 2.2,
+            title_fs=8.5,
+            line_fs=7.4,
+            line_dy=0.075 if mode == "vs gamma_lin" else 0.105,
+            frac_dy=0.095 if mode == "vs gamma_lin" else 0.125,
+            width_chars=60,
+        )
 
     def _render_pod_formula_math(self):
         """Render math notes for POD parity decomposition."""
@@ -932,30 +1028,27 @@ class CgyroUiMixin:
             r"Label rule: $P_{\mathrm{even}}>0.7$ tearing, $P_{\mathrm{odd}}>0.7$ ballooning, else mixed.",
             r"Requirement: continuous parallel data only ($\theta>1$).",
         ]
-        ax = self.pod_formula_ax
-        ax.clear()
-        ax.axis("off")
-        y = 0.97
-        for i, line in enumerate(lines):
-            if i == 0:
-                fs = 9.0
-                dy_line = 0.12
-            elif r"\dfrac" in line or r"\frac" in line:
-                # Fraction lines are taller; reserve extra vertical spacing.
-                fs = 7.4
-                dy_line = 0.18
-            else:
-                fs = 8.0
-                dy_line = 0.11
-            ax.text(0.01, y, self._safe_mathtext_line(line), transform=ax.transAxes, ha="left", va="top", fontsize=fs)
-            y -= dy_line
-        self.pod_formula_canvas.draw_idle()
+        self._draw_formula_panel(
+            self.pod_formula_fig,
+            self.pod_formula_ax,
+            self.pod_formula_canvas,
+            lines,
+            widget=self.pod_formula_widget,
+            base_fig_w=3.8,
+            min_fig_h=2.2,
+            title_fs=8.8,
+            line_fs=7.5,
+            line_dy=0.095,
+            frac_dy=0.13,
+            width_chars=56,
+        )
 
     def _render_energy_balance_formula_math(self):
         """Render math notes for Energy-balance sub-modes (triad_v2 style)."""
         mode = str(self.energy_balance_mode_var.get()).strip().lower()
         is_gamma_eff_mode = (r"\gamma_{eff}" in mode) or ("gamma_eff" in mode)
         is_energy_2d_mode = (mode == "v.s 2d")
+        is_fullt_mode = (mode in ("fullt source map", "fullt target map", "fullt transfer map"))
         if mode == "zf energy balance":
             lines = [
                 r"$\bf{ZF\ energy\ balance\ (code\ equations)}$",
@@ -998,6 +1091,21 @@ class CgyroUiMixin:
                 r"$\left(N_{a}^{NZ\rightarrow Z}/S\right)=\langle N_{a}^{NZ\rightarrow Z}\rangle_t/\langle S\rangle_t$",
                 r"$\mathrm{Plotted:}\ \mathcal{N}_D/S,\ \mathcal{T}_D/S,\ \mathcal{N}_e/S,\ \mathcal{T}_e/S$",
             ]
+        elif is_fullt_mode:
+            lines = [
+                r"$\bf{FULLT\ transfer\ map}$",
+                r"$\mathrm{FULLT}[\Re/\Im,\ k_y^{\mathrm{target}},$",
+                r"$\quad k_x^{\mathrm{source}},\ k_y^{\mathrm{source}},\ channel,\ t]$",
+                r"$\mathrm{fixed:}\ k=(0,k_y^{\mathrm{target}})$",
+                r"$\mathrm{plot:}\ k^{\prime}=(k_x^{\mathrm{source}},k_y^{\mathrm{source}})$",
+                r"$\mathrm{ch1}=\Re\{T_k^\Phi(k^{\prime})\}$",
+                r"$\mathrm{ch2}=\Im\{T_k^\Phi(k^{\prime})\}\quad(\mathrm{diag})$",
+                r"$\mathrm{Map:}\ \langle\mathrm{FULLT}(k_{y,\mathrm{sel}}^{\mathrm{target}},$",
+                r"$\quad k_x^{\prime},k_y^{\prime})\rangle_t=\langle T_k^\Phi(k^{\prime})\rangle_t$",
+                r"$\sum_{k^{\prime}}T_k^\Phi(k^{\prime})\simeq\mathrm{triad\ ch1}(k_x=0,k_{y,\mathrm{sel}}^{\mathrm{target}})$",
+                r"$T_k^\Phi>0:\ k^{\prime}\rightarrow k;\ \ \ T_k^\Phi<0:\ k\rightarrow k^{\prime}.$",
+                r"$\mathrm{marker:}\ k=(0,k_y^{\mathrm{target}})$",
+            ]
         elif mode == "single plot":
             lines = [
                 r"$\bf{Energy\ balance\ single\ plot}$",
@@ -1025,34 +1133,22 @@ class CgyroUiMixin:
                 r"$L_{Z,\mathrm{total}}(t)=\frac{dW_{es}}{dt}-N_{\mathrm{total}}(t)$",
                 r"$\mathrm{Plotted:}\ (\mathcal{T}-\mathcal{N})^{NZ\rightarrow Z},\ D_Z,\ -L_{Z,\mathrm{total}},\ \frac{dS_g}{dt}$",
             ]
-        ax = self.energy_balance_formula_ax
-        ax.clear()
-        ax.axis("off")
-        y = 0.98
-        for i, line in enumerate(lines):
-            if i == 0:
-                fs = 8.8
-                dy_line = 0.115
-            elif r"\frac" in line or r"\sum" in line or r"\left(" in line:
-                fs = 7.2
-                dy_line = 0.125
-            else:
-                fs = 7.8
-                dy_line = 0.105
-            ax.text(0.01, y, self._safe_mathtext_line(line), transform=ax.transAxes, ha="left", va="top", fontsize=fs)
-            y -= dy_line
-        try:
-            pad_px = 28
-            fig_w_px = int(self.energy_balance_formula_fig.get_figwidth() * self.energy_balance_formula_fig.dpi)
-            fig_h_px = int(self.energy_balance_formula_fig.get_figheight() * self.energy_balance_formula_fig.dpi)
-            self.energy_balance_formula_widget.configure(
-                scrollregion=(0, 0, fig_w_px + pad_px, fig_h_px + pad_px)
-            )
-            self.energy_balance_formula_widget.xview_moveto(0.0)
-            self.energy_balance_formula_widget.yview_moveto(0.0)
-        except Exception:
-            pass
-        self.energy_balance_formula_canvas.draw_idle()
+        self._draw_formula_panel(
+            self.energy_balance_formula_fig,
+            self.energy_balance_formula_ax,
+            self.energy_balance_formula_canvas,
+            lines,
+            widget=self.energy_balance_formula_widget,
+            base_fig_w=4.4,
+            min_fig_h=4.0,
+            title_fs=8.8,
+            line_fs=7.4 if is_fullt_mode else 7.8,
+            line_dy=0.074 if is_fullt_mode else 0.105,
+            frac_fs=7.0 if is_fullt_mode else 7.2,
+            frac_dy=0.084 if is_fullt_mode else 0.125,
+            width_chars=58,
+            min_fs=5.4 if is_fullt_mode else 5.8,
+        )
 
     @staticmethod
     def _pod_theta_resolution_error_text():
@@ -1186,33 +1282,30 @@ class CgyroUiMixin:
             is_gamma_eff_mode = (r"\gamma_{eff}" in mode) or ("gamma_eff" in mode)
             is_energy_2d_mode = (mode == "v.s 2d")
             is_single_plot_mode = (mode == "single plot")
-            is_transfer_check_mode = (mode == "energy transfer check")
+            is_fullt_mode = (mode in ("fullt source map", "fullt target map", "fullt transfer map"))
             xaxis_single = str(self.energy_balance_single_xaxis_var.get()).strip().lower()
             if is_gamma_eff_mode:
                 n_label_txt = "ky:"
             else:
                 n_label_txt = "n index:"
             self.energy_balance_n_label.configure(text=n_label_txt)
-            if not is_transfer_check_mode:
+            if not is_fullt_mode:
                 self.energy_balance_n_label.grid(row=row, column=0, sticky=tk.W)
                 self.energy_balance_n_entry.grid(row=row, column=1, sticky=tk.W)
-            self.energy_balance_spec_label.grid(row=row, column=2, sticky=tk.W, padx=(10, 0))
-            self.energy_balance_spec_combo.grid(row=row, column=3, sticky=tk.W)
-            row += 1
+                self.energy_balance_spec_label.grid(row=row, column=2, sticky=tk.W, padx=(10, 0))
+                self.energy_balance_spec_combo.grid(row=row, column=3, sticky=tk.W)
+                row += 1
             if is_single_plot_mode:
                 self.energy_balance_single_quantity_label.grid(row=row, column=0, sticky=tk.W)
                 self.energy_balance_single_quantity_combo.grid(row=row, column=1, sticky=tk.W)
                 self.energy_balance_single_xaxis_label.grid(row=row, column=2, sticky=tk.W, padx=(10, 0))
                 self.energy_balance_single_xaxis_combo.grid(row=row, column=3, sticky=tk.W)
                 row += 1
-            if is_transfer_check_mode:
+            if is_fullt_mode:
                 self.energy_balance_transfer_quantity_label.grid(row=row, column=0, sticky=tk.W)
                 self.energy_balance_transfer_quantity_combo.grid(row=row, column=1, sticky=tk.W)
-                self.energy_balance_transfer_kx_label.grid(row=row, column=2, sticky=tk.W, padx=(10, 0))
-                self.energy_balance_transfer_kx_entry.grid(row=row, column=3, sticky=tk.W)
-                row += 1
-                self.energy_balance_transfer_ky_label.grid(row=row, column=0, sticky=tk.W)
-                self.energy_balance_transfer_ky_entry.grid(row=row, column=1, sticky=tk.W)
+                self.energy_balance_transfer_ky_label.grid(row=row, column=2, sticky=tk.W, padx=(10, 0))
+                self.energy_balance_transfer_ky_entry.grid(row=row, column=3, sticky=tk.W)
                 row += 1
             if is_gamma_eff_mode:
                 self.linear_gamma_file_label.grid(row=row, column=0, sticky=tk.W)
@@ -1419,6 +1512,80 @@ class CgyroUiMixin:
         
         return f"Ion (Z={z}, M={real_m:.1f})"
 
+    def _get_species_short_name(self, z, m):
+        """Return a compact species token for plot labels."""
+        name = self._get_species_name(z, m)
+        compact = {
+            "Electron": "e",
+            "Hydrogen": "H",
+            "Deuterium": "D",
+            "Tritium": "T",
+            "Helium-3": "He3",
+            "Helium-4": "He4",
+            "Lithium": "Li",
+            "Beryllium": "Be",
+            "Boron": "B",
+            "Carbon": "C",
+            "Nitrogen": "N",
+            "Oxygen": "O",
+            "Neon": "Ne",
+            "Argon": "Ar",
+            "Nickel": "Ni",
+            "Tungsten": "W",
+        }
+        if name in compact:
+            return compact[name]
+        if abs(z - round(z)) < 1.0e-8:
+            return f"Z{int(round(z))}"
+        return f"Z{z:.3g}"
+
+    def _get_case_species_densities(self, data, n_species=None):
+        """Return normalized DENS values for the case species."""
+        specs = self._get_case_species(data)
+        if n_species is None:
+            n_species = len(specs)
+        dens = np.full(int(n_species), np.nan, dtype=float)
+
+        try:
+            dens_attr = np.asarray(getattr(data, 'dens', []), dtype=float).reshape(-1)
+            ncopy = min(dens.size, dens_attr.size)
+            if ncopy > 0:
+                dens[:ncopy] = dens_attr[:ncopy]
+        except Exception:
+            pass
+
+        if np.any(~np.isfinite(dens)):
+            scalars = {}
+            try:
+                case_dir = self._resolve_case_dir(data)
+                scalars = self._read_input_cgyro_scalars(case_dir)
+            except Exception:
+                scalars = {}
+            for i in range(dens.size):
+                if np.isfinite(dens[i]):
+                    continue
+                try:
+                    val = scalars.get(f"DENS_{i+1}", None)
+                    if val is not None:
+                        dens[i] = float(val)
+                except Exception:
+                    pass
+
+        return dens
+
+    def _format_species_join_label(self, data, indices):
+        """Format selected species as compact tokens joined by '+'."""
+        specs = self._get_case_species(data)
+        labels = []
+        for idx in indices:
+            ii = int(idx)
+            if 0 <= ii < len(specs):
+                z, m = specs[ii]
+                labels.append(self._get_species_short_name(z, m))
+            else:
+                labels.append(f"s{ii+1}")
+        return "+".join(labels)
+
     def _update_species_list(self):
         """Find common species across all loaded cases and update the dropdown."""
         if not self.cases:
@@ -1437,16 +1604,12 @@ class CgyroUiMixin:
             else:
                 common_species &= specs
             
-            # Check for Main Ion (D or T)
-            d_or_t = False
+            # Main ion is defined per case by normalized DENS > 0.3 among ions.
+            if self._get_main_ion_indices(data):
+                has_main_ion = True
             for z, m in specs:
-                name = self._get_species_name(z, m)
-                if name in ["Deuterium", "Tritium"]:
-                    d_or_t = True
                 if z > 0:
                     has_any_ion = True
-            if d_or_t:
-                has_main_ion = True
         
         if common_species:
             # Sort by Z (usually ions first, then electrons if Z<0)
@@ -1456,7 +1619,7 @@ class CgyroUiMixin:
             
             # Add Main Ion option if applicable
             if has_main_ion:
-                values.append("Main Ion (D+T)")
+                values.append("Main Ion (DENS>0.3)")
             if has_any_ion:
                 values.append("All Ions")
 
@@ -1479,12 +1642,14 @@ class CgyroUiMixin:
             pass
 
     def _get_main_ion_indices(self, data):
-        """Return indices of Deuterium and Tritium species."""
+        """Return ion indices whose normalized DENS is greater than 0.3."""
         indices = []
         specs = self._get_case_species(data)
+        dens = self._get_case_species_densities(data, n_species=len(specs))
         for i, (z, m) in enumerate(specs):
-            name = self._get_species_name(z, m)
-            if name in ["Deuterium", "Tritium"]:
+            if i >= dens.size:
+                continue
+            if z > 0 and np.isfinite(dens[i]) and dens[i] > 0.3:
                 indices.append(i)
         return indices
 
@@ -1555,12 +1720,11 @@ class CgyroUiMixin:
                 xax_plot = xax.replace("v.s", "vs")
                 plot_type = f"Energy Balance Single {qty} {xax_plot}"
                 display_plot_type = f"Energy balance: Single plot ({qty}, {xax})"
-            elif mode == "energy transfer check":
+            elif mode in ("fullt source map", "fullt target map", "fullt transfer map"):
                 qty = str(self.energy_balance_transfer_quantity_var.get()).strip()
-                kx = str(self.energy_balance_transfer_kx_var.get()).strip()
                 ky = str(self.energy_balance_transfer_ky_var.get()).strip()
-                plot_type = "Energy Balance Transfer Check"
-                display_plot_type = f"Energy balance: Energy transfer check ({qty}, kx={kx}, ky={ky})"
+                plot_type = "Energy Balance FULLT"
+                display_plot_type = f"Energy balance: FULLT transfer map ({qty}, fixed ky={ky})"
             elif mode == "v.s 2d":
                 plot_type = "Energy Balance vs 2D"
                 display_plot_type = "Energy balance: vs 2D"
@@ -1595,6 +1759,7 @@ class CgyroUiMixin:
             ("FFT" in plot_type)
             or plot_type.startswith("Fluctuation 2D")
             or plot_type == "POD Parity"
+            or plot_type == "Energy Balance FULLT"
             or ("vs ky_time" in plot_type)
         )
 
@@ -1619,6 +1784,7 @@ class CgyroUiMixin:
         """
         indices = []
         spec_label = ""
+        selected_spec_str = ""
 
         if species_override_index is not None:
             indices = [int(species_override_index)]
@@ -1632,21 +1798,20 @@ class CgyroUiMixin:
             except Exception:
                 spec_label = f"s{int(species_override_index)+1}"
         else:
-            selected_spec_str = ""
             try:
                 selected_spec_str = self.species_var.get().strip()
             except Exception:
                 selected_spec_str = ""
 
-            if selected_spec_str == "Main Ion (D+T)":
+            if selected_spec_str.startswith("Main Ion"):
                 indices = self._get_main_ion_indices(data)
                 if not indices:
-                    print(f"Warning: No Main Ion (D/T) found in {case_label}")
+                    print(f"Warning: No Main Ion (Z>0 and DENS>0.3) found in {case_label}")
                     return [], "Main Ion"
                 if main_ion_policy == "first" and len(indices) > 1:
                     indices = [indices[0]]
                     print("Note: Main Ion sum is reduced to first main-ion species for this plot.")
-                spec_label = "Main Ion"
+                spec_label = self._format_species_join_label(data, indices)
             elif selected_spec_str == "All Ions":
                 indices = self._get_all_ion_indices(data)
                 if not indices:
@@ -1679,6 +1844,8 @@ class CgyroUiMixin:
                 f"{indices[0]} for {case_label}."
             )
             indices = [indices[0]]
+            if selected_spec_str.startswith("Main Ion") or selected_spec_str == "All Ions":
+                spec_label = self._format_species_join_label(data, indices)
 
         return indices, spec_label
 

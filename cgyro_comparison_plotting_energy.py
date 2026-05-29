@@ -6,6 +6,7 @@ Auto-extracted from cgyro_comparison_plotting.py during refactor.
 import numpy as np
 import os
 from tkinter import messagebox
+from matplotlib.colors import LinearSegmentedColormap
 
 try:
     import scipy.signal as sp_signal
@@ -15,6 +16,17 @@ except Exception:
     sp_curve_fit = None
 
 DEFAULT_POD_Z_WINDOW_PI = 8.0
+FULLT_DIVERGING_CMAP = LinearSegmentedColormap.from_list(
+    'fullt_blue_white_red',
+    [
+        (0.00, '#2166ac'),
+        (0.42, '#d5e8f3'),
+        (0.50, '#ffffff'),
+        (0.58, '#f7d7cd'),
+        (1.00, '#b2182b'),
+    ],
+    N=512,
+)
 
 class EnergyPlotting:
     def _parse_energy_balance_species(self):
@@ -1291,82 +1303,265 @@ class EnergyPlotting:
         if skipped > 0:
             print(f"Energy balance vs 2D: skipped {skipped} case(s) due to missing/invalid triad or scan data.")
 
-    def _plot_energy_balance_transfer_check(self, data, label, t_indices, t_start, t_end):
-        """Plot the transfer map directly from bin.cgyro.triad in kx-ky space."""
-        if not self._load_triad_only_if_needed(data, label):
-            return
+    def _load_fullt_if_needed(self, data, label):
+        """Load and normalize bin.cgyro.fullt to [ri,target_ky,source_kx,source_ky,channel,time]."""
+        n_n = int(getattr(data, 'n_n', 0))
+        n_radial = int(getattr(data, 'n_radial', 0))
+        n_time_hint = int(getattr(data, 'n_time', 0))
 
-        triad = np.asarray(data.triad)
-        if triad.ndim != 6 or triad.shape[0] != 2:
-            print(f"Unsupported triad shape for {label}: {triad.shape}")
-            return
-        _ri, n_species, n_radial, n_chan, n_n, n_t = triad.shape
-        if n_chan < 8 or n_species < 2:
-            print(f"Unsupported triad shape for {label}: {triad.shape}")
-            return
+        def _accept_existing(arr):
+            arr = np.asarray(arr)
+            if arr.ndim != 6 or arr.shape[0] != 2:
+                return None
+            if n_n > 0 and n_radial > 0:
+                n_signed = 2 * n_n - 1
+                # New pygacode layout.
+                if arr.shape[1] == n_n and arr.shape[2] == n_radial and arr.shape[3] == n_signed:
+                    return arr
+                # Raw Fortran reshape layout.
+                if arr.shape[1] == n_radial and arr.shape[2] == n_signed and arr.shape[4] == n_n:
+                    return np.transpose(arr, (0, 4, 1, 2, 3, 5))
+            return None
 
-        qty = str(self.energy_balance_transfer_quantity_var.get()).strip().upper()
+        if hasattr(data, 'fullt'):
+            arr = _accept_existing(getattr(data, 'fullt'))
+            if arr is not None:
+                data.fullt = arr
+                data.fullt_n_channel = int(arr.shape[4])
+                return True
+
+        if hasattr(data, 'full_t'):
+            arr = _accept_existing(getattr(data, 'full_t'))
+            if arr is not None:
+                data.fullt = arr
+                data.fullt_n_channel = int(arr.shape[4])
+                return True
+
+        if n_n <= 0 or n_radial <= 0:
+            print(f"Cannot load FULLT for {label}: missing n_n/n_radial metadata.")
+            return False
+        if not hasattr(data, 'extract'):
+            print(f"Cannot load FULLT for {label}: data object has no extract() method.")
+            return False
+
         try:
-            kx_sel = float(str(self.energy_balance_transfer_kx_var.get()).strip())
+            _tmsg, fmt, raw = data.extract('.cgyro.fullt')
+        except TypeError:
+            _tmsg, fmt, raw = data.extract('.cgyro.fullt', cmplx=False)
+        except Exception as e:
+            print(f"FULLT read failed for {label}: {e}")
+            return False
+
+        if fmt == 'null':
+            print(f"No FULLT data available for {label}. Need bin/out.cgyro.fullt.")
+            return False
+
+        raw = np.asarray(raw)
+        if raw.size <= 0:
+            print(f"Empty FULLT data for {label}.")
+            return False
+        if np.iscomplexobj(raw):
+            raw = np.column_stack((np.real(raw).reshape(-1), np.imag(raw).reshape(-1))).reshape(-1)
+        raw = np.asarray(raw, dtype=float).reshape(-1)
+
+        block_no_time = 2 * n_radial * (2 * n_n - 1) * n_n
+        if block_no_time <= 0:
+            print(f"Invalid FULLT dimensions for {label}.")
+            return False
+
+        n_channel = 0
+        n_time = 0
+        if n_time_hint > 0 and raw.size % (block_no_time * n_time_hint) == 0:
+            n_channel_try = int(raw.size // (block_no_time * n_time_hint))
+            if n_channel_try in (1, 2):
+                n_channel = n_channel_try
+                n_time = n_time_hint
+
+        if n_channel <= 0:
+            preferred = int(getattr(data, 'fullt_n_channel', 0))
+            candidates = [preferred, 2, 1] if preferred in (1, 2) else [2, 1]
+            for n_channel_try in candidates:
+                denom = block_no_time * n_channel_try
+                if denom > 0 and raw.size % denom == 0:
+                    n_time_try = int(raw.size // denom)
+                    if n_time_try > 0:
+                        n_channel = int(n_channel_try)
+                        n_time = int(n_time_try)
+                        break
+
+        if n_channel not in (1, 2) or n_time <= 0:
+            print(
+                f"Cannot infer FULLT shape for {label}: raw_size={raw.size}, "
+                f"n_radial={n_radial}, n_n={n_n}, n_time_hint={n_time_hint}."
+            )
+            return False
+
+        nd = block_no_time * n_channel * n_time
+        if raw.size < nd:
+            print(f"FULLT data is smaller than inferred shape for {label}.")
+            return False
+        try:
+            raw6 = np.reshape(
+                raw[:nd],
+                (2, n_radial, 2 * n_n - 1, n_channel, n_n, n_time),
+                order='F',
+            )
+        except Exception as e:
+            print(f"FULLT reshape failed for {label}: {e}")
+            return False
+
+        data.fullt = np.transpose(raw6, (0, 4, 1, 2, 3, 5))
+        data.fullt_n_channel = int(n_channel)
+        try:
+            data.n_time = int(n_time)
+        except Exception:
+            pass
+        return True
+
+    def _fullt_source_kx_axis(self, data, n_radial, label):
+        """Build the full source-kx axis, including the leftmost Nyquist storage bin."""
+        p = np.asarray(getattr(data, 'p', []), dtype=float).reshape(-1)
+        length = float(getattr(data, 'length', 0.0))
+        if p.size == n_radial and np.isfinite(length) and abs(length) > 1.0e-12:
+            return 2.0 * np.pi * p / length, np.arange(n_radial, dtype=int)
+
+        kx = np.asarray(getattr(data, 'kx', []), dtype=float).reshape(-1)
+        if kx.size == n_radial:
+            return kx, np.arange(n_radial, dtype=int)
+
+        if np.isfinite(length) and abs(length) > 1.0e-12:
+            dkx = 2.0 * np.pi / length
+        else:
+            dkx = 1.0
+        p_index = np.arange(n_radial, dtype=float) - (n_radial // 2)
+        if kx.size == n_radial - 1 and n_radial > 1:
+            test = p_index[1:] * dkx
+            if np.allclose(test[:kx.size], kx, rtol=1.0e-5, atol=1.0e-12):
+                return p_index * dkx, np.arange(n_radial, dtype=int)
+        if kx.size > 0:
+            print(
+                f"Warning: FULLT kx axis for {label} inferred from n_radial; "
+                f"metadata kx length is {kx.size}, FULLT radial length is {n_radial}."
+            )
+        return p_index * dkx, np.arange(n_radial, dtype=int)
+
+    def _fullt_source_ky_axis(self, data, n_n, n_signed):
+        """Build signed source-ky axis matching FULLT source_ky storage order."""
+        ky_pos = self._positive_ky_axis(getattr(data, 'kynorm', getattr(data, 'ky', [])))
+        ky_pos = np.asarray(ky_pos, dtype=float).reshape(-1)
+        if ky_pos.size >= n_n and n_n > 0:
+            ky_pos = ky_pos[:n_n]
+            ky_axis = np.concatenate((-ky_pos[1:][::-1], ky_pos))
+        elif n_n > 1:
+            ky_axis = np.arange(-(n_n - 1), n_n, dtype=float)
+        else:
+            ky_axis = np.asarray([0.0], dtype=float)
+
+        if ky_axis.size != n_signed:
+            ky_axis = np.arange(-(n_signed // 2), n_signed - (n_signed // 2), dtype=float)
+        return ky_axis
+
+    def _fullt_target_ky_axis(self, data, n_target):
+        """Build non-negative target-ky axis for FULLT target_ky index selection."""
+        ky = self._positive_ky_axis(getattr(data, 'kynorm', getattr(data, 'ky', [])))
+        ky = np.asarray(ky, dtype=float).reshape(-1)
+        if ky.size >= n_target:
+            return ky[:n_target]
+        return np.arange(n_target, dtype=float)
+
+    def _plot_energy_balance_fullt(self, data, label, t_indices, t_start, t_end):
+        """Plot FULLT for one fixed target ky over scanned source kx/source ky."""
+        if not self._load_fullt_if_needed(data, label):
+            return
+
+        fullt = np.asarray(data.fullt)
+        if fullt.ndim != 6 or fullt.shape[0] != 2:
+            print(f"Unsupported FULLT shape for {label}: {fullt.shape}")
+            return
+
+        _ri, n_target, n_radial, n_signed, n_channel, n_t = fullt.shape
+        if n_target <= 0 or n_radial <= 0 or n_signed <= 0 or n_channel <= 0 or n_t <= 0:
+            print(f"Unsupported FULLT shape for {label}: {fullt.shape}")
+            return
+
+        qty = str(self.energy_balance_transfer_quantity_var.get()).strip().lower()
+        try:
             ky_sel = float(str(self.energy_balance_transfer_ky_var.get()).strip())
         except Exception:
-            print(f"Invalid kx/ky input for {label}")
+            print(f"Invalid FULLT fixed-ky input for {label}")
             return
 
-        spec = self._parse_energy_balance_species()
-        f, spec_label = self._triad_species_view(triad, spec, label)
-        if f is None:
-            return
-
-        kx_axis, radial_idx = self._build_kx_axis(data, n_radial, label)
-        ky_axis = self._positive_ky_axis(getattr(data, 'kynorm', getattr(data, 'ky', [])))
-        if kx_axis is None or radial_idx is None or ky_axis is None:
-            print(f"Missing kx/ky axes for {label}")
+        kx_axis, radial_idx = self._fullt_source_kx_axis(data, n_radial, label)
+        ky_source_axis = self._fullt_source_ky_axis(data, n_target, n_signed)
+        ky_target_axis = self._fullt_target_ky_axis(data, n_target)
+        if kx_axis is None or radial_idx is None or ky_source_axis is None or ky_target_axis is None:
+            print(f"Missing FULLT axes for {label}")
             return
 
         kx_axis = np.asarray(kx_axis, dtype=float).reshape(-1)
-        ky_axis = np.asarray(ky_axis, dtype=float).reshape(-1)
         radial_idx = np.asarray(radial_idx, dtype=int).reshape(-1)
-        if kx_axis.size <= 0 or ky_axis.size <= 0 or radial_idx.size <= 0:
-            print(f"Empty kx/ky axes for {label}")
-            return
+        ky_source_axis = np.asarray(ky_source_axis, dtype=float).reshape(-1)
+        ky_target_axis = np.asarray(ky_target_axis, dtype=float).reshape(-1)
 
-        n_x = min(int(kx_axis.size), int(radial_idx.size))
-        n_y = min(int(ky_axis.size), int(n_n))
+        n_x = min(kx_axis.size, radial_idx.size, n_radial)
+        n_y = min(ky_source_axis.size, n_signed)
         if n_x <= 0 or n_y <= 0:
-            print(f"Empty kx/ky axes for {label}")
+            print(f"Empty FULLT axes for {label}")
             return
         kx_axis = kx_axis[:n_x]
-        ky_axis = ky_axis[:n_y]
         radial_idx = radial_idx[:n_x]
+        ky_source_axis = ky_source_axis[:n_y]
+
+        target_ky_idx = self._nearest_finite_index(ky_target_axis[:n_target], ky_sel)
+        if target_ky_idx is None:
+            print(f"Could not map selected fixed ky for {label}")
+            return
+        fixed_ky = float(ky_target_axis[target_ky_idx])
+        source_ky_mark_idx = self._nearest_finite_index(ky_source_axis, fixed_ky)
 
         valid_t = np.asarray(t_indices, dtype=int).reshape(-1)
         valid_t = valid_t[(valid_t >= 0) & (valid_t < n_t)]
-        if valid_t.size <= 0:
-            valid_t = np.arange(max(1, n_t // 2), n_t, dtype=int)
         if valid_t.size <= 0:
             valid_t = np.arange(n_t, dtype=int)
         if valid_t.size <= 0:
             print(f"No time samples for {label}")
             return
 
-        f = f[radial_idx, :, :, :]  # keep only the displayed radial slots
-        t_map = np.real(f[:, 0, :n_y, :n_t])  # [kx, ky, t]
-        n_map = np.real(f[:, 1, :n_y, :n_t])
-
-        if qty == 'T':
-            z_map = t_map
-            title = r"$\mathcal{T}_k$ from bin.cgyro.triad idx1"
-        elif qty == 'N':
-            z_map = n_map
-            title = r"$\mathcal{N}_k$ / NZ-pair term from bin.cgyro.triad idx2"
+        real_map = np.asarray(fullt[0, target_ky_idx, radial_idx, :n_y, 0, :], dtype=float)
+        if n_channel >= 2:
+            imag_map = np.asarray(fullt[0, target_ky_idx, radial_idx, :n_y, 1, :], dtype=float)
         else:
-            z_map = t_map - n_map
-            title = r"$(\mathcal{T}_k-\mathcal{N}_k)$ from bin.cgyro.triad"
+            imag_map = np.asarray(fullt[1, target_ky_idx, radial_idx, :n_y, 0, :], dtype=float)
+
+        if qty == 'im':
+            z_map = imag_map
+            quantity_label = "Im"
+            title_quantity = "imaginary diagnostic"
+            use_symmetric_scale = True
+        elif qty == 'abs':
+            z_map = np.sqrt(real_map * real_map + imag_map * imag_map)
+            quantity_label = "Abs"
+            title_quantity = "complex magnitude"
+            use_symmetric_scale = False
+        else:
+            z_map = real_map
+            quantity_label = "Re"
+            title_quantity = "real transfer"
+            use_symmetric_scale = True
 
         z_avg = np.mean(z_map[:, :, valid_t], axis=2)
+        if z_avg.shape == (n_y, n_x):
+            z_plot = z_avg
+        elif z_avg.shape == (n_x, n_y):
+            z_plot = z_avg.T
+        else:
+            print(
+                f"Unsupported FULLT plot shape for {label}: z_avg={z_avg.shape}, "
+                f"expected ({n_x},{n_y}) or ({n_y},{n_x})."
+            )
+            return
         if np.all(~np.isfinite(z_avg)):
-            print(f"No valid transfer data for {label}")
+            print(f"No valid FULLT data for {label}")
             return
 
         self.fig.clear()
@@ -1378,45 +1573,90 @@ class EnergyPlotting:
             pass
 
         finite = z_avg[np.isfinite(z_avg)]
-        vmax = float(np.nanmax(np.abs(finite))) if finite.size > 0 else 0.0
+        if finite.size > 0:
+            vmax = float(np.nanmax(np.abs(finite)))
+            zmax = float(np.nanmax(finite))
+            zmin = float(np.nanmin(finite))
+        else:
+            vmax, zmin, zmax = 1.0, 0.0, 1.0
         if (not np.isfinite(vmax)) or vmax <= 0.0:
             vmax = 1.0
 
-        pcm = self.ax.pcolormesh(
-            kx_axis,
-            ky_axis,
-            z_avg.T,
-            shading='auto',
-            cmap='bwr',
-            vmin=-vmax,
-            vmax=vmax,
-        )
-        cbar = self.fig.colorbar(pcm, ax=self.ax)
-        cbar.set_label(r"$\langle T\rangle_t$")
+        if finite.size > 0:
+            clip = float(np.nanpercentile(np.abs(finite), 99.5))
+            if np.isfinite(clip) and clip > 0.0:
+                vmax = clip
 
-        kx_mark_idx = self._nearest_finite_index(kx_axis, kx_sel)
-        ky_mark_idx = self._nearest_finite_index(ky_axis, ky_sel)
-        if kx_mark_idx is None or ky_mark_idx is None:
-            print(f"Could not map selected kx/ky for {label}")
-            return
-        kx_mark = float(kx_axis[kx_mark_idx])
-        ky_mark = float(ky_axis[ky_mark_idx])
-        self.ax.scatter(
-            [kx_mark],
-            [ky_mark],
-            marker='D',
-            s=70,
-            facecolor='k',
-            edgecolor='white',
-            linewidth=0.8,
-            zorder=5,
-            label=rf"selected $k=({kx_mark:.3g},{ky_mark:.3g})$",
+        if use_symmetric_scale:
+            pcm = self.ax.imshow(
+                np.ma.masked_invalid(z_plot),
+                extent=[float(np.nanmin(kx_axis)), float(np.nanmax(kx_axis)),
+                        float(np.nanmin(ky_source_axis)), float(np.nanmax(ky_source_axis))],
+                origin='lower',
+                aspect='auto',
+                interpolation='bicubic',
+                cmap=FULLT_DIVERGING_CMAP,
+                vmin=-vmax,
+                vmax=vmax,
+            )
+            colorbar_extend = 'both'
+        else:
+            if (not np.isfinite(zmin)) or (not np.isfinite(zmax)) or zmax <= zmin:
+                zmin, zmax = 0.0, vmax
+            pcm = self.ax.imshow(
+                np.ma.masked_invalid(z_plot),
+                extent=[float(np.nanmin(kx_axis)), float(np.nanmax(kx_axis)),
+                        float(np.nanmin(ky_source_axis)), float(np.nanmax(ky_source_axis))],
+                origin='lower',
+                aspect='auto',
+                interpolation='bicubic',
+                cmap='viridis',
+                vmin=zmin,
+                vmax=zmax,
+            )
+            colorbar_extend = 'max'
+
+        cbar = self.fig.colorbar(pcm, ax=self.ax, extend=colorbar_extend)
+        cbar.set_label(rf"$\langle {quantity_label}\,T^{{\Phi}}\rangle_t$")
+
+        kx_mark_idx = self._nearest_finite_index(kx_axis, 0.0)
+        if kx_mark_idx is not None and source_ky_mark_idx is not None:
+            kx_mark = float(kx_axis[kx_mark_idx])
+            ky_mark = float(ky_source_axis[source_ky_mark_idx])
+            self.ax.scatter(
+                [kx_mark],
+                [ky_mark],
+                marker='D',
+                s=115,
+                facecolor='k',
+                edgecolor='white',
+                linewidth=1.0,
+                zorder=5,
+            )
+        else:
+            print(f"Could not map FULLT marker point for {label}")
+
+        self.ax.grid(False)
+        self.ax.axhline(0.0, color='0.40', linewidth=0.65, alpha=0.22)
+        self.ax.axvline(0.0, color='0.40', linewidth=0.65, alpha=0.22)
+        self.ax.set_xlabel(r"$k_x'\rho_s$")
+        self.ax.set_ylabel(r"$k_y'\rho_s$")
+        self.ax.set_title(
+            rf"$T^{{\Phi}}_{{k_x\rho_s=0,\ k_y\rho_s={fixed_ky:.3g}}}(k')$"
         )
-        self.ax.axhline(0.0, color='k', linewidth=0.8, alpha=0.35)
-        self.ax.axvline(0.0, color='k', linewidth=0.8, alpha=0.35)
-        self.ax.set_xlabel(getattr(data, 'kxstr', r'$k_x \rho_s$'))
-        self.ax.set_ylabel(getattr(data, 'kystr', r'$k_y \rho_s$'))
-        self.ax.set_title(f"{label}: {title} ({spec_label})")
-        self.ax.legend(loc='best', framealpha=0.85)
+        try:
+            self.ax.text(
+                0.985,
+                0.985,
+                rf"$\langle\cdot\rangle_t:\ {float(t_start):.1f}-{float(t_end):.1f}$",
+                transform=self.ax.transAxes,
+                ha='right',
+                va='top',
+                fontsize=8,
+                color='0.25',
+                bbox=dict(facecolor='white', edgecolor='none', alpha=0.65, pad=2.0),
+            )
+        except Exception:
+            pass
 
 
