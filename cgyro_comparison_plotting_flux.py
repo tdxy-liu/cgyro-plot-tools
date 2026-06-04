@@ -196,6 +196,13 @@ class FluxPlotting:
                     else:
                         ax_i.set_title(rf"$\Gamma_{{{sub}}}^{{{field_tag}}}(k_y,t)$: {label}")
                         cb.set_label(rf"$\Gamma_{{{sub}}}^{{{field_tag}}}(k_y,t)$")
+                    if hasattr(self, "_record_current_plot_xyz_dataset"):
+                        self._record_current_plot_xyz_dataset(
+                            f"{field_tag} flux ky-time: {label}",
+                            ky_plot,
+                            t_plot,
+                            z_t_ky,
+                        )
 
                 try:
                     self.fig.tight_layout()
@@ -219,6 +226,13 @@ class FluxPlotting:
             else:
                 self.ax.set_title(rf"$\Gamma_{{{sub}}}^{{\phi}}(k_y,t)$: {label}")
                 cb.set_label(rf"$\Gamma_{{{sub}}}^{{\phi}}(k_y,t)$")
+            if hasattr(self, "_record_current_plot_xyz_dataset"):
+                self._record_current_plot_xyz_dataset(
+                    f"Phi flux ky-time: {label}",
+                    ky_plot,
+                    t_plot,
+                    z_t_ky,
+                )
             return
 
         if "vs ky" in plot_type:

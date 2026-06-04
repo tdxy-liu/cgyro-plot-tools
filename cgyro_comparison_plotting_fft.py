@@ -217,12 +217,26 @@ class FftPlotting:
             self.fig.colorbar(cs1, ax=ax1)
             ax1.set_title(f'{field_name} FFT {spectrum_label} (kx=0): {label}')
             ax1.set_ylabel(r'$\omega (c_s/a)$')
+            if hasattr(self, "_record_current_plot_xyz_dataset"):
+                self._record_current_plot_xyz_dataset(
+                    f"{field_name} FFT {spectrum_label} (kx=0): {label}",
+                    ky_grid,
+                    omega_grid,
+                    mag_plot1,
+                )
             
             cs2 = ax2.contourf(ky_grid, omega_grid, mag_plot2, levels=50, cmap=self._get_2d_contour_cmap())
             self.fig.colorbar(cs2, ax=ax2)
             ax2.set_title(f'{field_name} FFT {spectrum_label} {title2_suffix}: {label}')
             ax2.set_ylabel(r'$\omega (c_s/a)$')
             ax2.set_xlabel(r'$k_y \rho_s$')
+            if hasattr(self, "_record_current_plot_xyz_dataset"):
+                self._record_current_plot_xyz_dataset(
+                    f"{field_name} FFT {spectrum_label} {title2_suffix}: {label}",
+                    ky_grid,
+                    omega_grid,
+                    mag_plot2,
+                )
             
             # Overlay Linear Frequency from exported omega/gamma-vs-ky file (same as Zonal path logic).
             if self.fft_overlay_freq_var.get():
@@ -359,12 +373,26 @@ class FftPlotting:
             self.fig.colorbar(cs1, ax=ax1)
             ax1.set_title(f'{field_name} FFT {spectrum_label} (ky=0): {label}')
             ax1.set_ylabel(r'$\omega (c_s/a)$')
+            if hasattr(self, "_record_current_plot_xyz_dataset"):
+                self._record_current_plot_xyz_dataset(
+                    f"{field_name} FFT {spectrum_label} (ky=0): {label}",
+                    kx_grid,
+                    omega_grid_kx,
+                    mag_plot1,
+                )
             
             cs2 = ax2.contourf(kx_grid, omega_grid_kx, mag_plot2, levels=50, cmap=self._get_2d_contour_cmap())
             self.fig.colorbar(cs2, ax=ax2)
             ax2.set_title(f'{field_name} FFT {spectrum_label} {title2_suffix}: {label}')
             ax2.set_ylabel(r'$\omega (c_s/a)$')
             ax2.set_xlabel(r'$k_x \rho_s$')
+            if hasattr(self, "_record_current_plot_xyz_dataset"):
+                self._record_current_plot_xyz_dataset(
+                    f"{field_name} FFT {spectrum_label} {title2_suffix}: {label}",
+                    kx_grid,
+                    omega_grid_kx,
+                    mag_plot2,
+                )
             
             self.ax = ax2
 

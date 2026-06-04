@@ -16,6 +16,23 @@ except Exception:
 DEFAULT_POD_Z_WINDOW_PI = 8.0
 
 class FluctuationPlotting:
+    def _get_fluctuation_case_color(self, case_label):
+        """Return a stable line color for all fluctuation traces from one case."""
+        color_map = getattr(self, "_fluctuation_case_color_map", None)
+        if not isinstance(color_map, dict):
+            color_map = {}
+            self._fluctuation_case_color_map = color_map
+
+        if case_label not in color_map:
+            try:
+                palette = self._get_line_color_palette()
+            except Exception:
+                palette = []
+            if not palette:
+                palette = [None]
+            color_map[case_label] = palette[len(color_map) % len(palette)]
+        return color_map[case_label]
+
     def _load_fluctuation_moment_field(self, data, label, moment, main_ion_policy="all"):
         """
         Load fluctuation moment into unified complex shape `[nr, theta, ky, t]`.
@@ -257,6 +274,7 @@ class FluctuationPlotting:
             yn = yn[:n_t]
             valid_t = np.asarray(t_indices, dtype=int)
             valid_t = valid_t[(valid_t >= 0) & (valid_t < n_t)]
+            case_color = self._get_fluctuation_case_color(label)
             
             # Plot
             if len(valid_t) > 0:
@@ -284,17 +302,17 @@ class FluctuationPlotting:
                 )
                 
                 # Plot n=0
-                line0, = self.ax.plot(x, y0, label=label_n0, linestyle='--')
+                self.ax.plot(x, y0, label=label_n0, linestyle='--', color=case_color)
                 self.ax.plot([t_mean_start, t_mean_end], [mean_y0, mean_y0],
-                             linestyle=':', color=line0.get_color(), linewidth=1.5)
+                             linestyle=':', color=case_color, linewidth=1.5)
                 
                 # Plot n>0
-                linen, = self.ax.plot(x, yn, label=label_nn)
+                self.ax.plot(x, yn, label=label_nn, linestyle='-', color=case_color)
                 self.ax.plot([t_mean_start, t_mean_end], [mean_yn, mean_yn],
-                             linestyle='--', color=linen.get_color(), linewidth=1.5)
+                             linestyle='-.', color=case_color, linewidth=1.5)
             else:
-                self.ax.plot(x, y0, label=f"{label} (n=0)", linestyle='--')
-                self.ax.plot(x, yn, label=f"{label} (n>0)")
+                self.ax.plot(x, y0, label=f"{label} (n=0)", linestyle='--', color=case_color)
+                self.ax.plot(x, yn, label=f"{label} (n>0)", linestyle='-', color=case_color)
             
             self.ax.set_xlabel(r'$t (a/c_s)$')
             self.ax.set_ylabel(y_label_rho_norm)
@@ -396,6 +414,15 @@ class FluctuationPlotting:
                 self.ax.clear()
                 levels = 50
                 self.ax.contourf(xp, yp, np.transpose(fp), levels, cmap=self._get_2d_contour_cmap())
+                if hasattr(self, "_clear_current_plot_data"):
+                    self._clear_current_plot_data()
+                if hasattr(self, "_record_current_plot_xyz_dataset"):
+                    self._record_current_plot_xyz_dataset(
+                        f"{moment} fluctuation xy: {label}",
+                        xp,
+                        yp,
+                        np.transpose(fp),
+                    )
                 # Note: Colorbar in animation might be tricky if range changes.
                 # Ideally set vmin/vmax fixed based on global min/max, but here we let it scale.
                 if hasattr(data, 't') and len(data.t) > 0:
@@ -434,6 +461,13 @@ class FluctuationPlotting:
             levels = 50
             cs = self.ax.contourf(xp, yp, np.transpose(fp), levels, cmap=self._get_2d_contour_cmap())
             self.fig.colorbar(cs, ax=self.ax)
+            if hasattr(self, "_record_current_plot_xyz_dataset"):
+                self._record_current_plot_xyz_dataset(
+                    f"{moment} fluctuation xy: {label}",
+                    xp,
+                    yp,
+                    np.transpose(fp),
+                )
             if hasattr(data, 't') and len(data.t) > 0:
                 t_text = f"{data.t[ti]:.2f}"
             else:
@@ -546,6 +580,13 @@ class FluctuationPlotting:
 
         cs = self.ax.contourf(t_plot, x_plot, np.transpose(f_tx), levels=levels, cmap=self._get_2d_contour_cmap())
         self.fig.colorbar(cs, ax=self.ax)
+        if hasattr(self, "_record_current_plot_xyz_dataset"):
+            self._record_current_plot_xyz_dataset(
+                f"{moment} fluctuation x-t: {label}",
+                t_plot,
+                x_plot,
+                np.transpose(f_tx),
+            )
         self.ax.set_xlabel(r'$t\ (a/c_s)$')
         self.ax.set_ylabel(x_ylabel)
 

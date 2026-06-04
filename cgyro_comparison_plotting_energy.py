@@ -6,7 +6,7 @@ Auto-extracted from cgyro_comparison_plotting.py during refactor.
 import numpy as np
 import os
 from tkinter import messagebox
-from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.colors import LinearSegmentedColormap, SymLogNorm, TwoSlopeNorm
 
 try:
     import scipy.signal as sp_signal
@@ -646,21 +646,27 @@ class EnergyPlotting:
         Lz_total_neg = -np.asarray(terms['Lz_total'], dtype=float)
         dSdt = np.asarray(terms['dSg_dt'], dtype=float)
 
-        # Match paper line styles/colors.
+        colors = self._get_line_color_palette()
+        component_styles = [
+            dict(color=colors[0], linestyle='-', linewidth=2.0),
+            dict(color=colors[1], linestyle='-', linewidth=2.0),
+            dict(color=colors[2], linestyle='--', linewidth=2.0),
+            dict(color=colors[3], linestyle='-', linewidth=2.0),
+        ]
         self.ax.plot(
-            t, transfer, '--', color='k', linewidth=2.0,
+            t, transfer, **component_styles[0],
             label=r'$(\mathcal{T}-\mathcal{N})^{\mathrm{NZ}\rightarrow \mathrm{Z}}$'
         )
         self.ax.plot(
-            t, Dz, '-', color='0.45', linewidth=2.0,
+            t, Dz, **component_styles[1],
             label=r'$D_Z$'
         )
         self.ax.plot(
-            t, Lz_total_neg, '--', color='#2f62c9', linewidth=2.0,
+            t, Lz_total_neg, **component_styles[2],
             label=r'$-L_{Z,\mathrm{total}}$'
         )
         self.ax.plot(
-            t, dSdt, '-', color='orange', linewidth=2.0,
+            t, dSdt, **component_styles[3],
             label=r'$dS_Z^{(g)}/dt$'
         )
 
@@ -708,21 +714,27 @@ class EnergyPlotting:
         Lz_total = np.asarray(terms['Lz_total'], dtype=float)
         dWes_dt = np.asarray(terms['dWes_dt'], dtype=float)
 
-        # Match paper line styles/colors.
+        colors = self._get_line_color_palette()
+        component_styles = [
+            dict(color=colors[0], linestyle='-', linewidth=2.0),
+            dict(color=colors[1], linestyle='-', linewidth=2.0),
+            dict(color=colors[2], linestyle='--', linewidth=2.0),
+            dict(color=colors[3], linestyle='-', linewidth=2.0),
+        ]
         self.ax.plot(
-            t, transfer_n, '-', color='k', linewidth=2.0,
+            t, transfer_n, **component_styles[0],
             label=r'$\mathcal{N}^{\mathrm{NZ}\rightarrow \mathrm{Z}}$'
         )
         self.ax.plot(
-            t, Dz_prime, '-', color='0.45', linewidth=2.0,
+            t, Dz_prime, **component_styles[1],
             label=r"$D'_Z$"
         )
         self.ax.plot(
-            t, Lz_total, '-', color='#2f62c9', linewidth=2.0,
+            t, Lz_total, **component_styles[2],
             label=r'$L_{Z,\mathrm{total}}$'
         )
         self.ax.plot(
-            t, dWes_dt, '-', color='red', linewidth=2.0,
+            t, dWes_dt, **component_styles[3],
             label=r'$L_{T_e}\,dW_{es}/dt$'
         )
 
@@ -815,6 +827,119 @@ class EnergyPlotting:
         y = y[mask]
         order = np.argsort(ky)
         return ky[order], y[order]
+
+    def _compute_energy_balance_single_vs_kxky(self, data, label, n_sel, quantity_key, t_indices):
+        """
+        Build single-quantity 2D map versus (kx, ky) from triad channels.
+
+        quantity_key:
+          - 'T'   -> < Re(idx1) >_t  on (kx, ky) grid
+          - 'N'   -> < Re(idx2) >_t  on (kx, ky) grid
+          - 'T-N' -> T - N on (kx, ky) grid
+
+        Returns (kx_grid, ky_grid, z_data) or None on failure.
+        z_data shape: [n_kx, n_ky] (ready for contourf with transpose).
+        """
+        if not self._load_triad_only_if_needed(data, label):
+            return None
+
+        triad = np.asarray(data.triad)
+        if triad.ndim != 6 or triad.shape[0] != 2:
+            print(f"Unsupported triad shape for {label}: {triad.shape}")
+            return None
+
+        _ri, _n_species, n_radial, n_chan, n_n, n_t = triad.shape
+        if n_chan < 8:
+            print(f"Unsupported triad channels for {label}: {n_chan} (<8)")
+            return None
+        if n_n <= 1:
+            print(f"Single-plot vs kxky needs n_n > 1 for {label}.")
+            return None
+
+        spec = self._parse_energy_balance_species()
+        f, _spec_label = self._triad_species_view(triad, spec, label)
+        if f is None:
+            return None
+        # f: [radial, 8, n_n, t]
+        valid_t = np.asarray(t_indices, dtype=int).reshape(-1)
+        valid_t = valid_t[(valid_t >= 0) & (valid_t < n_t)]
+        if valid_t.size <= 0:
+            valid_t = np.arange(n_t, dtype=int)
+        if valid_t.size <= 0:
+            return None
+
+        # Build ky axis
+        ky = np.asarray(getattr(data, 'kynorm', getattr(data, 'ky', [])), dtype=float).reshape(-1)
+        n_ky = min(int(ky.size), int(n_n))
+        if n_ky <= 0:
+            print(f"No ky axis available for {label}")
+            return None
+        ky = ky[:n_ky]
+        if ky[-1] < 0.0:
+            ky = -ky
+        ky = np.asarray(ky, dtype=float).reshape(-1)
+
+        # Build kx axis
+        kx = np.asarray(getattr(data, 'kx', []), dtype=float).reshape(-1)
+        if kx.size == n_radial:
+            pass
+        elif kx.size == n_radial - 1:
+            # CGYRO often drops the first radial slot; pad with a dummy zero
+            kx = np.concatenate(([0.0], kx))
+        else:
+            length = float(getattr(data, 'length', 0.0))
+            if length > 1e-12:
+                dkx = 2.0 * np.pi / length
+            else:
+                dkx = 1.0
+            p_index = np.arange(n_radial, dtype=float) - (n_radial // 2)
+            kx = p_index * dkx
+
+        # Time average over selected window
+        if quantity_key == 'T':
+            z = np.mean(np.real(f[:, 0, :n_ky, :][:, :, valid_t]), axis=2)  # [radial, n_ky]
+        elif quantity_key == 'N':
+            z = np.mean(np.real(f[:, 1, :n_ky, :][:, :, valid_t]), axis=2)  # [radial, n_ky]
+        elif quantity_key == 'T-N':
+            t_avg = np.mean(np.real(f[:, 0, :n_ky, :][:, :, valid_t]), axis=2)
+            n_avg = np.mean(np.real(f[:, 1, :n_ky, :][:, :, valid_t]), axis=2)
+            z = t_avg - n_avg
+        else:
+            # Fallback to T for unknown quantities
+            z = np.mean(np.real(f[:, 0, :n_ky, :][:, :, valid_t]), axis=2)
+
+        # Align kx length with radial dimension.
+        n_kx_use = min(int(kx.size), int(z.shape[0]))
+        if n_kx_use <= 0:
+            print(f"No usable kx points for {label}")
+            return None
+        n_ky_use = min(int(ky.size), int(z.shape[1]))
+        if n_ky_use <= 0:
+            print(f"No usable ky points for {label}")
+            return None
+        kx = np.asarray(kx[:n_kx_use], dtype=float).reshape(-1)
+        ky = np.asarray(ky[:n_ky_use], dtype=float).reshape(-1)
+        z = np.asarray(z[:n_kx_use, :n_ky_use], dtype=float)
+
+        finite_kx = np.isfinite(kx)
+        finite_ky = np.isfinite(ky)
+        if not np.any(finite_kx) or not np.any(finite_ky):
+            print(f"No finite kx/ky points for {label}")
+            return None
+        kx = kx[finite_kx]
+        z = z[finite_kx, :]
+        ky = ky[finite_ky]
+        z = z[:, finite_ky]
+
+        kx_order = np.argsort(kx)
+        ky_order = np.argsort(ky)
+        kx = kx[kx_order]
+        ky = ky[ky_order]
+        z = z[np.ix_(kx_order, ky_order)]
+
+        # Build meshgrid for contourf
+        kx_grid, ky_grid = np.meshgrid(kx, ky, indexing='ij')
+        return kx_grid, ky_grid, np.asarray(z, dtype=float)
 
     def _plot_energy_balance_single_entropy_vs_ky(self, data, label, t_indices, avg_suffix=""):
         """
@@ -974,28 +1099,19 @@ class EnergyPlotting:
         except Exception:
             avg_suffix = ""
 
-        terms = self._compute_triad_v2_terms(data, label)
-        if terms is None:
-            return
-
-        t = np.asarray(terms['t'], dtype=float).reshape(-1)
         y_time = None
         y_label = ""
         qty_name = ""
         if qty_txt == 't':
-            y_time = np.asarray(terms['T0'], dtype=float)
             y_label = r"$\mathcal{T}^{NZ\rightarrow Z}$"
             qty_name = "T"
         elif qty_txt == 'n':
-            y_time = np.asarray(terms['N0'], dtype=float)
             y_label = r"$\mathcal{N}^{NZ\rightarrow Z}$"
             qty_name = "N"
         elif qty_txt == 'entropy':
-            y_time = np.asarray(terms.get('S0', terms['dSg_dt']), dtype=float)
             y_label = r"$S_g$"
             qty_name = "entropy"
         else:
-            y_time = np.asarray(terms['T0'], dtype=float) - np.asarray(terms['N0'], dtype=float)
             y_label = r"$(\mathcal{T}-\mathcal{N})^{NZ\rightarrow Z}$"
             qty_name = "T-N"
 
@@ -1016,9 +1132,68 @@ class EnergyPlotting:
                 self.ax.set_xlabel(r"$k_y \rho_s$")
                 self.ax.set_ylabel(y_label)
                 self.ax.set_title(
-                    f"Energy balance single plot ({qty_name}, vs ky, n={n_sel})"
+                    f"Energy balance single plot ({qty_name}, vs ky){avg_suffix}"
                 )
             return
+
+        if mode_txt == 'vs kxky':
+            n_sel = self._parse_energy_balance_n_index()
+            if qty_txt == 'entropy':
+                print(f"entropy vs kxky not supported for {label}; use T, N or T-N.")
+                return
+            kxky_data = self._compute_energy_balance_single_vs_kxky(
+                data, label, n_sel, qty_name, t_indices
+            )
+            if kxky_data is None:
+                return
+            kx_grid, ky_grid, z_data = kxky_data
+            kx_axis = np.asarray(kx_grid[:, 0], dtype=float).reshape(-1)
+            ky_axis = np.asarray(ky_grid[0, :], dtype=float).reshape(-1)
+            z_plot = np.asarray(z_data, dtype=float)
+            finite = z_plot[np.isfinite(z_plot)]
+            vmax = 1.0
+            if finite.size > 0:
+                clip = float(np.nanpercentile(np.abs(finite), 99.5))
+                if np.isfinite(clip) and clip > 0.0:
+                    vmax = clip
+                else:
+                    raw_max = float(np.nanmax(np.abs(finite)))
+                    if np.isfinite(raw_max) and raw_max > 0.0:
+                        vmax = raw_max
+            norm = TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
+            cs = self.ax.imshow(
+                np.ma.masked_invalid(z_plot.T),
+                extent=[
+                    float(np.nanmin(kx_axis)), float(np.nanmax(kx_axis)),
+                    float(np.nanmin(ky_axis)), float(np.nanmax(ky_axis)),
+                ],
+                origin='lower',
+                aspect='auto',
+                interpolation='bicubic',
+                cmap=FULLT_DIVERGING_CMAP,
+                norm=norm,
+            )
+            cbar = self.fig.colorbar(cs, ax=self.ax, extend='both')
+            cbar.set_label(y_label)
+            self.ax.set_xlabel(r"$k_x \rho_s$")
+            self.ax.set_ylabel(r"$k_y \rho_s$")
+            self.ax.set_title(
+                f"{qty_name} map{avg_suffix}"
+            )
+            return
+
+        terms = self._compute_triad_v2_terms(data, label)
+        if terms is None:
+            return
+        t = np.asarray(terms['t'], dtype=float).reshape(-1)
+        if qty_txt == 't':
+            y_time = np.asarray(terms['T0'], dtype=float)
+        elif qty_txt == 'n':
+            y_time = np.asarray(terms['N0'], dtype=float)
+        elif qty_txt == 'entropy':
+            y_time = np.asarray(terms.get('S0', terms['dSg_dt']), dtype=float)
+        else:
+            y_time = np.asarray(terms['T0'], dtype=float) - np.asarray(terms['N0'], dtype=float)
 
         n = min(t.size, y_time.size)
         if n <= 0:
@@ -1304,7 +1479,7 @@ class EnergyPlotting:
             print(f"Energy balance vs 2D: skipped {skipped} case(s) due to missing/invalid triad or scan data.")
 
     def _load_fullt_if_needed(self, data, label):
-        """Load and normalize bin.cgyro.fullt to [ri,target_ky,source_kx,source_ky,channel,time]."""
+        """Load and normalize bin.cgyro.fullt to [ri,source_ky,target_kx,target_ky,channel,time]."""
         n_n = int(getattr(data, 'n_n', 0))
         n_radial = int(getattr(data, 'n_radial', 0))
         n_time_hint = int(getattr(data, 'n_time', 0))
@@ -1418,8 +1593,8 @@ class EnergyPlotting:
             pass
         return True
 
-    def _fullt_source_kx_axis(self, data, n_radial, label):
-        """Build the full source-kx axis, including the leftmost Nyquist storage bin."""
+    def _fullt_target_kx_axis(self, data, n_radial, label):
+        """Build the full target-kx axis, including the leftmost Nyquist storage bin."""
         p = np.asarray(getattr(data, 'p', []), dtype=float).reshape(-1)
         length = float(getattr(data, 'length', 0.0))
         if p.size == n_radial and np.isfinite(length) and abs(length) > 1.0e-12:
@@ -1440,13 +1615,13 @@ class EnergyPlotting:
                 return p_index * dkx, np.arange(n_radial, dtype=int)
         if kx.size > 0:
             print(
-                f"Warning: FULLT kx axis for {label} inferred from n_radial; "
+                f"Warning: FULLT target-kx axis for {label} inferred from n_radial; "
                 f"metadata kx length is {kx.size}, FULLT radial length is {n_radial}."
             )
         return p_index * dkx, np.arange(n_radial, dtype=int)
 
-    def _fullt_source_ky_axis(self, data, n_n, n_signed):
-        """Build signed source-ky axis matching FULLT source_ky storage order."""
+    def _fullt_target_ky_axis(self, data, n_n, n_signed):
+        """Build signed target-ky axis matching FULLT target_ky storage order."""
         ky_pos = self._positive_ky_axis(getattr(data, 'kynorm', getattr(data, 'ky', [])))
         ky_pos = np.asarray(ky_pos, dtype=float).reshape(-1)
         if ky_pos.size >= n_n and n_n > 0:
@@ -1461,16 +1636,16 @@ class EnergyPlotting:
             ky_axis = np.arange(-(n_signed // 2), n_signed - (n_signed // 2), dtype=float)
         return ky_axis
 
-    def _fullt_target_ky_axis(self, data, n_target):
-        """Build non-negative target-ky axis for FULLT target_ky index selection."""
+    def _fullt_source_ky_axis(self, data, n_source):
+        """Build non-negative source-ky axis for FULLT source_ky index selection."""
         ky = self._positive_ky_axis(getattr(data, 'kynorm', getattr(data, 'ky', [])))
         ky = np.asarray(ky, dtype=float).reshape(-1)
-        if ky.size >= n_target:
-            return ky[:n_target]
-        return np.arange(n_target, dtype=float)
+        if ky.size >= n_source:
+            return ky[:n_source]
+        return np.arange(n_source, dtype=float)
 
     def _plot_energy_balance_fullt(self, data, label, t_indices, t_start, t_end):
-        """Plot FULLT for one fixed target ky over scanned source kx/source ky."""
+        """Plot FULLT for one fixed source ky over scanned target kx/target ky."""
         if not self._load_fullt_if_needed(data, label):
             return
 
@@ -1479,8 +1654,8 @@ class EnergyPlotting:
             print(f"Unsupported FULLT shape for {label}: {fullt.shape}")
             return
 
-        _ri, n_target, n_radial, n_signed, n_channel, n_t = fullt.shape
-        if n_target <= 0 or n_radial <= 0 or n_signed <= 0 or n_channel <= 0 or n_t <= 0:
+        _ri, n_source, n_radial, n_signed, n_channel, n_t = fullt.shape
+        if n_source <= 0 or n_radial <= 0 or n_signed <= 0 or n_channel <= 0 or n_t <= 0:
             print(f"Unsupported FULLT shape for {label}: {fullt.shape}")
             return
 
@@ -1491,33 +1666,33 @@ class EnergyPlotting:
             print(f"Invalid FULLT fixed-ky input for {label}")
             return
 
-        kx_axis, radial_idx = self._fullt_source_kx_axis(data, n_radial, label)
-        ky_source_axis = self._fullt_source_ky_axis(data, n_target, n_signed)
-        ky_target_axis = self._fullt_target_ky_axis(data, n_target)
-        if kx_axis is None or radial_idx is None or ky_source_axis is None or ky_target_axis is None:
+        kx_axis, radial_idx = self._fullt_target_kx_axis(data, n_radial, label)
+        ky_target_axis = self._fullt_target_ky_axis(data, n_source, n_signed)
+        ky_source_axis = self._fullt_source_ky_axis(data, n_source)
+        if kx_axis is None or radial_idx is None or ky_target_axis is None or ky_source_axis is None:
             print(f"Missing FULLT axes for {label}")
             return
 
         kx_axis = np.asarray(kx_axis, dtype=float).reshape(-1)
         radial_idx = np.asarray(radial_idx, dtype=int).reshape(-1)
-        ky_source_axis = np.asarray(ky_source_axis, dtype=float).reshape(-1)
         ky_target_axis = np.asarray(ky_target_axis, dtype=float).reshape(-1)
+        ky_source_axis = np.asarray(ky_source_axis, dtype=float).reshape(-1)
 
         n_x = min(kx_axis.size, radial_idx.size, n_radial)
-        n_y = min(ky_source_axis.size, n_signed)
+        n_y = min(ky_target_axis.size, n_signed)
         if n_x <= 0 or n_y <= 0:
             print(f"Empty FULLT axes for {label}")
             return
         kx_axis = kx_axis[:n_x]
         radial_idx = radial_idx[:n_x]
-        ky_source_axis = ky_source_axis[:n_y]
+        ky_target_axis = ky_target_axis[:n_y]
 
-        target_ky_idx = self._nearest_finite_index(ky_target_axis[:n_target], ky_sel)
-        if target_ky_idx is None:
+        source_ky_idx = self._nearest_finite_index(ky_source_axis[:n_source], ky_sel)
+        if source_ky_idx is None:
             print(f"Could not map selected fixed ky for {label}")
             return
-        fixed_ky = float(ky_target_axis[target_ky_idx])
-        source_ky_mark_idx = self._nearest_finite_index(ky_source_axis, fixed_ky)
+        fixed_ky = float(ky_source_axis[source_ky_idx])
+        target_ky_mark_idx = self._nearest_finite_index(ky_target_axis, fixed_ky)
 
         valid_t = np.asarray(t_indices, dtype=int).reshape(-1)
         valid_t = valid_t[(valid_t >= 0) & (valid_t < n_t)]
@@ -1527,11 +1702,11 @@ class EnergyPlotting:
             print(f"No time samples for {label}")
             return
 
-        real_map = np.asarray(fullt[0, target_ky_idx, radial_idx, :n_y, 0, :], dtype=float)
+        real_map = np.asarray(fullt[0, source_ky_idx, radial_idx, :n_y, 0, :], dtype=float)
         if n_channel >= 2:
-            imag_map = np.asarray(fullt[0, target_ky_idx, radial_idx, :n_y, 1, :], dtype=float)
+            imag_map = np.asarray(fullt[0, source_ky_idx, radial_idx, :n_y, 1, :], dtype=float)
         else:
-            imag_map = np.asarray(fullt[1, target_ky_idx, radial_idx, :n_y, 0, :], dtype=float)
+            imag_map = np.asarray(fullt[1, source_ky_idx, radial_idx, :n_y, 0, :], dtype=float)
 
         if qty == 'im':
             z_map = imag_map
@@ -1583,21 +1758,38 @@ class EnergyPlotting:
             vmax = 1.0
 
         if finite.size > 0:
-            clip = float(np.nanpercentile(np.abs(finite), 99.5))
+            clip = float(np.nanpercentile(np.abs(finite), 99.8))
             if np.isfinite(clip) and clip > 0.0:
                 vmax = clip
 
+        use_symlog_color = False
+        try:
+            use_symlog_color = bool(self.log_y_var.get())
+        except Exception:
+            use_symlog_color = False
+
         if use_symmetric_scale:
+            norm = None
+            color_limits = dict(vmin=-vmax, vmax=vmax)
+            if use_symlog_color:
+                linthresh = max(vmax * 1.0e-3, np.finfo(float).tiny)
+                norm = SymLogNorm(
+                    linthresh=linthresh,
+                    linscale=1.0,
+                    vmin=-vmax,
+                    vmax=vmax,
+                    base=10,
+                )
+                color_limits = dict(norm=norm)
             pcm = self.ax.imshow(
                 np.ma.masked_invalid(z_plot),
                 extent=[float(np.nanmin(kx_axis)), float(np.nanmax(kx_axis)),
-                        float(np.nanmin(ky_source_axis)), float(np.nanmax(ky_source_axis))],
+                        float(np.nanmin(ky_target_axis)), float(np.nanmax(ky_target_axis))],
                 origin='lower',
                 aspect='auto',
                 interpolation='bicubic',
                 cmap=FULLT_DIVERGING_CMAP,
-                vmin=-vmax,
-                vmax=vmax,
+                **color_limits,
             )
             colorbar_extend = 'both'
         else:
@@ -1606,7 +1798,7 @@ class EnergyPlotting:
             pcm = self.ax.imshow(
                 np.ma.masked_invalid(z_plot),
                 extent=[float(np.nanmin(kx_axis)), float(np.nanmax(kx_axis)),
-                        float(np.nanmin(ky_source_axis)), float(np.nanmax(ky_source_axis))],
+                        float(np.nanmin(ky_target_axis)), float(np.nanmax(ky_target_axis))],
                 origin='lower',
                 aspect='auto',
                 interpolation='bicubic',
@@ -1620,9 +1812,9 @@ class EnergyPlotting:
         cbar.set_label(rf"$\langle {quantity_label}\,T^{{\Phi}}\rangle_t$")
 
         kx_mark_idx = self._nearest_finite_index(kx_axis, 0.0)
-        if kx_mark_idx is not None and source_ky_mark_idx is not None:
+        if kx_mark_idx is not None and target_ky_mark_idx is not None:
             kx_mark = float(kx_axis[kx_mark_idx])
-            ky_mark = float(ky_source_axis[source_ky_mark_idx])
+            ky_mark = float(ky_target_axis[target_ky_mark_idx])
             self.ax.scatter(
                 [kx_mark],
                 [ky_mark],

@@ -5,8 +5,9 @@ UI and case-management mixin for CGYRO comparison GUI.
 import os
 import re
 import getpass
+import json
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
@@ -33,6 +34,51 @@ except ImportError:
 
 
 class CgyroUiMixin:
+    _WORKSPACE_STATE_VARS = [
+        "fluc_average_var",
+        "time_mode_var",
+        "time_percent_var",
+        "time_duration_var",
+        "plot_type_var",
+        "t_start_var",
+        "t_end_var",
+        "log_x_var",
+        "log_y_var",
+        "norm_ky_var",
+        "flux_type_var",
+        "flux_xaxis_var",
+        "flux_scan_xparam_var",
+        "flux_decomp_var",
+        "flux_norm_real_ion_var",
+        "fluc_field_var",
+        "fluc_xaxis_var",
+        "species_var",
+        "plot_all_species_var",
+        "moment_var",
+        "fluc2d_view_var",
+        "fluc2d_x_elec_var",
+        "linear_gamma_file_var",
+        "fft_mode_var",
+        "fft_view_var",
+        "fft_spectrum_var",
+        "fft_overlay_freq_var",
+        "zf_xaxis_var",
+        "zf_gamma_lin_ky_var",
+        "energy_balance_mode_var",
+        "energy_balance_n_var",
+        "energy_balance_spec_var",
+        "energy_balance_single_quantity_var",
+        "energy_balance_single_xaxis_var",
+        "energy_balance_transfer_quantity_var",
+        "energy_balance_transfer_ky_var",
+        "others_plot_var",
+        "others_rcorr_field_var",
+        "others_rcorr_theta_var",
+        "others_pod_field_var",
+        "others_pod_kx_var",
+        "others_pod_ky_var",
+    ]
+
     def _create_formula_panel(self, master, figsize=(4.0, 2.4), dpi=100):
         """Create a scrollable matplotlib formula panel with consistent behavior."""
         frame = ttk.Frame(master)
@@ -67,6 +113,9 @@ class CgyroUiMixin:
         self.root.title(DEFAULT_APP_TITLE)
         self.root.geometry(DEFAULT_WINDOW_GEOMETRY)
         self.fluc_average_var = tk.StringVar(value="Root Mean Square")
+        self.time_mode_var = tk.StringVar(value="Manual Start/End")
+        self.time_percent_var = tk.StringVar(value="50")
+        self.time_duration_var = tk.StringVar(value="")
 
         self.cases = {}  # Dictionary to store loaded cases: {name: cgyrodata_object}
         self.ani = None # Animation object
@@ -219,6 +268,9 @@ class CgyroUiMixin:
         file_menu.add_command(label="Add Case (Multiple)", command=self.add_case_multiple)
         file_menu.add_command(label="Add Group", command=self.add_group)
         file_menu.add_separator()
+        file_menu.add_command(label="Save workspace", command=self.save_workspace)
+        file_menu.add_command(label="Load workspace", command=self.load_workspace)
+        file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit)
 
         data_menu = tk.Menu(menubar, tearoff=0)
@@ -227,6 +279,38 @@ class CgyroUiMixin:
             label="transfer bin to readable",
             command=self.transfer_bin_to_readable,
         )
+        data_menu.add_command(
+            label="Save current plot data",
+            command=self.save_current_plot_data,
+        )
+
+        time_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Time", menu=time_menu)
+        time_menu.add_radiobutton(
+            label="Manual Start/End",
+            variable=self.time_mode_var,
+            value="Manual Start/End",
+        )
+        time_menu.add_radiobutton(
+            label="Last percent...",
+            variable=self.time_mode_var,
+            value="Last percent",
+            command=self._set_time_last_percent,
+        )
+        time_menu.add_radiobutton(
+            label="Last duration...",
+            variable=self.time_mode_var,
+            value="Last duration",
+            command=self._set_time_last_duration,
+        )
+        time_menu.add_radiobutton(
+            label="Full range",
+            variable=self.time_mode_var,
+            value="Full range",
+            command=self._clear_simple_time_entries,
+        )
+        time_menu.add_separator()
+        time_menu.add_command(label="Reset", command=self.clear_time_range)
 
         average_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Average", menu=average_menu)
@@ -466,69 +550,75 @@ class CgyroUiMixin:
         ) = self._create_formula_panel(self.options_frame, figsize=(4.0, 2.2))
 
         # 8. Energy-balance options (triad_v2-based)
-        self.energy_balance_mode_label = ttk.Label(self.options_frame, text="Mode:")
-        self.energy_balance_mode_var = tk.StringVar(value="gyro-center entropy balance")
+        self.energy_balance_options_frame = ttk.Frame(self.options_frame)
+        self.energy_balance_options_frame.columnconfigure(0, weight=0)
+        self.energy_balance_options_frame.columnconfigure(1, weight=1)
+        self.energy_balance_options_frame.columnconfigure(2, weight=0)
+        self.energy_balance_options_frame.columnconfigure(3, weight=1)
+
+        self.energy_balance_mode_label = ttk.Label(self.energy_balance_options_frame, text="Mode:")
+        self.energy_balance_mode_var = tk.StringVar(value="Entropy balance")
         self.energy_balance_mode_combo = ttk.Combobox(
-            self.options_frame,
+            self.energy_balance_options_frame,
             textvariable=self.energy_balance_mode_var,
             values=[
-                "gyro-center entropy balance",
+                "Entropy balance",
                 "ZF energy balance",
-                r"vs $\gamma_{eff}^Z$ and $\gamma_{eff}^{NZ}$",
+                "Effective growth rate",
                 "Single plot",
                 "FULLT transfer map",
-                "v.s 2D",
+                "2D scan",
             ],
             state="readonly",
-            width=28,
+            width=24,
         )
-        self.energy_balance_n_label = ttk.Label(self.options_frame, text="n index:")
+        self.energy_balance_n_label = ttk.Label(self.energy_balance_options_frame, text="n index:")
         self.energy_balance_n_var = tk.StringVar(value="0")
         self.energy_balance_n_entry = ttk.Entry(
-            self.options_frame,
+            self.energy_balance_options_frame,
             textvariable=self.energy_balance_n_var,
             width=10,
         )
-        self.energy_balance_spec_label = ttk.Label(self.options_frame, text="Species:")
+        self.energy_balance_spec_label = ttk.Label(self.energy_balance_options_frame, text="Species:")
         self.energy_balance_spec_var = tk.StringVar(value="Total (-1)")
         self.energy_balance_spec_combo = ttk.Combobox(
-            self.options_frame,
+            self.energy_balance_options_frame,
             textvariable=self.energy_balance_spec_var,
             values=["Total (-1)", "Main ion (0)", "Electron (1)"],
             state="readonly",
             width=16,
         )
-        self.energy_balance_single_quantity_label = ttk.Label(self.options_frame, text="Quantity:")
+        self.energy_balance_single_quantity_label = ttk.Label(self.energy_balance_options_frame, text="Quantity:")
         self.energy_balance_single_quantity_var = tk.StringVar(value="T-N")
         self.energy_balance_single_quantity_combo = ttk.Combobox(
-            self.options_frame,
+            self.energy_balance_options_frame,
             textvariable=self.energy_balance_single_quantity_var,
             values=["T", "N", "T-N", "entropy"],
             state="readonly",
             width=12,
         )
-        self.energy_balance_single_xaxis_label = ttk.Label(self.options_frame, text="X-axis:")
+        self.energy_balance_single_xaxis_label = ttk.Label(self.energy_balance_options_frame, text="X-axis:")
         self.energy_balance_single_xaxis_var = tk.StringVar(value="vs Time")
         self.energy_balance_single_xaxis_combo = ttk.Combobox(
-            self.options_frame,
+            self.energy_balance_options_frame,
             textvariable=self.energy_balance_single_xaxis_var,
-            values=["vs Time", "vs ky"],
+            values=["vs Time", "vs ky", "vs kxky"],
             state="readonly",
             width=12,
         )
-        self.energy_balance_transfer_quantity_label = ttk.Label(self.options_frame, text="FULLT:")
+        self.energy_balance_transfer_quantity_label = ttk.Label(self.energy_balance_options_frame, text="Quantity:")
         self.energy_balance_transfer_quantity_var = tk.StringVar(value="Re")
         self.energy_balance_transfer_quantity_combo = ttk.Combobox(
-            self.options_frame,
+            self.energy_balance_options_frame,
             textvariable=self.energy_balance_transfer_quantity_var,
             values=["Re", "Im", "Abs"],
             state="readonly",
-            width=12,
+            width=10,
         )
-        self.energy_balance_transfer_ky_label = ttk.Label(self.options_frame, text="fixed ky:")
+        self.energy_balance_transfer_ky_label = ttk.Label(self.energy_balance_options_frame, text="fixed ky:")
         self.energy_balance_transfer_ky_var = tk.StringVar(value="0")
         self.energy_balance_transfer_ky_entry = ttk.Entry(
-            self.options_frame,
+            self.energy_balance_options_frame,
             textvariable=self.energy_balance_transfer_ky_var,
             width=10,
         )
@@ -622,8 +712,55 @@ class CgyroUiMixin:
 
     def clear_time_range(self):
         """Clear GUI time-range entries and revert to automatic time-window logic."""
+        self.time_mode_var.set("Manual Start/End")
+        self.time_percent_var.set("50")
+        self.time_duration_var.set("")
         self.t_start_var.set("")
         self.t_end_var.set("")
+
+    def _clear_simple_time_entries(self):
+        """Clear left-panel time entries so the top Time menu controls averaging."""
+        self.t_start_var.set("")
+        self.t_end_var.set("")
+
+    def _set_time_last_percent(self):
+        """Prompt for the final time percentage used by the top Time menu."""
+        try:
+            current = float(self.time_percent_var.get())
+        except Exception:
+            current = 50.0
+        value = simpledialog.askfloat(
+            "Time average",
+            "Average over last percent of available time:",
+            parent=self.root,
+            initialvalue=current,
+            minvalue=0.0,
+            maxvalue=100.0,
+        )
+        if value is None:
+            return
+        self.time_percent_var.set(f"{value:g}")
+        self.time_mode_var.set("Last percent")
+        self._clear_simple_time_entries()
+
+    def _set_time_last_duration(self):
+        """Prompt for the final physical-time duration used by the top Time menu."""
+        try:
+            current = float(self.time_duration_var.get())
+        except Exception:
+            current = 0.0
+        value = simpledialog.askfloat(
+            "Time average",
+            "Average over last time duration:",
+            parent=self.root,
+            initialvalue=current if current > 0.0 else 1.0,
+            minvalue=0.0,
+        )
+        if value is None:
+            return
+        self.time_duration_var.set(f"{value:g}")
+        self.time_mode_var.set("Last duration")
+        self._clear_simple_time_entries()
 
     def _browse_linear_gamma_file(self):
         """Open file chooser and update the linear omega/gamma reference file path."""
@@ -677,6 +814,7 @@ class CgyroUiMixin:
             self.linear_gamma_file_label, self.linear_gamma_file_entry, self.linear_gamma_file_browse,
             self.zf_gamma_lin_ky_label, self.zf_gamma_lin_ky_entry,
             self.zf_formula_frame,
+            self.energy_balance_options_frame,
             self.energy_balance_mode_label, self.energy_balance_mode_combo,
             self.energy_balance_n_label, self.energy_balance_n_entry,
             self.energy_balance_spec_label, self.energy_balance_spec_combo,
@@ -1043,13 +1181,32 @@ class CgyroUiMixin:
             width_chars=56,
         )
 
+    def _energy_balance_mode_key(self):
+        """Return a stable internal key for the Energy-balance mode combobox."""
+        mode = str(self.energy_balance_mode_var.get()).strip().lower()
+        if "zf" in mode:
+            return "zf"
+        if (
+            "effective growth" in mode
+            or "gamma_eff" in mode
+            or r"\gamma_{eff}" in mode
+        ):
+            return "gamma_eff"
+        if "single" in mode:
+            return "single"
+        if "fullt" in mode:
+            return "fullt"
+        if "2d" in mode:
+            return "2d"
+        return "entropy"
+
     def _render_energy_balance_formula_math(self):
         """Render math notes for Energy-balance sub-modes (triad_v2 style)."""
-        mode = str(self.energy_balance_mode_var.get()).strip().lower()
-        is_gamma_eff_mode = (r"\gamma_{eff}" in mode) or ("gamma_eff" in mode)
-        is_energy_2d_mode = (mode == "v.s 2d")
-        is_fullt_mode = (mode in ("fullt source map", "fullt target map", "fullt transfer map"))
-        if mode == "zf energy balance":
+        mode_key = self._energy_balance_mode_key()
+        is_gamma_eff_mode = (mode_key == "gamma_eff")
+        is_energy_2d_mode = (mode_key == "2d")
+        is_fullt_mode = (mode_key == "fullt")
+        if mode_key == "zf":
             lines = [
                 r"$\bf{ZF\ energy\ balance\ (code\ equations)}$",
                 r"$f[s,r,c,n,t]=f_{\Re}+i\,f_{\Im}$",
@@ -1106,7 +1263,7 @@ class CgyroUiMixin:
                 r"$T_k^\Phi>0:\ k^{\prime}\rightarrow k;\ \ \ T_k^\Phi<0:\ k\rightarrow k^{\prime}.$",
                 r"$\mathrm{marker:}\ k=(0,k_y^{\mathrm{target}})$",
             ]
-        elif mode == "single plot":
+        elif mode_key == "single":
             lines = [
                 r"$\bf{Energy\ balance\ single\ plot}$",
                 r"$f[s,r,c,n,t]=f_{\Re}+i\,f_{\Im}$",
@@ -1198,7 +1355,7 @@ class CgyroUiMixin:
         """Refresh dynamic option layout according to currently selected plot type."""
         self._hide_dynamic_options()
         plot_type = self.plot_type_var.get()
-        row = 3 # Start gridding from row 3
+        row = 3 # Start below the shared Time Start/End and log-scale controls.
 
         if plot_type in ["Frequency", "Growth Rate"]:
             self.norm_ky_check.grid(row=row, column=0, columnspan=2, sticky=tk.W)
@@ -1275,14 +1432,23 @@ class CgyroUiMixin:
             self.zf_formula_frame.grid(row=row, column=0, columnspan=4, sticky=tk.W + tk.E, pady=(4, 0))
 
         elif plot_type == "Energy balance":
-            self.energy_balance_mode_label.grid(row=row, column=0, sticky=tk.W)
-            self.energy_balance_mode_combo.grid(row=row, column=1, columnspan=2, sticky=tk.W + tk.E)
+            self.energy_balance_options_frame.grid(
+                row=row, column=0, columnspan=4, sticky=tk.W + tk.E
+            )
+            erow = 0
+            self.energy_balance_mode_label.grid(
+                row=erow, column=0, sticky=tk.W, padx=(0, 6), pady=(0, 4)
+            )
+            self.energy_balance_mode_combo.grid(
+                row=erow, column=1, columnspan=3, sticky=tk.W + tk.E, pady=(0, 4)
+            )
+            erow += 1
             row += 1
-            mode = self.energy_balance_mode_var.get().strip().lower()
-            is_gamma_eff_mode = (r"\gamma_{eff}" in mode) or ("gamma_eff" in mode)
-            is_energy_2d_mode = (mode == "v.s 2d")
-            is_single_plot_mode = (mode == "single plot")
-            is_fullt_mode = (mode in ("fullt source map", "fullt target map", "fullt transfer map"))
+            mode_key = self._energy_balance_mode_key()
+            is_gamma_eff_mode = (mode_key == "gamma_eff")
+            is_energy_2d_mode = (mode_key == "2d")
+            is_single_plot_mode = (mode_key == "single")
+            is_fullt_mode = (mode_key == "fullt")
             xaxis_single = str(self.energy_balance_single_xaxis_var.get()).strip().lower()
             if is_gamma_eff_mode:
                 n_label_txt = "ky:"
@@ -1290,23 +1456,47 @@ class CgyroUiMixin:
                 n_label_txt = "n index:"
             self.energy_balance_n_label.configure(text=n_label_txt)
             if not is_fullt_mode:
-                self.energy_balance_n_label.grid(row=row, column=0, sticky=tk.W)
-                self.energy_balance_n_entry.grid(row=row, column=1, sticky=tk.W)
-                self.energy_balance_spec_label.grid(row=row, column=2, sticky=tk.W, padx=(10, 0))
-                self.energy_balance_spec_combo.grid(row=row, column=3, sticky=tk.W)
-                row += 1
+                self.energy_balance_n_label.grid(
+                    row=erow, column=0, sticky=tk.W, padx=(0, 6), pady=2
+                )
+                self.energy_balance_n_entry.grid(
+                    row=erow, column=1, sticky=tk.W + tk.E, pady=2
+                )
+                self.energy_balance_spec_label.grid(
+                    row=erow, column=2, sticky=tk.W, padx=(10, 6), pady=2
+                )
+                self.energy_balance_spec_combo.grid(
+                    row=erow, column=3, sticky=tk.W + tk.E, pady=2
+                )
+                erow += 1
             if is_single_plot_mode:
-                self.energy_balance_single_quantity_label.grid(row=row, column=0, sticky=tk.W)
-                self.energy_balance_single_quantity_combo.grid(row=row, column=1, sticky=tk.W)
-                self.energy_balance_single_xaxis_label.grid(row=row, column=2, sticky=tk.W, padx=(10, 0))
-                self.energy_balance_single_xaxis_combo.grid(row=row, column=3, sticky=tk.W)
-                row += 1
+                self.energy_balance_single_quantity_label.grid(
+                    row=erow, column=0, sticky=tk.W, padx=(0, 6), pady=2
+                )
+                self.energy_balance_single_quantity_combo.grid(
+                    row=erow, column=1, sticky=tk.W + tk.E, pady=2
+                )
+                self.energy_balance_single_xaxis_label.grid(
+                    row=erow, column=2, sticky=tk.W, padx=(10, 6), pady=2
+                )
+                self.energy_balance_single_xaxis_combo.grid(
+                    row=erow, column=3, sticky=tk.W + tk.E, pady=2
+                )
+                erow += 1
             if is_fullt_mode:
-                self.energy_balance_transfer_quantity_label.grid(row=row, column=0, sticky=tk.W)
-                self.energy_balance_transfer_quantity_combo.grid(row=row, column=1, sticky=tk.W)
-                self.energy_balance_transfer_ky_label.grid(row=row, column=2, sticky=tk.W, padx=(10, 0))
-                self.energy_balance_transfer_ky_entry.grid(row=row, column=3, sticky=tk.W)
-                row += 1
+                self.energy_balance_transfer_quantity_label.grid(
+                    row=erow, column=0, sticky=tk.W, padx=(0, 6), pady=2
+                )
+                self.energy_balance_transfer_quantity_combo.grid(
+                    row=erow, column=1, sticky=tk.W + tk.E, pady=2
+                )
+                self.energy_balance_transfer_ky_label.grid(
+                    row=erow, column=2, sticky=tk.W, padx=(10, 6), pady=2
+                )
+                self.energy_balance_transfer_ky_entry.grid(
+                    row=erow, column=3, sticky=tk.W + tk.E, pady=2
+                )
+                erow += 1
             if is_gamma_eff_mode:
                 self.linear_gamma_file_label.grid(row=row, column=0, sticky=tk.W)
                 self.linear_gamma_file_entry.grid(row=row, column=1, columnspan=2, sticky=tk.W + tk.E)
@@ -1315,11 +1505,11 @@ class CgyroUiMixin:
             if is_energy_2d_mode:
                 self._refresh_flux_2d_param_choices()
                 self.flux_scan_xparam_label.grid(row=row, column=0, sticky=tk.W)
-                self.flux_scan_xparam_combo.grid(row=row, column=1, sticky=tk.W + tk.E)
+                self.flux_scan_xparam_combo.grid(row=row, column=1, columnspan=3, sticky=tk.W + tk.E)
                 row += 1
             self._render_energy_balance_formula_math()
             self.energy_balance_formula_frame.grid(
-                row=row, column=0, columnspan=4, sticky=tk.W + tk.E, pady=(4, 0)
+                row=row, column=0, columnspan=4, sticky=tk.W + tk.E, pady=(8, 0)
             )
 
         elif plot_type == "Others":
@@ -1707,25 +1897,25 @@ class CgyroUiMixin:
                 plot_type = "ZF ExB Shearing Rate"
                 display_plot_type = "Zonal ExB Shearing Rate (vs Time)"
         elif plot_type_selection == "Energy balance":
-            mode = self.energy_balance_mode_var.get().strip().lower()
-            if mode == "zf energy balance":
+            mode_key = self._energy_balance_mode_key()
+            if mode_key == "zf":
                 plot_type = "Energy Balance ZF"
                 display_plot_type = "Energy balance: ZF energy balance"
-            elif (r"\gamma_{eff}" in mode) or ("gamma_eff" in mode):
+            elif mode_key == "gamma_eff":
                 plot_type = "Energy Balance Gamma Eff"
                 display_plot_type = r"Energy balance: vs $\gamma_{eff}^Z$ and $\gamma_{eff}^{NZ}$"
-            elif mode == "single plot":
+            elif mode_key == "single":
                 qty = str(self.energy_balance_single_quantity_var.get()).strip()
                 xax = str(self.energy_balance_single_xaxis_var.get()).strip()
                 xax_plot = xax.replace("v.s", "vs")
                 plot_type = f"Energy Balance Single {qty} {xax_plot}"
                 display_plot_type = f"Energy balance: Single plot ({qty}, {xax})"
-            elif mode in ("fullt source map", "fullt target map", "fullt transfer map"):
+            elif mode_key == "fullt":
                 qty = str(self.energy_balance_transfer_quantity_var.get()).strip()
                 ky = str(self.energy_balance_transfer_ky_var.get()).strip()
                 plot_type = "Energy Balance FULLT"
                 display_plot_type = f"Energy balance: FULLT transfer map ({qty}, fixed ky={ky})"
-            elif mode == "v.s 2d":
+            elif mode_key == "2d":
                 plot_type = "Energy Balance vs 2D"
                 display_plot_type = "Energy balance: vs 2D"
             else:
@@ -1752,6 +1942,188 @@ class CgyroUiMixin:
             return [self.case_listbox.get(i) for i in range(self.case_listbox.size())]
         return [self.case_listbox.get(i) for i in selected_indices]
 
+    def _get_workspace_case_entries(self):
+        """Return loaded case entries in current listbox order."""
+        entries = []
+        for i in range(self.case_listbox.size()):
+            case_name = self.case_listbox.get(i)
+            data = self.cases.get(case_name, None)
+            case_dir = None
+            if data is not None:
+                try:
+                    case_dir = self._resolve_case_dir(data)
+                except Exception:
+                    case_dir = None
+                if not case_dir:
+                    try:
+                        case_dir = getattr(data, 'dir', None) or getattr(data, 'path', None)
+                    except Exception:
+                        case_dir = None
+            entries.append({
+                "name": str(case_name),
+                "path": str(case_dir) if case_dir else "",
+            })
+        return entries
+
+    def _get_workspace_state(self):
+        """Collect Tk variable values that define the current plotting state."""
+        state = {}
+        for attr in self._WORKSPACE_STATE_VARS:
+            var = getattr(self, attr, None)
+            if var is None or not hasattr(var, "get"):
+                continue
+            try:
+                state[attr] = var.get()
+            except Exception:
+                pass
+        return state
+
+    def _restore_workspace_state(self, state):
+        """Restore saved Tk variable values when corresponding controls exist."""
+        if not isinstance(state, dict):
+            return
+        for attr in self._WORKSPACE_STATE_VARS:
+            if attr not in state:
+                continue
+            var = getattr(self, attr, None)
+            if var is None or not hasattr(var, "set"):
+                continue
+            try:
+                var.set(state[attr])
+            except Exception:
+                pass
+
+    def _default_workspace_dir(self):
+        """Return preferred workspace directory, shared with data export when available."""
+        try:
+            if hasattr(self, "_default_data_export_dir"):
+                return self._default_data_export_dir()
+        except Exception:
+            pass
+
+        user_name = os.environ.get("USER") or os.environ.get("USERNAME")
+        if not user_name:
+            try:
+                user_name = getpass.getuser()
+            except Exception:
+                user_name = ""
+
+        candidates = []
+        if user_name:
+            candidates.append(os.path.join("/data/share", str(user_name)))
+        candidates.append("/data/share")
+        candidates.append(os.getcwd())
+
+        for path in candidates:
+            try:
+                if path and os.path.isdir(path):
+                    return path
+            except Exception:
+                pass
+        return os.getcwd()
+
+    def save_workspace(self):
+        """Save current case list, selection, and plotting options to JSON."""
+        if not hasattr(self, "cases") or len(self.cases) == 0:
+            messagebox.showwarning("Save workspace", "No loaded cases to save.")
+            return
+
+        out_path = filedialog.asksaveasfilename(
+            title="Save CGYRO comparison workspace",
+            defaultextension=".json",
+            filetypes=[
+                ("Workspace files", "*.json"),
+                ("All files", "*.*"),
+            ],
+            initialdir=self._default_workspace_dir(),
+        )
+        if not out_path:
+            return
+
+        selected_names = [
+            self.case_listbox.get(i)
+            for i in self.case_listbox.curselection()
+        ]
+        workspace = {
+            "version": 1,
+            "tool": "cgyro_comparison_tool",
+            "cases": self._get_workspace_case_entries(),
+            "selected_cases": selected_names,
+            "state": self._get_workspace_state(),
+        }
+
+        try:
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(workspace, f, indent=2)
+            messagebox.showinfo("Save workspace", f"Workspace saved:\n{out_path}")
+        except Exception as e:
+            messagebox.showerror("Save workspace", f"Failed to save workspace:\n{e}")
+
+    def load_workspace(self):
+        """Load case list, selection, and plotting options from a JSON workspace."""
+        in_path = filedialog.askopenfilename(
+            title="Load CGYRO comparison workspace",
+            filetypes=[
+                ("Workspace files", "*.json"),
+                ("All files", "*.*"),
+            ],
+            initialdir=self._default_workspace_dir(),
+        )
+        if not in_path:
+            return
+
+        try:
+            with open(in_path, "r", encoding="utf-8") as f:
+                workspace = json.load(f)
+        except Exception as e:
+            messagebox.showerror("Load workspace", f"Failed to read workspace:\n{e}")
+            return
+
+        cases = workspace.get("cases", [])
+        if not isinstance(cases, list):
+            messagebox.showerror("Load workspace", "Invalid workspace: missing case list.")
+            return
+
+        self.cases.clear()
+        self.case_listbox.delete(0, tk.END)
+
+        loaded_count = 0
+        failed = []
+        for entry in cases:
+            if isinstance(entry, dict):
+                case_dir = entry.get("path", "")
+            else:
+                case_dir = str(entry)
+            case_dir = str(case_dir).strip()
+            if not case_dir:
+                failed.append("(empty path)")
+                continue
+            if self._load_case_from_dir(case_dir, silent=True):
+                loaded_count += 1
+            else:
+                failed.append(case_dir)
+
+        self._update_species_list()
+        self._restore_workspace_state(workspace.get("state", {}))
+        try:
+            self.update_options()
+        except Exception:
+            pass
+
+        selected = set(str(x) for x in workspace.get("selected_cases", []))
+        if selected:
+            self.case_listbox.selection_clear(0, tk.END)
+            for i in range(self.case_listbox.size()):
+                if self.case_listbox.get(i) in selected:
+                    self.case_listbox.selection_set(i)
+
+        msg = f"Loaded {loaded_count} case(s) from workspace."
+        if failed:
+            msg += "\n\nSkipped:\n- " + "\n- ".join(failed[:20])
+            if len(failed) > 20:
+                msg += f"\n- ... ({len(failed) - 20} more)"
+        messagebox.showinfo("Load workspace", msg)
+
     @staticmethod
     def _is_contour_like_plot(plot_type):
         """True when plot type is contour/multi-panel style (single-case rendering)."""
@@ -1760,6 +2132,10 @@ class CgyroUiMixin:
             or plot_type.startswith("Fluctuation 2D")
             or plot_type == "POD Parity"
             or plot_type == "Energy Balance FULLT"
+            or (
+                plot_type.startswith("Energy Balance Single ")
+                and "vs kxky" in plot_type.lower()
+            )
             or ("vs ky_time" in plot_type)
         )
 

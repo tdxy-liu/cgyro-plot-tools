@@ -10,6 +10,7 @@ from tkinter import messagebox
 
 import matplotlib.animation as animation
 import matplotlib as mpl
+from matplotlib import font_manager as mpl_font_manager
 import numpy as np
 
 DEFAULT_POD_Z_WINDOW_PI = 8.0
@@ -54,7 +55,32 @@ PLOT_MARKER_SIZE = 4.0
 TICK_LABEL_FONTSIZE = 14
 MAIN_FONT_FONTSIZE = 14
 LEGEND_FONT_FONTSIZE = 10
-FONT_FAMILY = "Arial"
+PREFERRED_FONT_FAMILIES = [
+    "Arial",
+    "DejaVu Sans",
+    "Liberation Sans",
+    "Noto Sans",
+    "Helvetica",
+]
+
+
+def _resolve_font_family(preferred_fonts):
+    """Return the first installed font from `preferred_fonts`, with a bundled fallback."""
+    for font_name in preferred_fonts:
+        try:
+            prop = mpl_font_manager.FontProperties(family=font_name)
+            font_path = mpl_font_manager.findfont(prop, fallback_to_default=False)
+            if font_path and os.path.exists(font_path):
+                return font_name
+        except Exception:
+            continue
+    return "DejaVu Sans"
+
+
+FONT_FAMILY = _resolve_font_family(PREFERRED_FONT_FAMILIES)
+FONT_FALLBACKS = [FONT_FAMILY] + [
+    name for name in PREFERRED_FONT_FAMILIES if name != FONT_FAMILY
+]
 
 try:
     from cgyro_comparison_plotting_zf import ZfPlotting
@@ -116,7 +142,8 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
         except Exception:
             pass
         style_updates = {
-            'font.family': FONT_FAMILY,
+            'font.family': 'sans-serif',
+            'font.sans-serif': FONT_FALLBACKS,
             'font.size': MAIN_FONT_FONTSIZE,
             'axes.titlesize': MAIN_FONT_FONTSIZE,
             'axes.labelsize': MAIN_FONT_FONTSIZE,
@@ -607,11 +634,8 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
         return float(factor)
 
     def _get_time_indices(self, t):
-        """Resolve time-window indices from GUI range entries with safe fallbacks."""
+        """Resolve time-window indices from GUI averaging controls."""
         try:
-            t_start_str = self.t_start_var.get().strip()
-            t_end_str = self.t_end_var.get().strip()
-
             t_arr = np.asarray(t).reshape(-1)
             if t_arr.size == 0:
                 return [], 0, 0
@@ -619,9 +643,35 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
             t_min = float(np.min(t_arr))
             t_max = float(np.max(t_arr))
             default_start = t_min + 0.5 * (t_max - t_min)
+            t_start_str = self.t_start_var.get().strip()
+            t_end_str = self.t_end_var.get().strip()
+            mode = "last percent"
+            try:
+                mode = str(self.time_mode_var.get()).strip().lower()
+            except Exception:
+                mode = "last percent"
 
-            t_start = float(t_start_str) if t_start_str else default_start
-            t_end = float(t_end_str) if t_end_str else t_max
+            if t_start_str or t_end_str or mode in ("manual start/end", "manual range"):
+                t_start = float(t_start_str) if t_start_str else default_start
+                t_end = float(t_end_str) if t_end_str else t_max
+            elif mode == "full range":
+                t_start = t_min
+                t_end = t_max
+            elif mode == "last duration":
+                duration_str = self.time_duration_var.get().strip()
+                duration = float(duration_str) if duration_str else 0.5 * (t_max - t_min)
+                if (not np.isfinite(duration)) or duration <= 0.0:
+                    duration = 0.5 * (t_max - t_min)
+                t_start = t_max - duration
+                t_end = t_max
+            else:
+                percent_str = self.time_percent_var.get().strip()
+                percent = float(percent_str) if percent_str else 50.0
+                if (not np.isfinite(percent)) or percent <= 0.0:
+                    percent = 50.0
+                percent = max(0.0, min(percent, 100.0))
+                t_start = t_max - (percent / 100.0) * (t_max - t_min)
+                t_end = t_max
 
             # Clamp user input to available range.
             t_start = max(t_min, min(t_start, t_max))
@@ -901,9 +951,12 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
     def _reset_plot_area(self):
         """Reset figure/canvas state before starting a new plot action."""
         self._stop_animation()
+        if hasattr(self, "_clear_current_plot_data"):
+            self._clear_current_plot_data()
         self._energy_entropy_axes = None
         self._energy_entropy_axes_active = False
         self._energy_entropy_case_style = {}
+        self._fluctuation_case_color_map = {}
         self.fig.clear()
         self._reset_figure_layout_defaults()
         self._apply_global_plot_color_style()

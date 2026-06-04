@@ -4,11 +4,20 @@
 
 ## 功能特性
 
+### 最新更新
+- **File -> Save workspace / Load workspace**: 可将当前加载的案例列表、选中案例和主要绘图选项保存为 JSON workspace，并在之后恢复同一绘图环境。默认保存/加载目录优先使用 `/data/share/$USER`。
+- **Data -> Save current plot data**: 可将当前图中的曲线或二维图数据导出为 Origin 友好的竖排文本表。单数据集格式为 `X  Y  Z`，多数据集格式为 `X  Y  Z  Dataset`。
+- **统一导出目录**: readable bin export、plot data export 和 workspace 文件默认从 `/data/share/$USER` 开始选择，若该目录不存在则回退到 `/data/share` 或当前工作目录。
+- **时间窗模式**: 支持 Manual Start/End、Full range、Last percent 和 Last duration，便于快速切换全时段、后半段统计或固定长度平均窗口。
+- **一致的案例配色**: Fluctuation/Phi 相关一维图中，同一个 case 的 `n=0` 与 `n>0` 使用一致颜色族，并通过线型区分，方便多案例对比。
+- **Energy balance / FULLT 可视化增强**: Energy balance 增加 `vs kxky` 映射，FULLT transfer map 使用固定 source ky，显示目标 `(kx, ky)` 平面上的传输分布，并支持实部、虚部和绝对值选择。
+
 ### 1. 数据加载与管理
 - **Add Case**: 选择单个 CGYRO 模拟目录加载。
 - **Add Group**: 选择父目录，批量加载其下的所有有效 CGYRO 模拟子目录。
 - **Remove/Remove All**: 从列表中移除已加载的案例。
 - **Species Detection**: 自动检测加载案例中包含的粒子种类（如 Electron, Deuterium, Tritium, Impurities 等），并在下拉菜单中列出。
+- **Workspace Save/Load**: 保存或恢复当前案例列表、选中状态和绘图控制参数。
 
 ### 2. 绘图类型 (Plot Types)
 
@@ -22,6 +31,7 @@
 *   **Particle Flux vs Time**: 粒子通量随时间演化 $\Gamma(t)$。
 *   **Phi FFT**: 电势 $\phi$ 的频谱分析（$\omega$ vs $k_y$ 等高线图）。
 *   **Fluctuation 2D**: 2D 湍流涨落动画（$x$ vs $y$）。
+*   **Energy Balance**: 支持 zonal/non-zonal energy balance、单量曲线、`vs kxky` 映射和 FULLT transfer map。
 
 ### 3. 选项与控制
 
@@ -38,6 +48,9 @@
 *   **Moment**:
     *   仅用于 "Fluctuation 2D" 模式。
     *   可选择绘制的物理量：`Phi` (电势), `Density` (密度), `Energy` (能量), `Temperature` (温度), `Apar`, `Bpar`。
+*   **Data Export**:
+    *   `Save current plot data` 将当前图像数据导出为 tab 分隔的 `X Y Z` 文本，适合直接导入 Origin。
+    *   对多条曲线或多个二维数据集，导出文件会额外包含 `Dataset` 列用于区分来源。
 
 ## 使用说明
 
