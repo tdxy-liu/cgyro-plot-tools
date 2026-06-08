@@ -20,7 +20,12 @@ except ImportError:
 
 
 class CGYRO_Comparison(CgyroUiMixin, CgyroDataExportMixin, Plotting):
-    """Main GUI/controller class for interactive CGYRO case comparison."""
+    """
+    Main GUI/controller class for interactive CGYRO case comparison.
+
+    The tool is split into mixins so UI state, binary/data export, and plotting
+    backends can evolve independently while sharing one Tk controller instance.
+    """
 
 
 if __name__ == "__main__":

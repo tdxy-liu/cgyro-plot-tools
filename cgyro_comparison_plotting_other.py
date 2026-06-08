@@ -172,6 +172,9 @@ class OtherPlotting:
         y = np.zeros((n_r, nt), dtype=float)
         n_use = min(f.shape[0], n_r - 1)
         if f.shape[1] > 1:
+            # Drop ky=0 for the turbulent radial-correlation estimate.  The
+            # zonal component has different physics and can dominate the radial
+            # envelope if it is included.
             y[1:1 + n_use, :] = np.sum(np.abs(f[:n_use, 1:, :]), axis=1)
         else:
             # Single-mode fallback
@@ -185,6 +188,9 @@ class OtherPlotting:
 
         ave = np.roll(ave, -nx // 2)
         ave[0] = 0.0
+        # Follow the historical cgyro_plot approach: compute a correlation-like
+        # radial envelope by FFTing the centered kx spectrum and normalizing by
+        # its maximum absolute value.
         corr = np.fft.fftshift(np.fft.fft(ave, nx))
         cmax = float(np.max(np.abs(corr)))
         if cmax > 0.0:

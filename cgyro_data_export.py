@@ -9,10 +9,14 @@ Provides:
 
 import os
 import re
-import getpass
 from tkinter import filedialog, messagebox
 
 import numpy as np
+
+try:
+    from cgyro_comparison_bootstrap import default_share_dir
+except ImportError:
+    from .cgyro_comparison_bootstrap import default_share_dir
 
 
 class CgyroDataExportMixin:
@@ -40,6 +44,10 @@ class CgyroDataExportMixin:
         For 2D maps, `x` and `y` may be 1D axes or full mesh grids. `z` is
         stored in the displayed orientation: z[row, column] maps to y, x.
         """
+        # Some Matplotlib artists do not retain the original physical axes
+        # after rendering (especially pcolormesh/contour/image paths).  Plotting
+        # routines can call this hook while they still have clean numerical
+        # axes, making Data -> Save current plot data reproduce the actual map.
         try:
             x_arr = np.asarray(x, dtype=float)
             y_arr = np.asarray(y, dtype=float)
@@ -90,6 +98,9 @@ class CgyroDataExportMixin:
         """Collect cached 2D datasets plus visible 1D line/image artists."""
         datasets = []
 
+        # Prefer explicitly cached datasets because they preserve the physical
+        # axes chosen by the plotting code.  Artist fallback below is only for
+        # older/simple plots that did not call `_record_current_plot_xyz_dataset`.
         for item in getattr(self, "_current_plot_xyz_datasets", []):
             flat = self._flatten_xyz_dataset(
                 item.get("x"),
@@ -123,6 +134,8 @@ class CgyroDataExportMixin:
                 label = line.get_label()
                 if not label or str(label).startswith("_"):
                     label = f"axis{ax_idx + 1}_line{line_idx + 1}"
+                # Origin imports a uniform XYZ worksheet more easily than a
+                # mixed XY/XYZ file.  For 1D curves, Z=0 is a harmless plane.
                 z = np.zeros(n, dtype=float)
                 datasets.append((str(label), x[:n], y[:n], z))
 
@@ -184,8 +197,11 @@ class CgyroDataExportMixin:
             xx = x_arr
             yy = y_arr
         elif x_arr.ndim == 1 and y_arr.ndim == 1 and x_arr.size == n_x and y_arr.size == n_y:
+            # Standard map convention: z[row, col] == z[y_index, x_index].
             xx, yy = np.meshgrid(x_arr, y_arr)
         elif x_arr.ndim == 1 and y_arr.ndim == 1 and x_arr.size == n_y and y_arr.size == n_x:
+            # Accept transposed axis inputs to make export robust to older
+            # plotting routines that passed axes in storage order.
             xx, yy = np.meshgrid(y_arr, x_arr)
         else:
             return None
@@ -207,6 +223,8 @@ class CgyroDataExportMixin:
         """Write an Origin-friendly tab-separated XYZ worksheet."""
         multi_dataset = len(datasets) > 1
         if multi_dataset:
+            # A Dataset column lets Origin import multiple plotted cases into
+            # one worksheet while still allowing filtering/grouping by case.
             f.write("X\tY\tZ\tDataset\n")
         else:
             f.write("X\tY\tZ\n")
@@ -235,26 +253,7 @@ class CgyroDataExportMixin:
     @staticmethod
     def _default_data_export_dir():
         """Return preferred data-export directory, with local fallbacks."""
-        user_name = os.environ.get("USER") or os.environ.get("USERNAME")
-        if not user_name:
-            try:
-                user_name = getpass.getuser()
-            except Exception:
-                user_name = ""
-
-        candidates = []
-        if user_name:
-            candidates.append(os.path.join("/data/share", str(user_name)))
-        candidates.append("/data/share")
-        candidates.append(os.getcwd())
-
-        for path in candidates:
-            try:
-                if path and os.path.isdir(path):
-                    return path
-            except Exception:
-                pass
-        return os.getcwd()
+        return default_share_dir()
 
     def transfer_bin_to_readable(self):
         """

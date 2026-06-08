@@ -10,6 +10,7 @@
 - **统一导出目录**: readable bin export、plot data export 和 workspace 文件默认从 `/data/share/$USER` 开始选择，若该目录不存在则回退到 `/data/share` 或当前工作目录。
 - **时间窗模式**: 支持 Manual Start/End、Full range、Last percent 和 Last duration，便于快速切换全时段、后半段统计或固定长度平均窗口。
 - **一致的案例配色**: Fluctuation/Phi 相关一维图中，同一个 case 的 `n=0` 与 `n>0` 使用一致颜色族，并通过线型区分，方便多案例对比。
+- **Fluctuation 2D 频谱视图**: Fluctuation 2D 增加 `vs kxky` 视图，可按当前 Moment 直接绘制 `(kx, ky)` 平面上的时均涨落幅值图。
 - **Energy balance / FULLT 可视化增强**: Energy balance 增加 `vs kxky` 映射，FULLT transfer map 使用固定 source ky，显示目标 `(kx, ky)` 平面上的传输分布，并支持实部、虚部和绝对值选择。
 
 ### 1. 数据加载与管理
@@ -30,7 +31,7 @@
 *   **Particle Flux vs ky**: 粒子通量谱 $\Gamma/\Gamma_{GB}$ vs $k_y$。
 *   **Particle Flux vs Time**: 粒子通量随时间演化 $\Gamma(t)$。
 *   **Phi FFT**: 电势 $\phi$ 的频谱分析（$\omega$ vs $k_y$ 等高线图）。
-*   **Fluctuation 2D**: 2D 湍流涨落动画（$x$ vs $y$）。
+*   **Fluctuation 2D**: 支持实空间动画（$x$ vs $y$）、时空等高线（$x$ vs $t$）和频谱平面图（$k_x$ vs $k_y$）。
 *   **Energy Balance**: 支持 zonal/non-zonal energy balance、单量曲线、`vs kxky` 映射和 FULLT transfer map。
 
 ### 3. 选项与控制
@@ -48,6 +49,8 @@
 *   **Moment**:
     *   仅用于 "Fluctuation 2D" 模式。
     *   可选择绘制的物理量：`Phi` (电势), `Density` (密度), `Energy` (能量), `Temperature` (温度), `Apar`, `Bpar`。
+*   **Fluctuation 2D View**:
+    *   `vs xy` 绘制实空间动画，`vs xt` 绘制时空等高线，`vs kxky` 绘制当前 Moment 的频谱平面图。
 *   **Data Export**:
     *   `Save current plot data` 将当前图像数据导出为 tab 分隔的 `X Y Z` 文本，适合直接导入 Origin。
     *   对多条曲线或多个二维数据集，导出文件会额外包含 `Dataset` 列用于区分来源。

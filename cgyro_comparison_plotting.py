@@ -8,12 +8,10 @@ import traceback
 import difflib
 from tkinter import messagebox
 
-import matplotlib.animation as animation
 import matplotlib as mpl
 from matplotlib import font_manager as mpl_font_manager
 import numpy as np
 
-DEFAULT_POD_Z_WINDOW_PI = 8.0
 LINE_COLOR_PALETTE = [
     "#F14040",
     "#1A6FDF",
@@ -102,13 +100,6 @@ except ImportError:
     from .cgyro_comparison_plotting_energy import EnergyPlotting
     from .cgyro_comparison_plotting_other import OtherPlotting
 
-try:
-    import scipy.signal as sp_signal
-    from scipy.optimize import curve_fit as sp_curve_fit
-except Exception:
-    sp_signal = None
-    sp_curve_fit = None
-
 
 class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting, EnergyPlotting, OtherPlotting, ZfPlotting):
     @staticmethod
@@ -133,6 +124,9 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
 
     def _apply_global_plot_color_style(self):
         """Apply shared line color cycle for current plotting session."""
+        # Matplotlib stores style state globally in rcParams and locally on
+        # figures/axes.  Updating both keeps same-case colors consistent even
+        # when a sub-plotting routine creates new axes after the top-level call.
         try:
             self.fig.set_prop_cycle(color=self._get_line_color_palette())
         except Exception:
@@ -2163,6 +2157,12 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
 
     def _coerce_kxky_complex(self, raw, label, tag, species_dependent=False):
         """Normalize diverse `kxky_*` payload shapes into canonical complex arrays."""
+        # pygacode and direct `extract(..., cmplx=True)` do not always expose
+        # the same rank: some arrays are already complex, while binary fallback
+        # reads are packed as [real/imag, ...].  Downstream plotting uses one
+        # canonical convention:
+        #   species-independent: [radial, theta, ky, time]
+        #   species-dependent:   [radial, theta, species, ky, time]
         arr = np.asarray(raw)
         if arr.size == 0:
             print(f"Empty {tag} array for {label}.")
@@ -2203,6 +2203,9 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
         raw = getattr(data, attr_name, None)
 
         if raw is None and not getattr(data, "_cmp_bigfield_attempted", False):
+            # Normal pygacode path: populate all kxky_* arrays at once.  The
+            # flag prevents repeated expensive reload attempts when the file is
+            # absent or when the case was produced without bigfield output.
             print(f"Loading big field data for {label}...")
             self._ensure_bigfield_loaded(data, label)
             setattr(data, "_cmp_bigfield_attempted", True)
@@ -2229,6 +2232,11 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
                                     f"{file_suffix} for {label}."
                                 )
                                 flat = flat[:spatial * nt]
+                            # CGYRO binary payloads are Fortran-contiguous.
+                            # `order='F'` is required to restore the original
+                            # radial/theta/ky/time indexing instead of a C-order
+                            # permutation that would look like a blank or
+                            # scrambled kxky plot.
                             shape = (
                                 (n_radial, theta_plot, n_species, n_n, nt)
                                 if species_dependent else
@@ -2312,6 +2320,9 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
             return None
 
         n_r, n_th = int(arr.shape[0]), int(arr.shape[1])
+        # The comparison tool follows the same outboard-midplane convention as
+        # CGYRO collection utilities: theta index 4*n_theta/8.  Using one
+        # helper avoids off-by-one drift between phi, moment, and ZF plots.
         i_theta = self._midplane_theta_index(data, n_th)
         i_start = 1 if (drop_radial0 and n_r > 1) else 0
         return np.asarray(arr[i_start:, i_theta, :, :], dtype=complex)
@@ -2326,6 +2337,10 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
 
         if kx.size == n_r:
             return kx, radial_idx
+
+        if kx.size == n_r + 1:
+            # Caller already dropped the leftmost special radial slot.
+            return kx[1:], radial_idx
 
         if kx.size == n_r - 1:
             # Typical CGYRO layout: one leftmost special radial slot.
@@ -2388,10 +2403,10 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
         Route one case to plotting backend according to `plot_type`.
 
         Dispatch strategy (ordered):
-        1) dedicated simple families (frequency/growth, flux, FFT),
-        2) special disambiguation branches (energy-balance-single),
-        3) generic fluctuation 1D (`vs ky/kx/time`),
-        4) exact-identifier handlers.
+        1) dedicated broad families (frequency/growth, flux, FFT),
+        2) parameterized special modes (energy-balance-single),
+        3) exact plot identifiers,
+        4) generic fluctuation 1D (`vs ky/kx/time`) as a final fallback.
         """
         exact_handlers = self._build_exact_plot_handler_map(
             data, label, plot_type, t_indices, t_start, t_end
@@ -2409,14 +2424,22 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
             exact_handlers["Energy Balance Single"]()
             return
 
-        if ("vs ky" in plot_type or "vs kx" in plot_type or "vs Time" in plot_type) and ("Flux" not in plot_type):
-            if any(x in plot_type for x in ["Phi", "Apar", "Bpar"]):
-                self._plot_fluctuation_1d(data, label, plot_type, t_indices, t_start, t_end)
-            return
-
+        # Exact handlers must run before substring-based 1D detection.  In
+        # particular, "Fluctuation 2D vs kxky" contains "vs kx" but is a 2D
+        # spectral map, not a fluctuation-vs-kx line plot.
         handler = exact_handlers.get(plot_type, None)
         if handler is not None:
             handler()
+            return
+
+        is_fluctuation_1d = (
+            ("Flux" not in plot_type)
+            and any(field in plot_type for field in ["Phi", "Apar", "Bpar"])
+            and any(axis in plot_type for axis in ["vs ky", "vs kx", "vs Time"])
+        )
+        if is_fluctuation_1d:
+            self._plot_fluctuation_1d(data, label, plot_type, t_indices, t_start, t_end)
+            return
 
     def _build_exact_plot_handler_map(self, data, label, plot_type, t_indices, t_start, t_end):
         """
@@ -2461,6 +2484,9 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
                 data, label, plot_type, t_indices, t_start, t_end
             ),
             "Fluctuation 2D vs xt": lambda: self._plot_xt_fluctuation_contours(
+                data, label, plot_type, t_indices, t_start, t_end
+            ),
+            "Fluctuation 2D vs kxky": lambda: self._plot_fluctuation_kxky_map_from_2d(
                 data, label, plot_type, t_indices, t_start, t_end
             ),
             "Integration Error": lambda: self._plot_other_error(data, label),

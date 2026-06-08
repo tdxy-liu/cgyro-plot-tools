@@ -7,15 +7,6 @@ import numpy as np
 import traceback
 from tkinter import messagebox
 
-try:
-    import scipy.signal as sp_signal
-    from scipy.optimize import curve_fit as sp_curve_fit
-except Exception:
-    sp_signal = None
-    sp_curve_fit = None
-
-DEFAULT_POD_Z_WINDOW_PI = 8.0
-
 class FluxPlotting:
     def _plot_flux(self, data, label, plot_type, t_indices, t_start, t_end, species_override_index):
         """
@@ -52,6 +43,8 @@ class FluxPlotting:
         ky_flux = None
 
         if vs_kx_estimated:
+            # Estimated-kx spectra are rebuilt from other case metadata, so
+            # they do not require `ky_flux` to be present in memory.
             n_species = int(getattr(data, 'n_species', 0))
             if n_species <= 0:
                 n_species = max(1, len(self._get_case_species(data)))
@@ -94,6 +87,9 @@ class FluxPlotting:
         if self._use_flux_real_ion_norm():
             norm_ctx = self._get_flux_real_ion_norm_context(data, label=label)
             if norm_ctx.get('valid', False):
+                # Real-ion normalization changes both the plotted flux scale
+                # and the natural axes: ky*rho_s and t*c_s/a must be converted
+                # with the same reference-ion factors used for Q/Gamma.
                 try:
                     x_ky_scale = float(norm_ctx.get('rhoc', 1.0))
                 except Exception:
@@ -197,6 +193,9 @@ class FluxPlotting:
                         ax_i.set_title(rf"$\Gamma_{{{sub}}}^{{{field_tag}}}(k_y,t)$: {label}")
                         cb.set_label(rf"$\Gamma_{{{sub}}}^{{{field_tag}}}(k_y,t)$")
                     if hasattr(self, "_record_current_plot_xyz_dataset"):
+                        # The plotted contour has physical axes (ky, time).
+                        # Cache them before Matplotlib converts the contour to
+                        # polygon artists, which are hard to export back to XYZ.
                         self._record_current_plot_xyz_dataset(
                             f"{field_tag} flux ky-time: {label}",
                             ky_plot,
@@ -227,6 +226,7 @@ class FluxPlotting:
                 self.ax.set_title(rf"$\Gamma_{{{sub}}}^{{\phi}}(k_y,t)$: {label}")
                 cb.set_label(rf"$\Gamma_{{{sub}}}^{{\phi}}(k_y,t)$")
             if hasattr(self, "_record_current_plot_xyz_dataset"):
+                # Keep Origin export consistent with the decomposed branch.
                 self._record_current_plot_xyz_dataset(
                     f"Phi flux ky-time: {label}",
                     ky_plot,

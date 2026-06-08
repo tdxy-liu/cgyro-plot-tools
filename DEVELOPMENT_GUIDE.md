@@ -17,12 +17,12 @@
 | # | 文件 | 行数 | 核心职责 | 导出符号 |
 |---|------|------|----------|----------|
 | 1 | `cgyro_comparison.py` | 29 | **程序入口**。继承链终点 `CGYRO_Comparison`；创建 `tk.Tk()` 并进入主循环。 | `CGYRO_Comparison` |
-| 2 | `cgyro_comparison_bootstrap.py` | 59 | **引导层**。`pygacode` 导入适配；失败时提供 `Mock` 降级；全局常量。 | `cgyrodata`, `cgyrodata_plot`, 常量 |
-| 3 | `cgyro_comparison_ui.py` | ~2274 | **UI 与状态机**。窗口布局、菜单、所有控件（含 40+ 个动态选项控件）、用例增删改查与拖拽排序、时间窗控制、公式面板渲染系统、物种解析系统。 | `CgyroUiMixin` |
+| 2 | `cgyro_comparison_bootstrap.py` | ~80 | **引导层**。`pygacode` 导入适配；失败时提供 `Mock` 降级；全局常量与默认目录 helper。 | `cgyrodata`, `cgyrodata_plot`, `default_share_dir`, 常量 |
+| 3 | `cgyro_comparison_ui.py` | ~2600 | **UI 与状态机**。窗口布局、菜单、集中式下拉选项常量、所有控件（含 40+ 个动态选项控件）、用例增删改查与拖拽排序、时间窗控制、公式面板渲染系统、物种解析系统。 | `CgyroUiMixin` |
 | 4 | `cgyro_comparison_plotting.py` | ~2518 | **绘图调度中枢**。全局样式、时间窗解析、1D 绘图包装、输入文件 diff、用例信息滚动浏览、POD/ZF/连通kx 数学工具、 `_plot_single_case` 路由表。 | `Plotting` |
 | 5 | `cgyro_comparison_plotting_frequency.py` | ~78 | **频率 / 增长率**。`freq` 数组时均与 `/ky` 归一化。 | `FrequencyPlotting` |
 | 6 | `cgyro_comparison_plotting_flux.py` | ~801 | **通量诊断**。`ky_flux` 的 vs ky / vs Time / vs ky_time / vs kx(估计) / vs 2D 扫描、场分解、实离子 GyroBohm 归一化。 | `FluxPlotting` |
-| 7 | `cgyro_comparison_plotting_fluctuation.py` | ~559 | **涨落诊断**。1D（vs ky/kx/Time/fft）、2D 实空间（vs xy 动画 / vs xt 等高线）、电子尺度空间归一化。 | `FluctuationPlotting` |
+| 7 | `cgyro_comparison_plotting_fluctuation.py` | ~559 | **涨落诊断**。1D（vs ky/kx/Time/fft）、2D 实空间（vs xy 动画 / vs xt 等高线）、`vs kxky` 频谱平面图、电子尺度空间归一化。 | `FluctuationPlotting` |
 | 8 | `cgyro_comparison_plotting_fft.py` | ~372 | **FFT 谱**。沿时间轴 FFT，支持 Linear coherent / Nonlinear incoherent、Amplitude / Power、线性频率叠加。 | `FftPlotting` |
 | 9 | `cgyro_comparison_plotting_zf.py` | ~410 | **带状流**。vs Time / vs kx / phi vs kx(theta=0) / vs gamma_lin（含比值计算）。 | `ZfPlotting` |
 | 10 | `cgyro_comparison_plotting_energy.py` | ~1679 | **能量平衡**。基于 `triad_v2` 的熵平衡、ZF 能量平衡、有效增长率 gamma_eff、单图、FULLT 传递图、2D 扫描。 | `EnergyPlotting` |
@@ -67,7 +67,7 @@ class CGYRO_Comparison(CgyroUiMixin, CgyroDataExportMixin, Plotting):
 | `self.fluc_field_var` | `StringVar` | `"Phi"` / `"Apar"` / `"Bpar"` |
 | `self.fluc_xaxis_var` | `StringVar` | `"v.s ky"` / `"v.s kx"` / `"v.s Time"` / `"fft"` |
 | `self.moment_var` | `StringVar` | Fluctuation 2D 的矩选择 |
-| `self.fluc2d_view_var` | `StringVar` | `"vs xy"` / `"vs xt"` |
+| `self.fluc2d_view_var` | `StringVar` | `"vs xy"` / `"vs xt"` / `"vs kxky"` |
 | `self.fluc2d_x_elec_var` | `BooleanVar` | 空间轴用电子尺度 `rho_e` |
 | `self.zf_xaxis_var` | `StringVar` | `"vs Time"` / `"vs kx"` / `"phi vs kx(theta=0)"` / `"vs gamma_lin"` |
 | `self.linear_gamma_file_var` | `StringVar` | 线性谱文件路径（ZF 和 FFT 共用） |
@@ -156,14 +156,15 @@ class CGYRO_Comparison(CgyroUiMixin, CgyroDataExportMixin, Plotting):
 - `_build_effective_plot_type()` → 将 GUI 控件状态翻译成内部 `plot_type` 字符串和显示标题 `display_plot_type`。
   - Flux → `"{flux_type} Flux {xaxis_str}"`（如 `"Energy Flux vs ky"`），若勾选了分解则追加 `" (Decomp)"`。
   - Fluctuation 1D → `"Phi vs ky"` 或 `"Phi FFT"`。
-  - Fluctuation 2D → `"Fluctuation 2D"` / `"Fluctuation 2D vs xt"`。
+  - Fluctuation 2D → `"Fluctuation 2D"` / `"Fluctuation 2D vs xt"` / `"Fluctuation 2D vs kxky"`。
   - Zonal ExB → 四种精确字符串：`"ZF ExB Shearing Rate"`、`"ZF ExB Shearing Spectrum"`、`"ZF Phi Spectrum (theta0)"`、`"ZF ExB vs gamma_lin (kx=ky)"`。
   - Energy balance → 按 mode_key 映射为 `"Energy Balance Entropy"` / `"Energy Balance ZF"` / `"Energy Balance Gamma Eff"` / `"Energy Balance Single {qty} {xaxis}"` / `"Energy Balance FULLT"` / `"Energy Balance vs 2D"`。
   - Others → `"Integration Error"` / `"Radial Correlation (rcorr_phi)"` / `"POD Parity"`。
 
 **其他 UI 工具**：
 
-- `_browse_linear_gamma_file()` → 文件选择对话框，初始目录优先 `/data/share/{user}`。
+- 类顶部 `_FLUX_*`、`_FLUC_*`、`_FFT_*`、`_ZF_*`、`_ENERGY_BALANCE_*`、`_OTHERS_*` 常量集中维护下拉菜单选项，避免字符串散落在 UI 创建和 plot-type 映射逻辑中。
+- `_browse_linear_gamma_file()` → 文件选择对话框，初始目录来自 `default_share_dir()`，优先 `/data/share/{user}`。
 - `_pod_theta_resolution_error_text()` / `_show_pod_theta_resolution_warning()` / `_case_theta_resolution_is_insufficient(data)` → POD 模式 theta 分辨率不足时阻止绘图并弹窗。
 - `_stop_animation()` → 停止当前 `FuncAnimation`，重置控制按钮状态。
 - `_enable_manual_pager(...)` / `_update_manual_pager_status()` / `prev_frame()` / `next_frame()` / `toggle_pause()` → 动画/手动翻页控制。
@@ -377,6 +378,7 @@ plot_comparison()
    - `Energy Balance FULLT` → `_plot_energy_balance_fullt`
    - `Fluctuation 2D` → `_plot_fluctuation_2d`
    - `Fluctuation 2D vs xt` → `_plot_xt_fluctuation_contours`
+   - `Fluctuation 2D vs kxky` → `_plot_fluctuation_kxky_map_from_2d`
    - `Integration Error` → `_plot_other_error`
    - `Radial Correlation (rcorr_phi)` → `_plot_other_rcorr_phi`
    - `POD Parity` → `_plot_other_apar_pod_parity`
@@ -537,6 +539,11 @@ plot_comparison()
 **`_plot_xt_fluctuation_contours(data, label, plot_type, t_indices, t_start, t_end)`**：
 - `vs xt` 模式：时空等高线。
 - 取 `ky=0` 的 `c_kx_t = field[:, itheta, ky_idx_0, :]`（`[nr, t]` 复数）。
+
+**`_plot_fluctuation_kxky_map_from_2d(data, label, plot_type, t_indices, t_start, t_end)`**：
+- `vs kxky` 模式：从 Fluctuation 2D 的 `Moment` 选择读取对应 `kxky_*` 场。
+- 调用 `_extract_midplane_kykxt(drop_radial0=True)` 得到 `[kx, ky, t]`，对选中时间窗做 RMS 或 mean-absolute 平均。
+- 最终通过 `_plot_fluctuation_kxky_map(...)` 在 `(kx, ky)` 平面上绘制二维幅值图，并登记 `X Y Z` 导出数据。
 - 用户指定时间窗时切片，否则用全部时间。
 - `_reconstruct_x_from_kx(c_kx_t)` → `[nt, nx]` 实空间轮廓。
 - `transpose` 后 `contourf(t_plot, x_plot, f_tx, levels=80, cmap=...)`。
@@ -743,6 +750,8 @@ plot_comparison()
 ---
 
 ## 6. 数据导出模块（CgyroDataExportMixin）
+
+数据导出、workspace 保存/加载、linear spectrum 文件选择共用 `cgyro_comparison_bootstrap.default_share_dir()` 作为默认目录策略：优先 `/data/share/$USER`，再回退 `/data/share` 和当前工作目录。
 
 **`transfer_bin_to_readable()`**：
 - 要求用户选择输出根目录。

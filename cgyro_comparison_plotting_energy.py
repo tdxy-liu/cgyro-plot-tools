@@ -8,14 +8,6 @@ import os
 from tkinter import messagebox
 from matplotlib.colors import LinearSegmentedColormap, SymLogNorm, TwoSlopeNorm
 
-try:
-    import scipy.signal as sp_signal
-    from scipy.optimize import curve_fit as sp_curve_fit
-except Exception:
-    sp_signal = None
-    sp_curve_fit = None
-
-DEFAULT_POD_Z_WINDOW_PI = 8.0
 FULLT_DIVERGING_CMAP = LinearSegmentedColormap.from_list(
     'fullt_blue_white_red',
     [
@@ -1480,6 +1472,11 @@ class EnergyPlotting:
 
     def _load_fullt_if_needed(self, data, label):
         """Load and normalize bin.cgyro.fullt to [ri,source_ky,target_kx,target_ky,channel,time]."""
+        # The Fortran allocation is:
+        #   full_t(target_kx, target_ky, channel, source_ky)
+        # with real/imag and time carried by the binary writer.  The plotting
+        # backend normalizes every source into one Python layout so the rest of
+        # the code can always index source_ky first, then scan target kx/ky.
         n_n = int(getattr(data, 'n_n', 0))
         n_radial = int(getattr(data, 'n_radial', 0))
         n_time_hint = int(getattr(data, 'n_time', 0))
@@ -1495,6 +1492,8 @@ class EnergyPlotting:
                     return arr
                 # Raw Fortran reshape layout.
                 if arr.shape[1] == n_radial and arr.shape[2] == n_signed and arr.shape[4] == n_n:
+                    # Convert [ri,target_kx,target_ky,channel,source_ky,time]
+                    # into [ri,source_ky,target_kx,target_ky,channel,time].
                     return np.transpose(arr, (0, 4, 1, 2, 3, 5))
             return None
 
@@ -1576,6 +1575,10 @@ class EnergyPlotting:
             print(f"FULLT data is smaller than inferred shape for {label}.")
             return False
         try:
+            # FULLT is written in Fortran order with target_kx fastest among
+            # the physical dimensions.  Reshaping in C order would swap axes and
+            # make the target/source-ky verification fail even if the binary is
+            # correct.
             raw6 = np.reshape(
                 raw[:nd],
                 (2, n_radial, 2 * n_n - 1, n_channel, n_n, n_time),
@@ -1622,6 +1625,9 @@ class EnergyPlotting:
 
     def _fullt_target_ky_axis(self, data, n_n, n_signed):
         """Build signed target-ky axis matching FULLT target_ky storage order."""
+        # Source ky is non-negative CGYRO n-index.  Target ky is signed because
+        # FULLT explicitly scans the partner/target spectral plane:
+        #   -(n_n-1), ..., -1, 0, 1, ..., n_n-1.
         ky_pos = self._positive_ky_axis(getattr(data, 'kynorm', getattr(data, 'ky', [])))
         ky_pos = np.asarray(ky_pos, dtype=float).reshape(-1)
         if ky_pos.size >= n_n and n_n > 0:
@@ -1692,6 +1698,9 @@ class EnergyPlotting:
             print(f"Could not map selected fixed ky for {label}")
             return
         fixed_ky = float(ky_source_axis[source_ky_idx])
+        # Mark the diagonal target-ky == source-ky location as a visual anchor.
+        # The map itself is still a sum over target_kx/target_ky for one fixed
+        # source ky, matching the FULLT verification convention.
         target_ky_mark_idx = self._nearest_finite_index(ky_target_axis, fixed_ky)
 
         valid_t = np.asarray(t_indices, dtype=int).reshape(-1)
@@ -1704,8 +1713,12 @@ class EnergyPlotting:
 
         real_map = np.asarray(fullt[0, source_ky_idx, radial_idx, :n_y, 0, :], dtype=float)
         if n_channel >= 2:
+            # Two-channel FULLT stores real/imag diagnostics in channel index.
             imag_map = np.asarray(fullt[0, source_ky_idx, radial_idx, :n_y, 1, :], dtype=float)
         else:
+            # Real-only FULLT stores any imaginary component in the packed
+            # real/imag axis, though production FULLT_REAL_ONLY cases should
+            # leave this branch effectively zero.
             imag_map = np.asarray(fullt[1, source_ky_idx, radial_idx, :n_y, 0, :], dtype=float)
 
         if qty == 'im':

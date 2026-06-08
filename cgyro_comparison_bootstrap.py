@@ -53,7 +53,43 @@ except ImportError:
 
 DEFAULT_APP_TITLE = "CGYRO Comparison Tool"
 DEFAULT_WINDOW_GEOMETRY = "1200x800"
-_current_user = os.environ.get("USER") or getpass.getuser() or "unknown"
+
+
+def _detect_current_user():
+    """Return a best-effort username for shared-directory defaults."""
+    user_name = os.environ.get("USER") or os.environ.get("USERNAME")
+    if user_name:
+        return str(user_name)
+    try:
+        user_name = getpass.getuser()
+    except Exception:
+        user_name = ""
+    return str(user_name) if user_name else "unknown"
+
+
+_current_user = _detect_current_user()
 DEFAULT_CASE_PICKER_ROOT = f"/data/share/{_current_user}"
 DEFAULT_LINEAR_GAMMA_FILE = "omega_gamma_vs_ky.txt"
 DEFAULT_EXPORT_DIRNAME = "CGYRO_vs_CGYRO_exports"
+
+
+def default_share_dir(*, fallback_to_cwd=True):
+    """Return `/data/share/$USER` when available, then shared/local fallbacks."""
+    # Most production CGYRO cases and exported comparison tables live on the
+    # cluster shared filesystem.  Using this helper everywhere keeps file
+    # dialogs from silently falling back to the local launch directory.
+    candidates = []
+    user_name = os.environ.get("USER") or os.environ.get("USERNAME") or _current_user
+    if user_name:
+        candidates.append(os.path.join("/data/share", str(user_name)))
+    candidates.append("/data/share")
+    if fallback_to_cwd:
+        candidates.append(os.getcwd())
+
+    for path in candidates:
+        try:
+            if path and os.path.isdir(path):
+                return path
+        except Exception:
+            pass
+    return os.getcwd() if fallback_to_cwd else ""

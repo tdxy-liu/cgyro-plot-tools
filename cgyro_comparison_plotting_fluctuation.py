@@ -6,15 +6,6 @@ Auto-extracted from cgyro_comparison_plotting.py during refactor.
 import numpy as np
 import matplotlib.animation as animation
 
-try:
-    import scipy.signal as sp_signal
-    from scipy.optimize import curve_fit as sp_curve_fit
-except Exception:
-    sp_signal = None
-    sp_curve_fit = None
-
-DEFAULT_POD_Z_WINDOW_PI = 8.0
-
 class FluctuationPlotting:
     def _get_fluctuation_case_color(self, case_label):
         """Return a stable line color for all fluctuation traces from one case."""
@@ -152,7 +143,7 @@ class FluctuationPlotting:
         ky = self._positive_ky_axis(getattr(data, 'ky', []))
         t_valid = np.asarray(t_indices, dtype=int)
         t_valid = t_valid[(t_valid >= 0) & (t_valid < field_sq.shape[-1])]
-        
+
         if "vs ky" in plot_type:
             # Plot time-averaged amplitude vs ky.
             # Sum over kx (axis 0) -> [ny, nt]
@@ -316,6 +307,183 @@ class FluctuationPlotting:
             
             self.ax.set_xlabel(r'$t (a/c_s)$')
             self.ax.set_ylabel(y_label_rho_norm)
+
+    def _plot_fluctuation_kxky_map_from_2d(self, data, label, plot_type, t_indices, t_start, t_end):
+        """Render a spectral kx-ky map from the Fluctuation 2D Moment selector."""
+        # This path intentionally hangs off the Fluctuation-2D controls: the
+        # user chooses a physical moment there, then the view selector decides
+        # whether it is rendered in real space (xy/xt) or spectral space (kxky).
+        moment = str(self.moment_var.get()).strip() if hasattr(self, "moment_var") else "Phi"
+        field_4d, spec_label = self._load_fluctuation_moment_field(
+            data,
+            label,
+            moment,
+            main_ion_policy="all",
+        )
+        if field_4d is None:
+            print(f"No {moment} data available for {label}")
+            return
+
+        field_data = self._extract_midplane_kykxt(
+            field_4d,
+            data,
+            label,
+            drop_radial0=True,
+            species_idx=0,
+        )
+        if field_data is None:
+            return
+
+        normalized_by_rho = moment in ["Phi", "Apar", "Bpar"]
+        if normalized_by_rho:
+            # Field amplitudes are displayed in the same rho_s-normalized units
+            # as the existing 1D fluctuation plots, so comparing Phi vs ky and
+            # Phi vs kxky does not silently change units.
+            rho_norm = float(getattr(data, 'rho', 1.0))
+            if abs(rho_norm) < 1e-12:
+                rho_norm = 1.0
+            field_data = field_data / rho_norm
+
+        map_label = f"{label}{spec_label}" if spec_label else label
+        self._plot_fluctuation_kxky_map(
+            data,
+            map_label,
+            moment,
+            field_data,
+            t_indices,
+            t_start,
+            t_end,
+            normalized_by_rho=normalized_by_rho,
+        )
+
+    def _plot_fluctuation_kxky_map(
+        self,
+        data,
+        label,
+        field_name,
+        field_data,
+        t_valid,
+        t_start,
+        t_end,
+        normalized_by_rho=True,
+    ):
+        """Plot a time-averaged midplane fluctuation amplitude map on the kx-ky plane."""
+        arr = np.asarray(field_data, dtype=complex)
+        if arr.ndim != 3:
+            print(f"Unsupported {field_name} kxky data shape for {label}: {arr.shape}")
+            return
+
+        n_kx, n_ky, n_t = arr.shape
+        if n_kx <= 0 or n_ky <= 0 or n_t <= 0:
+            print(f"Empty {field_name} kxky data for {label}")
+            return
+
+        valid_t = np.asarray(t_valid, dtype=int).reshape(-1)
+        valid_t = valid_t[(valid_t >= 0) & (valid_t < n_t)]
+        avg_mode = self._average_mode_name()
+        avg_tag = self._average_mode_short_tag()
+
+        if valid_t.size > 0:
+            arr_t = arr[:, :, valid_t]
+            avg_suffix = self._format_avg_suffix(t_start, t_end, prefix=f"Avg-{avg_tag}")
+        else:
+            # If no valid window is selected, show the last available sample
+            # rather than failing; this matches the behavior of other snapshot
+            # style plots in the comparison tool.
+            arr_t = arr[:, :, -1:]
+            avg_suffix = " (last time)"
+
+        if self._use_mean_absolute_average():
+            z = np.mean(np.abs(arr_t), axis=2)
+            value_label = rf'{field_name}/\rho_s' if normalized_by_rho else str(field_name)
+            cbar_label = rf'$\langle |{value_label}| \rangle_t$'
+        else:
+            z = np.sqrt(np.mean(np.abs(arr_t) ** 2, axis=2))
+            value_label = rf'{field_name}/\rho_s' if normalized_by_rho else str(field_name)
+            cbar_label = rf'$\sqrt{{\langle |{value_label}|^2 \rangle_t}}$'
+
+        kx_axis, radial_idx = self._build_kx_axis(data, n_kx, label)
+        if kx_axis is None:
+            print(f"No usable kx axis for {label}")
+            return
+        kx_axis = np.asarray(kx_axis, dtype=float).reshape(-1)
+        radial_idx = np.asarray(radial_idx, dtype=int).reshape(-1)
+        n_x = min(kx_axis.size, radial_idx.size, z.shape[0])
+        if n_x <= 0:
+            print(f"No usable kx points for {label}")
+            return
+        kx_axis = kx_axis[:n_x]
+        # `radial_idx` maps the plotted kx axis back into the CGYRO radial
+        # storage dimension.  This is needed because some outputs omit the
+        # leftmost special/Nyquist slot while FULLT-like outputs keep it.
+        z = z[radial_idx[:n_x], :]
+
+        ky_axis = self._positive_ky_axis(getattr(data, 'ky', []))
+        ky_axis = np.asarray(ky_axis, dtype=float).reshape(-1)
+        if ky_axis.size <= 0:
+            ky_axis = np.arange(n_ky, dtype=float)
+        n_y = min(ky_axis.size, z.shape[1])
+        if n_y <= 0:
+            print(f"No usable ky points for {label}")
+            return
+        ky_axis = ky_axis[:n_y]
+        z = np.asarray(z[:, :n_y], dtype=float)
+
+        finite_kx = np.isfinite(kx_axis)
+        finite_ky = np.isfinite(ky_axis)
+        if not np.any(finite_kx) or not np.any(finite_ky):
+            print(f"No finite kx/ky axis values for {label}")
+            return
+        kx_axis = kx_axis[finite_kx]
+        z = z[finite_kx, :]
+        ky_axis = ky_axis[finite_ky]
+        z = z[:, finite_ky]
+
+        kx_order = np.argsort(kx_axis)
+        ky_order = np.argsort(ky_axis)
+        # Sort before imshow so the image extent is monotonic.  Without this,
+        # signed radial storage order can produce a visually blank or flipped
+        # kxky map even when the underlying array is valid.
+        kx_axis = kx_axis[kx_order]
+        ky_axis = ky_axis[ky_order]
+        z = z[np.ix_(kx_order, ky_order)]
+
+        z_plot = np.ma.masked_invalid(z.T)
+
+        def _extent_bounds(axis):
+            axis = np.asarray(axis, dtype=float).reshape(-1)
+            if axis.size == 1:
+                v = float(axis[0])
+                pad = 0.5 if abs(v) < 1.0e-12 else abs(v) * 0.05
+                return v - pad, v + pad
+            return float(np.nanmin(axis)), float(np.nanmax(axis))
+
+        x0, x1 = _extent_bounds(kx_axis)
+        y0, y1 = _extent_bounds(ky_axis)
+        pcm = self.ax.imshow(
+            z_plot,
+            extent=[x0, x1, y0, y1],
+            origin='lower',
+            aspect='auto',
+            interpolation='bicubic',
+            cmap=self._get_2d_contour_cmap(),
+        )
+        cbar = self.fig.colorbar(pcm, ax=self.ax)
+        cbar.set_label(cbar_label)
+        self.ax.set_xlabel(r'$k_x \rho_s$')
+        self.ax.set_ylabel(r'$k_y \rho_s$')
+        self.ax.set_title(f'{field_name} vs kxky: {label}{avg_suffix} ({avg_mode})')
+
+        if hasattr(self, "_record_current_plot_xyz_dataset"):
+            # Store the physical axes and z values before Matplotlib turns them
+            # into pixels.  Data -> Save current plot data can then export an
+            # Origin-ready XYZ table matching the displayed map.
+            self._record_current_plot_xyz_dataset(
+                f"{field_name} vs kxky: {label}",
+                kx_axis,
+                ky_axis,
+                z_plot,
+            )
 
     def _plot_fluctuation_2d(self, data, label, plot_type, t_indices, t_start, t_end):
         """Render ky-kx fluctuation contour animation or snapshot from bigfield data."""

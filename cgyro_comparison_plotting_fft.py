@@ -6,15 +6,6 @@ Auto-extracted from cgyro_comparison_plotting.py during refactor.
 import numpy as np
 import os
 
-try:
-    import scipy.signal as sp_signal
-    from scipy.optimize import curve_fit as sp_curve_fit
-except Exception:
-    sp_signal = None
-    sp_curve_fit = None
-
-DEFAULT_POD_Z_WINDOW_PI = 8.0
-
 class FftPlotting:
     def _plot_fluctuation_fft(self, data, label, plot_type, t_indices):
         """Render FFT spectra from fluctuation time traces in selected FFT mode."""
@@ -59,6 +50,8 @@ class FftPlotting:
         dt = float(np.mean(np.abs(valid_dt)))
         # Parse out.cgyro.info for ion direction to ensure correctness as per user request
         # Default to -1.0 (Standard CGYRO e^-iwt vs FFT e^-i2pift)
+        # The sign convention is kept explicit because CGYRO's reported omega
+        # convention and NumPy's FFT convention point in opposite directions.
         freq_mult = -1.0
         
         try:
@@ -165,6 +158,8 @@ class FftPlotting:
             
             if analysis_mode == "Linear":
                 # Coherent sum
+                # Linear mode is meant to highlight a dominant eigenmode, so
+                # phases across kx are preserved before taking the amplitude.
                 complex_sum = np.sum(field_omega_all_shifted, axis=0) # Sum over radial (kx)
                 mag_plot2 = spectrum_metric(complex_sum)
                 title2_suffix = "(Coherent sum over all kx)"
@@ -188,6 +183,8 @@ class FftPlotting:
                         
             else: # Nonlinear
                 # Incoherent sum
+                # Nonlinear turbulence mixes phases strongly; summing spectral
+                # power/amplitude by kx avoids artificial cancellation.
                 mag_plot2 = np.sum(spectrum_metric(field_omega_all_shifted), axis=0)
                 title2_suffix = "(Incoherent sum over all kx)"
                 
@@ -218,6 +215,8 @@ class FftPlotting:
             ax1.set_title(f'{field_name} FFT {spectrum_label} (kx=0): {label}')
             ax1.set_ylabel(r'$\omega (c_s/a)$')
             if hasattr(self, "_record_current_plot_xyz_dataset"):
+                # Cache numerical grids for Origin export; contourf stores
+                # filled polygons rather than the original rectangular grid.
                 self._record_current_plot_xyz_dataset(
                     f"{field_name} FFT {spectrum_label} (kx=0): {label}",
                     ky_grid,
@@ -231,6 +230,7 @@ class FftPlotting:
             ax2.set_ylabel(r'$\omega (c_s/a)$')
             ax2.set_xlabel(r'$k_y \rho_s$')
             if hasattr(self, "_record_current_plot_xyz_dataset"):
+                # Same grid as the kx=0 panel, but with all-kx aggregation.
                 self._record_current_plot_xyz_dataset(
                     f"{field_name} FFT {spectrum_label} {title2_suffix}: {label}",
                     ky_grid,

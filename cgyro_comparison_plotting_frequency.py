@@ -5,15 +5,6 @@ Auto-extracted from cgyro_comparison_plotting.py during refactor.
 
 import numpy as np
 
-try:
-    import scipy.signal as sp_signal
-    from scipy.optimize import curve_fit as sp_curve_fit
-except Exception:
-    sp_signal = None
-    sp_curve_fit = None
-
-DEFAULT_POD_Z_WINDOW_PI = 8.0
-
 class FrequencyPlotting:
     def _plot_frequency_growth(self, data, label, plot_type, t_indices, t_start, t_end):
         """Plot frequency or growth-rate spectra, with optional time-window averaging."""
@@ -37,6 +28,9 @@ class FrequencyPlotting:
             comp = np.asarray(freq[comp_idx])
 
             # Detect which axis is ky so we can average along time correctly.
+            # Different pygacode versions have exposed `freq` as [component,ky,t]
+            # or [component,t,ky].  Shape-based detection keeps the plot robust
+            # without requiring a version check.
             if comp.shape[0] == n_ky:
                 time_axis = 1
             elif comp.shape[1] == n_ky:
@@ -64,6 +58,8 @@ class FrequencyPlotting:
 
         # Normalize by ky if requested
         if self.norm_ky_var.get():
+            # Avoid silently creating infinities at ky=0; those are exported as
+            # NaN and skipped by Matplotlib/Origin rather than polluting scales.
             y = np.asarray(y, dtype=float).reshape(-1)
             x_safe = np.asarray(x, dtype=float).reshape(-1)
             with np.errstate(divide='ignore', invalid='ignore'):

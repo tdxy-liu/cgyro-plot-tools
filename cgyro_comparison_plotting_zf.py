@@ -38,6 +38,8 @@ class ZfPlotting:
             return user_text if os.path.isfile(user_text) else None
 
         # 2) Relative to case directory (and one level above).
+        # Linear scans are often stored next to a nonlinear case rather than
+        # inside it, so checking the parent directory saves repeated browsing.
         case_dir = self._resolve_case_dir(data)
         if case_dir:
             candidates = [
@@ -132,6 +134,9 @@ class ZfPlotting:
         if kx is None:
             return None
 
+        # ZF plots use the raw zonal phi extracted by `_get_zf_exb_phi_kx_t`.
+        # Normalize only at the plotting metric level, matching the existing
+        # collect/cgyro_plot shearing-rate convention.
         rho = self._rho_scalar_for_norm(data, label)
 
         phi_abs_kx_t = np.abs(phi_kx_t) / rho
@@ -157,6 +162,9 @@ class ZfPlotting:
             y_phi = y_phi[:n]
 
         order = np.argsort(x)
+        # Sort signed kx for line plotting; storage order can be centered or
+        # shifted depending on whether the original binary kept the special
+        # radial slot.
         x = x[order]
         y_phi = y_phi[order]
 
@@ -246,6 +254,9 @@ class ZfPlotting:
         vzf_mean = float(
             0.5 * np.sqrt(np.sum(np.abs(kx_for_vzf * zf_kx_for_vzf) ** 2))
         )
+        # Fig4-style comparison plots ky*<V_ZF> against gamma_lin by identifying
+        # kx and ky numerically.  This is a diagnostic convention rather than a
+        # new CGYRO output quantity.
 
         avg_suffix = self._format_avg_suffix(t_start, t_end, prefix="Avg")
         if valid_t.size > 0:

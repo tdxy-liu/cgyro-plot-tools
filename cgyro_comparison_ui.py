@@ -4,7 +4,6 @@ UI and case-management mixin for CGYRO comparison GUI.
 
 import os
 import re
-import getpass
 import json
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
@@ -21,6 +20,7 @@ try:
         DEFAULT_WINDOW_GEOMETRY,
         DEFAULT_CASE_PICKER_ROOT,
         DEFAULT_LINEAR_GAMMA_FILE,
+        default_share_dir,
     )
 except ImportError:
     from .cgyro_comparison_bootstrap import (
@@ -30,10 +30,50 @@ except ImportError:
         DEFAULT_WINDOW_GEOMETRY,
         DEFAULT_CASE_PICKER_ROOT,
         DEFAULT_LINEAR_GAMMA_FILE,
+        default_share_dir,
     )
 
 
 class CgyroUiMixin:
+    # Keep UI option literals centralized.  Plot dispatch below depends on
+    # exact strings, so collecting them here makes later menu changes less
+    # likely to desynchronize controls and backend handlers.
+    _FLUX_TYPE_OPTIONS = ("Energy", "Particle")
+    _FLUX_XAXIS_OPTIONS = ("v.s ky", "v.s kx (estimated)", "v.s Time", "v.s ky_time", "v.s 2D")
+    _FLUC_FIELD_OPTIONS = ("Phi", "Apar", "Bpar")
+    _FLUC_XAXIS_OPTIONS = ("v.s ky", "v.s kx", "v.s Time", "fft")
+    _FLUC_MOMENT_OPTIONS = ("Phi", "Density", "Energy", "Temperature", "Apar", "Bpar")
+    _FLUC2D_VIEW_OPTIONS = ("vs xy", "vs xt", "vs kxky")
+    # User-facing Fluctuation-2D views are translated into exact internal
+    # plot-type tokens.  The exact token matters because "vs kxky" also
+    # contains "vs kx"; exact dispatch must catch it before generic 1D logic.
+    _FLUC2D_VIEW_PLOT_TYPES = {
+        "vs xy": ("Fluctuation 2D", "Fluctuation 2D (vs xy)"),
+        "vs xt": ("Fluctuation 2D vs xt", "Fluctuation 2D (vs xt)"),
+        "vs kxky": ("Fluctuation 2D vs kxky", "Fluctuation 2D (vs kxky)"),
+    }
+    _FFT_MODE_OPTIONS = ("Nonlinear", "Linear")
+    _FFT_VIEW_OPTIONS = ("Omega vs ky", "Omega vs kx")
+    _FFT_SPECTRUM_OPTIONS = ("Amplitude", "Power")
+    _ZF_XAXIS_OPTIONS = ("vs Time", "vs kx", "phi vs kx(theta=0)", "vs gamma_lin")
+    _ENERGY_BALANCE_MODE_OPTIONS = (
+        "Entropy balance",
+        "ZF energy balance",
+        "Effective growth rate",
+        "Single plot",
+        "FULLT transfer map",
+        "2D scan",
+    )
+    _ENERGY_BALANCE_SPEC_OPTIONS = ("Total (-1)", "Main ion (0)", "Electron (1)")
+    _ENERGY_BALANCE_SINGLE_QUANTITY_OPTIONS = ("T", "N", "T-N", "entropy")
+    _ENERGY_BALANCE_SINGLE_XAXIS_OPTIONS = ("vs Time", "vs ky", "vs kxky")
+    _ENERGY_BALANCE_TRANSFER_QUANTITY_OPTIONS = ("Re", "Im", "Abs")
+    _OTHERS_PLOT_OPTIONS = ("Error", "rcorr_phi", "POD_parity")
+    _OTHERS_FIELD_OPTIONS = ("Phi", "Apar", "Bpar")
+    _OTHERS_POD_FIELD_OPTIONS = ("Apar", "Phi")
+    # Workspace files persist Tk variables, not widget objects.  Cases are
+    # stored separately as paths so a workspace remains portable between GUI
+    # sessions and does not attempt to pickle pygacode data objects.
     _WORKSPACE_STATE_VARS = [
         "fluc_average_var",
         "time_mode_var",
@@ -369,12 +409,18 @@ class CgyroUiMixin:
         
         # 2. Flux Options
         self.flux_type_var = tk.StringVar(value="Energy")
-        self.flux_type_combo = ttk.Combobox(self.options_frame, textvariable=self.flux_type_var, values=["Energy", "Particle"], state="readonly", width=15)
+        self.flux_type_combo = ttk.Combobox(
+            self.options_frame,
+            textvariable=self.flux_type_var,
+            values=list(self._FLUX_TYPE_OPTIONS),
+            state="readonly",
+            width=15,
+        )
         self.flux_xaxis_var = tk.StringVar(value="v.s ky")
         self.flux_xaxis_combo = ttk.Combobox(
             self.options_frame,
             textvariable=self.flux_xaxis_var,
-            values=["v.s ky", "v.s kx (estimated)", "v.s Time", "v.s ky_time", "v.s 2D"],
+            values=list(self._FLUX_XAXIS_OPTIONS),
             state="readonly",
             width=18
         )
@@ -408,10 +454,22 @@ class CgyroUiMixin:
 
         # 3. Fluctuation 1D Options
         self.fluc_field_var = tk.StringVar(value="Phi")
-        self.fluc_field_combo = ttk.Combobox(self.options_frame, textvariable=self.fluc_field_var, values=["Phi", "Apar", "Bpar"], state="readonly", width=10)
+        self.fluc_field_combo = ttk.Combobox(
+            self.options_frame,
+            textvariable=self.fluc_field_var,
+            values=list(self._FLUC_FIELD_OPTIONS),
+            state="readonly",
+            width=10,
+        )
         
         self.fluc_xaxis_var = tk.StringVar(value="v.s ky")
-        self.fluc_xaxis_combo = ttk.Combobox(self.options_frame, textvariable=self.fluc_xaxis_var, values=["v.s ky", "v.s kx", "v.s Time", "fft"], state="readonly", width=15)
+        self.fluc_xaxis_combo = ttk.Combobox(
+            self.options_frame,
+            textvariable=self.fluc_xaxis_var,
+            values=list(self._FLUC_XAXIS_OPTIONS),
+            state="readonly",
+            width=15,
+        )
         (
             self.fluc_formula_frame,
             self.fluc_formula_fig,
@@ -433,15 +491,19 @@ class CgyroUiMixin:
         # 5. Fluctuation 2D options
         self.moment_label = ttk.Label(self.options_frame, text="Moment:")
         self.moment_var = tk.StringVar(value="Phi")
-        self.moment_combo = ttk.Combobox(self.options_frame, textvariable=self.moment_var,
-                                         values=["Phi", "Density", "Energy", "Temperature", "Apar", "Bpar"], state="readonly")
+        self.moment_combo = ttk.Combobox(
+            self.options_frame,
+            textvariable=self.moment_var,
+            values=list(self._FLUC_MOMENT_OPTIONS),
+            state="readonly",
+        )
 
         self.fluc2d_view_label = ttk.Label(self.options_frame, text="View:")
         self.fluc2d_view_var = tk.StringVar(value="vs xy")
         self.fluc2d_view_combo = ttk.Combobox(
             self.options_frame,
             textvariable=self.fluc2d_view_var,
-            values=["vs xy", "vs xt"],
+            values=list(self._FLUC2D_VIEW_OPTIONS),
             state="readonly",
             width=10
         )
@@ -459,14 +521,24 @@ class CgyroUiMixin:
         # Analysis Mode
         ttk.Label(self.fft_options_frame, text="Mode:").grid(row=0, column=0, sticky=tk.W)
         self.fft_mode_var = tk.StringVar(value="Nonlinear")
-        self.fft_mode_combo = ttk.Combobox(self.fft_options_frame, textvariable=self.fft_mode_var,
-                                         values=["Nonlinear", "Linear"], state="readonly", width=15)
+        self.fft_mode_combo = ttk.Combobox(
+            self.fft_options_frame,
+            textvariable=self.fft_mode_var,
+            values=list(self._FFT_MODE_OPTIONS),
+            state="readonly",
+            width=15,
+        )
         self.fft_mode_combo.grid(row=0, column=1, sticky=tk.W)
         # View Mode
         ttk.Label(self.fft_options_frame, text="View:").grid(row=1, column=0, sticky=tk.W)
         self.fft_view_var = tk.StringVar(value="Omega vs ky")
-        self.fft_view_combo = ttk.Combobox(self.fft_options_frame, textvariable=self.fft_view_var,
-                                         values=["Omega vs ky", "Omega vs kx"], state="readonly", width=15)
+        self.fft_view_combo = ttk.Combobox(
+            self.fft_options_frame,
+            textvariable=self.fft_view_var,
+            values=list(self._FFT_VIEW_OPTIONS),
+            state="readonly",
+            width=15,
+        )
         self.fft_view_combo.grid(row=1, column=1, sticky=tk.W)
         # Spectrum type
         ttk.Label(self.fft_options_frame, text="Spectrum:").grid(row=2, column=0, sticky=tk.W)
@@ -474,7 +546,7 @@ class CgyroUiMixin:
         self.fft_spectrum_combo = ttk.Combobox(
             self.fft_options_frame,
             textvariable=self.fft_spectrum_var,
-            values=["Amplitude", "Power"],
+            values=list(self._FFT_SPECTRUM_OPTIONS),
             state="readonly",
             width=15,
         )
@@ -517,7 +589,7 @@ class CgyroUiMixin:
         self.zf_xaxis_combo = ttk.Combobox(
             self.options_frame,
             textvariable=self.zf_xaxis_var,
-            values=["vs Time", "vs kx", "phi vs kx(theta=0)", "vs gamma_lin"],
+            values=list(self._ZF_XAXIS_OPTIONS),
             state="readonly",
             width=15
         )
@@ -561,14 +633,7 @@ class CgyroUiMixin:
         self.energy_balance_mode_combo = ttk.Combobox(
             self.energy_balance_options_frame,
             textvariable=self.energy_balance_mode_var,
-            values=[
-                "Entropy balance",
-                "ZF energy balance",
-                "Effective growth rate",
-                "Single plot",
-                "FULLT transfer map",
-                "2D scan",
-            ],
+            values=list(self._ENERGY_BALANCE_MODE_OPTIONS),
             state="readonly",
             width=24,
         )
@@ -584,7 +649,7 @@ class CgyroUiMixin:
         self.energy_balance_spec_combo = ttk.Combobox(
             self.energy_balance_options_frame,
             textvariable=self.energy_balance_spec_var,
-            values=["Total (-1)", "Main ion (0)", "Electron (1)"],
+            values=list(self._ENERGY_BALANCE_SPEC_OPTIONS),
             state="readonly",
             width=16,
         )
@@ -593,7 +658,7 @@ class CgyroUiMixin:
         self.energy_balance_single_quantity_combo = ttk.Combobox(
             self.energy_balance_options_frame,
             textvariable=self.energy_balance_single_quantity_var,
-            values=["T", "N", "T-N", "entropy"],
+            values=list(self._ENERGY_BALANCE_SINGLE_QUANTITY_OPTIONS),
             state="readonly",
             width=12,
         )
@@ -602,7 +667,7 @@ class CgyroUiMixin:
         self.energy_balance_single_xaxis_combo = ttk.Combobox(
             self.energy_balance_options_frame,
             textvariable=self.energy_balance_single_xaxis_var,
-            values=["vs Time", "vs ky", "vs kxky"],
+            values=list(self._ENERGY_BALANCE_SINGLE_XAXIS_OPTIONS),
             state="readonly",
             width=12,
         )
@@ -611,7 +676,7 @@ class CgyroUiMixin:
         self.energy_balance_transfer_quantity_combo = ttk.Combobox(
             self.energy_balance_options_frame,
             textvariable=self.energy_balance_transfer_quantity_var,
-            values=["Re", "Im", "Abs"],
+            values=list(self._ENERGY_BALANCE_TRANSFER_QUANTITY_OPTIONS),
             state="readonly",
             width=10,
         )
@@ -638,7 +703,7 @@ class CgyroUiMixin:
         self.others_plot_combo = ttk.Combobox(
             self.options_frame,
             textvariable=self.others_plot_var,
-            values=["Error", "rcorr_phi", "POD_parity"],
+            values=list(self._OTHERS_PLOT_OPTIONS),
             state="readonly",
             width=15,
         )
@@ -647,7 +712,7 @@ class CgyroUiMixin:
         self.others_rcorr_field_combo = ttk.Combobox(
             self.options_frame,
             textvariable=self.others_rcorr_field_var,
-            values=["Phi", "Apar", "Bpar"],
+            values=list(self._OTHERS_FIELD_OPTIONS),
             state="readonly",
             width=10,
         )
@@ -663,7 +728,7 @@ class CgyroUiMixin:
         self.others_pod_field_combo = ttk.Combobox(
             self.options_frame,
             textvariable=self.others_pod_field_var,
-            values=["Apar", "Phi"],
+            values=list(self._OTHERS_POD_FIELD_OPTIONS),
             state="readonly",
             width=8,
         )
@@ -764,18 +829,7 @@ class CgyroUiMixin:
 
     def _browse_linear_gamma_file(self):
         """Open file chooser and update the linear omega/gamma reference file path."""
-        user_name = (
-            os.environ.get("USER", "").strip()
-            or os.environ.get("USERNAME", "").strip()
-            or getpass.getuser().strip()
-        )
-        user_share_dir = os.path.join("/data/share", user_name) if user_name else "/data/share"
-        if os.path.isdir(user_share_dir):
-            initial_dir = user_share_dir
-        elif os.path.isdir("/data/share"):
-            initial_dir = "/data/share"
-        else:
-            initial_dir = os.getcwd()
+        initial_dir = default_share_dir()
         try:
             current = self.linear_gamma_file_var.get().strip()
             if current:
@@ -1413,7 +1467,8 @@ class CgyroUiMixin:
                  self.species_label.grid(row=row, column=0, sticky=tk.W)
                  self.species_combo.grid(row=row, column=1, sticky=tk.W)
                  row += 1
-            self.fluc2d_x_elec_check.grid(row=row, column=0, columnspan=2, sticky=tk.W)
+            if not self._is_fluc2d_kxky_view(self.fluc2d_view_var.get()):
+                self.fluc2d_x_elec_check.grid(row=row, column=0, columnspan=2, sticky=tk.W)
 
         elif plot_type == "Zonal ExB Shearing Rate":
             self.zf_xaxis_label.grid(row=row, column=0, sticky=tk.W)
@@ -1854,6 +1909,9 @@ class CgyroUiMixin:
 
     def _build_effective_plot_type(self):
         """Translate GUI selections into internal plot-type token and display label."""
+        # `plot_type` is a stable backend command string; `display_plot_type`
+        # is allowed to be more descriptive.  Keeping both lets old plotting
+        # handlers remain unchanged while the UI text stays readable.
         plot_type_selection = self.plot_type_var.get()
         plot_type = plot_type_selection
         display_plot_type = plot_type_selection
@@ -1876,12 +1934,12 @@ class CgyroUiMixin:
                 plot_type = f"{field} {xaxis_str}"
         elif plot_type_selection == "Fluctuation 2D":
             view = self.fluc2d_view_var.get().strip().lower()
-            if view == "vs xt":
-                plot_type = "Fluctuation 2D vs xt"
-                display_plot_type = "Fluctuation 2D (vs xt)"
-            else:
-                plot_type = "Fluctuation 2D"
-                display_plot_type = "Fluctuation 2D (vs xy)"
+            # Use the exact mapping above instead of composing strings here;
+            # this avoids accidental overlap with generic "vs kx" 1D routing.
+            plot_type, display_plot_type = self._FLUC2D_VIEW_PLOT_TYPES.get(
+                view,
+                self._FLUC2D_VIEW_PLOT_TYPES["vs xy"],
+            )
         elif plot_type_selection == "Zonal ExB Shearing Rate":
             zf_xaxis = self.zf_xaxis_var.get().strip().lower()
             if zf_xaxis == "vs kx":
@@ -1950,6 +2008,9 @@ class CgyroUiMixin:
             data = self.cases.get(case_name, None)
             case_dir = None
             if data is not None:
+                # Different pygacode wrappers expose the case directory through
+                # different attributes; resolve through the shared helper first,
+                # then fall back to raw attributes for older wrapper objects.
                 try:
                     case_dir = self._resolve_case_dir(data)
                 except Exception:
@@ -1989,6 +2050,8 @@ class CgyroUiMixin:
             if var is None or not hasattr(var, "set"):
                 continue
             try:
+                # Ignore variables removed by newer versions of the tool; this
+                # keeps old workspace JSON files loadable after UI evolution.
                 var.set(state[attr])
             except Exception:
                 pass
@@ -2000,27 +2063,7 @@ class CgyroUiMixin:
                 return self._default_data_export_dir()
         except Exception:
             pass
-
-        user_name = os.environ.get("USER") or os.environ.get("USERNAME")
-        if not user_name:
-            try:
-                user_name = getpass.getuser()
-            except Exception:
-                user_name = ""
-
-        candidates = []
-        if user_name:
-            candidates.append(os.path.join("/data/share", str(user_name)))
-        candidates.append("/data/share")
-        candidates.append(os.getcwd())
-
-        for path in candidates:
-            try:
-                if path and os.path.isdir(path):
-                    return path
-            except Exception:
-                pass
-        return os.getcwd()
+        return default_share_dir()
 
     def save_workspace(self):
         """Save current case list, selection, and plotting options to JSON."""
@@ -2044,6 +2087,8 @@ class CgyroUiMixin:
             self.case_listbox.get(i)
             for i in self.case_listbox.curselection()
         ]
+        # Version the JSON explicitly so future schema changes can be handled
+        # without guessing whether a file was written by an older tool.
         workspace = {
             "version": 1,
             "tool": "cgyro_comparison_tool",
@@ -2093,6 +2138,8 @@ class CgyroUiMixin:
             if isinstance(entry, dict):
                 case_dir = entry.get("path", "")
             else:
+                # Backward-compatible path-only entries are accepted for
+                # hand-written or older workspace files.
                 case_dir = str(entry)
             case_dir = str(case_dir).strip()
             if not case_dir:
@@ -2125,6 +2172,10 @@ class CgyroUiMixin:
         messagebox.showinfo("Load workspace", msg)
 
     @staticmethod
+    def _is_fluc2d_kxky_view(view):
+        return str(view).strip().lower() == "vs kxky"
+
+    @staticmethod
     def _is_contour_like_plot(plot_type):
         """True when plot type is contour/multi-panel style (single-case rendering)."""
         return (
@@ -2136,6 +2187,7 @@ class CgyroUiMixin:
                 plot_type.startswith("Energy Balance Single ")
                 and "vs kxky" in plot_type.lower()
             )
+            or ("vs kxky" in plot_type.lower())
             or ("vs ky_time" in plot_type)
         )
 
@@ -2234,7 +2286,7 @@ class CgyroUiMixin:
         """Return preferred initial directory for case selection dialogs."""
         if os.path.exists(DEFAULT_CASE_PICKER_ROOT):
             return DEFAULT_CASE_PICKER_ROOT
-        return os.getcwd()
+        return default_share_dir()
 
     @staticmethod
     def _looks_like_case_dir(dir_path):
