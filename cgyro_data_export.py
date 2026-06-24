@@ -297,15 +297,15 @@ class CgyroDataExportMixin:
                 failed_cases.append(f"{case_name} (invalid case directory)")
                 continue
 
-            bin_dir = os.path.join(case_dir, "bin")
-            if not os.path.isdir(bin_dir):
-                failed_cases.append(f"{case_name} (no bin directory)")
+            suffixes = self._collect_bin_suffixes(case_dir)
+            if not suffixes:
+                failed_cases.append(f"{case_name} (no bin.cgyro.* files)")
                 continue
 
             case_out = os.path.join(out_root, f"{self._sanitize_name(case_name)}_readable")
             os.makedirs(case_out, exist_ok=True)
 
-            n_files, n_sheets = self._export_case_bin_files(data, case_name, bin_dir, case_out)
+            n_files, n_sheets = self._export_case_bin_files(data, case_name, suffixes, case_out)
             total_cases += 1
             total_files += int(n_files)
             total_sheets += int(n_sheets)
@@ -346,17 +346,37 @@ class CgyroDataExportMixin:
     @staticmethod
     def _iter_bin_suffixes(bin_dir):
         """Yield `.cgyro.*` suffixes for files named `bin.cgyro.*`."""
+        if not os.path.isdir(bin_dir):
+            return
         for fname in sorted(os.listdir(bin_dir)):
             if not fname.startswith("bin.cgyro."):
                 continue
             yield fname[len("bin"):]  # e.g. ".cgyro.triad"
 
-    def _export_case_bin_files(self, data, case_name, bin_dir, case_out):
+    def _collect_bin_suffixes(self, case_dir):
+        """
+        Return available binary diagnostic suffixes for one case.
+
+        CGYRO normally writes flat files like `case/bin.cgyro.freq`.  A few
+        local workflows have used `case/bin/bin.cgyro.freq`, so keep that
+        fallback too, while de-duplicating suffixes.
+        """
+        suffixes = []
+        seen = set()
+        for search_dir in (case_dir, os.path.join(case_dir, "bin")):
+            for suffix in self._iter_bin_suffixes(search_dir):
+                if suffix in seen:
+                    continue
+                suffixes.append(suffix)
+                seen.add(suffix)
+        return suffixes
+
+    def _export_case_bin_files(self, data, case_name, suffixes, case_out):
         """Export all bin files for one case. Returns `(n_files, n_triad_sheets)`."""
         n_files = 0
         n_sheets = 0
 
-        for suffix in self._iter_bin_suffixes(bin_dir):
+        for suffix in suffixes:
             if suffix == ".cgyro.triad":
                 wrote = self._export_triad_by_channel(data, case_name, case_out)
                 n_files += 1 if wrote > 0 else 0
@@ -373,8 +393,9 @@ class CgyroDataExportMixin:
         """
         Export one non-triad bin file as tab-separated table.
 
-        For generic files with unknown shape, this keeps original ordering as 1D:
-        columns = `flat_index`, `value` (or `real`,`imag` for complex).
+        Known CGYRO diagnostics are reshaped back to named dimensions so Origin
+        can filter and plot by coordinates.  Unknown files still export as a
+        flat, first-row-header table.
         """
         arr = self._extract_bin_array(data, suffix)
         if arr is None:
@@ -382,40 +403,613 @@ class CgyroDataExportMixin:
 
         out_name = self._sanitize_name(suffix.lstrip(".")) + ".txt"
         out_path = os.path.join(case_out, out_name)
-        self._write_flat_table(arr, out_path, source_suffix=suffix)
+
+        if self._write_structured_origin_table(data, suffix, arr, out_path):
+            return True
+
+        self._write_flat_table(arr, out_path)
         return True
+
+    def _write_structured_origin_table(self, data, suffix, arr, out_path):
+        """Write known CGYRO diagnostics as coordinate-rich Origin tables."""
+        if suffix == ".cgyro.freq":
+            return self._write_freq_origin_table(data, arr, out_path)
+
+        if suffix in (".cgyro.fullt", ".cgyro.fullt_asym"):
+            return self._write_fullt_origin_table(data, suffix, arr, out_path)
+
+        if suffix in (".cgyro.kxky_phi", ".cgyro.kxky_apar", ".cgyro.kxky_bpar"):
+            return self._write_kxky_origin_table(data, arr, out_path, species_dependent=False)
+
+        if suffix in (".cgyro.kxky_n", ".cgyro.kxky_e", ".cgyro.kxky_v"):
+            return self._write_kxky_origin_table(data, arr, out_path, species_dependent=True)
+
+        if suffix in (".cgyro.phib", ".cgyro.aparb", ".cgyro.bparb"):
+            return self._write_ballooning_origin_table(data, arr, out_path)
+
+        if suffix in (".cgyro.lky_flux_n", ".cgyro.lky_flux_e", ".cgyro.lky_flux_v"):
+            return self._write_lky_flux_origin_table(data, arr, out_path)
+
+        if suffix in (".cgyro.ky_flux", ".cgyro.ky_cflux"):
+            return self._write_ky_flux_origin_table(data, arr, out_path)
+
+        return False
+
+    def _write_freq_origin_table(self, data, arr, out_path):
+        """Write `.cgyro.freq` as ky/time rows with omega and gamma columns."""
+        raw = np.asarray(arr).reshape(-1)
+        n_n = self._positive_int(getattr(data, "n_n", 0))
+        n_time = self._positive_int(getattr(data, "n_time", 0))
+        if n_n <= 0 or n_time <= 0:
+            return False
+
+        nd = 2 * n_n * n_time
+        if raw.size < nd:
+            return False
+        try:
+            freq = np.reshape(np.asarray(raw[:nd], dtype=float), (2, n_n, n_time), order="F")
+        except Exception:
+            return False
+
+        ky_axis = self._ky_axis(data, n_n)
+        time_axis = self._time_axis(data, n_time)
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write("ky_index\tky\ttime_index\ttime\tomega\tgamma\n")
+            for iky in range(n_n):
+                ky = self._axis_value(ky_axis, iky)
+                for it in range(n_time):
+                    row = [
+                        str(iky),
+                        self._format_origin_value(ky),
+                        str(it),
+                        self._format_origin_value(self._axis_value(time_axis, it)),
+                        self._format_origin_value(freq[0, iky, it]),
+                        self._format_origin_value(freq[1, iky, it]),
+                    ]
+                    f.write("\t".join(row) + "\n")
+        return True
+
+    def _write_fullt_origin_table(self, data, suffix, arr, out_path):
+        """Write FULLT/FULLT_ASYM as source/target coordinate rows."""
+        raw = np.asarray(arr)
+        if raw.size <= 0:
+            return False
+        if np.iscomplexobj(raw):
+            raw = np.column_stack((np.real(raw).reshape(-1), np.imag(raw).reshape(-1))).reshape(-1)
+        raw = np.asarray(raw, dtype=float).reshape(-1)
+
+        n_n = self._positive_int(getattr(data, "n_n", 0))
+        n_radial = self._positive_int(getattr(data, "n_radial", 0))
+        n_time = self._positive_int(getattr(data, "n_time", 0))
+        if n_n <= 0 or n_radial <= 0:
+            return False
+
+        n_signed = 2 * n_n - 1
+        spatial = n_radial * n_signed * n_n
+        n_channel, n_time, n_source_kx, legacy_complex = self._infer_fullt_shape(
+            raw.size,
+            spatial,
+            n_radial,
+            n_time,
+        )
+        if n_channel <= 0 or n_time <= 0 or n_source_kx <= 0:
+            return False
+
+        scale = 2 if legacy_complex else 1
+        nd = scale * n_radial * n_signed * n_channel * n_source_kx * n_n * n_time
+        try:
+            if legacy_complex:
+                shaped_raw = np.reshape(
+                    raw[:nd],
+                    (2, n_radial, n_signed, n_channel, n_source_kx, n_n, n_time),
+                    order="F",
+                )
+                shaped = np.transpose(shaped_raw, (5, 4, 1, 2, 3, 6, 0))
+            else:
+                shaped_raw = np.reshape(
+                    raw[:nd],
+                    (n_radial, n_signed, n_channel, n_source_kx, n_n, n_time),
+                    order="F",
+                )
+                shaped = np.zeros((n_n, n_source_kx, n_radial, n_signed, n_channel, n_time, 2), dtype=float)
+                shaped[:, :, :, :, :, :, 0] = np.transpose(shaped_raw, (4, 3, 0, 1, 2, 5))
+        except Exception:
+            return False
+
+        dim_specs = [
+            ("source_ky_index", "source_ky", self._fullt_source_ky_axis(data, n_n)),
+            ("source_kx_index", "source_kx", self._fullt_source_kx_axis(data, n_source_kx)),
+            ("target_kx_index", "target_kx", self._fullt_target_kx_axis(data, n_radial)),
+            ("target_ky_index", "target_ky", self._fullt_target_ky_axis(data, n_n, n_signed)),
+            ("channel", None, None),
+            ("time_index", "time", self._time_axis(data, n_time)),
+            ("real_imag", None, None),
+        ]
+        self._write_origin_nd_table(shaped, out_path, dim_specs)
+        return True
+
+    def _write_kxky_origin_table(self, data, arr, out_path, species_dependent=False):
+        """Write kxky fields as radial/theta/species/ky/time rows."""
+        payload = self._complex_payload_from_raw(arr)
+        if payload is None:
+            return False
+
+        n_radial = self._positive_int(getattr(data, "n_radial", 0))
+        theta_plot = self._positive_int(getattr(data, "theta_plot", 0))
+        n_species = self._positive_int(getattr(data, "n_species", 1))
+        n_n = self._positive_int(getattr(data, "n_n", 0))
+        n_time = self._positive_int(getattr(data, "n_time", 0))
+        if n_radial <= 0 or theta_plot <= 0 or n_n <= 0:
+            return False
+
+        spatial = n_radial * theta_plot * n_n
+        if species_dependent:
+            spatial *= max(1, n_species)
+        n_channel, n_time = self._infer_channel_time(payload.size, spatial, n_time, allowed_channels=(1,))
+        if n_channel <= 0 or n_time <= 0:
+            return False
+
+        if species_dependent:
+            shape = (n_radial, theta_plot, n_species, n_n, n_time)
+            dim_specs = [
+                ("radial_index", "kx", self._full_kx_axis(data, n_radial)),
+                ("theta_index", "theta", self._theta_plot_axis(data, theta_plot)),
+                ("species", None, None),
+                ("ky_index", "ky", self._ky_axis(data, n_n)),
+                ("time_index", "time", self._time_axis(data, n_time)),
+            ]
+        else:
+            shape = (n_radial, theta_plot, n_n, n_time)
+            dim_specs = [
+                ("radial_index", "kx", self._full_kx_axis(data, n_radial)),
+                ("theta_index", "theta", self._theta_plot_axis(data, theta_plot)),
+                ("ky_index", "ky", self._ky_axis(data, n_n)),
+                ("time_index", "time", self._time_axis(data, n_time)),
+            ]
+
+        nd = int(np.prod(shape))
+        try:
+            shaped = np.reshape(payload[:nd], shape, order="F")
+        except Exception:
+            return False
+        self._write_origin_nd_table(shaped, out_path, dim_specs)
+        return True
+
+    def _write_ballooning_origin_table(self, data, arr, out_path):
+        """Write phib/aparb/bparb as ballooning-point/time rows."""
+        payload = self._complex_payload_from_raw(arr)
+        if payload is None:
+            return False
+
+        n_theta = self._positive_int(getattr(data, "n_theta", 0))
+        n_radial = self._positive_int(getattr(data, "n_radial", 0))
+        n_time = self._positive_int(getattr(data, "n_time", 0))
+        n_point = n_theta * n_radial
+        if n_point <= 0:
+            return False
+
+        n_channel, n_time = self._infer_channel_time(payload.size, n_point, n_time, allowed_channels=(1,))
+        if n_channel <= 0 or n_time <= 0:
+            return False
+        nd = n_point * n_time
+        try:
+            shaped = np.reshape(payload[:nd], (n_point, n_time), order="F")
+        except Exception:
+            return False
+
+        dim_specs = [
+            ("ballooning_point", None, None),
+            ("time_index", "time", self._time_axis(data, n_time)),
+        ]
+        self._write_origin_nd_table(shaped, out_path, dim_specs)
+        return True
+
+    def _write_lky_flux_origin_table(self, data, arr, out_path):
+        """Write lky flux diagnostics as global/species/field/ky/time rows."""
+        payload = self._complex_payload_from_raw(arr)
+        if payload is None:
+            return False
+
+        n_global = self._positive_int(getattr(data, "n_global", 0)) + 1
+        n_species = self._positive_int(getattr(data, "n_species", 0))
+        n_field = self._positive_int(getattr(data, "n_field", 0))
+        n_n = self._positive_int(getattr(data, "n_n", 0))
+        n_time = self._positive_int(getattr(data, "n_time", 0))
+        spatial = n_global * n_species * n_field * n_n
+        if spatial <= 0:
+            return False
+
+        n_channel, n_time = self._infer_channel_time(payload.size, spatial, n_time, allowed_channels=(1,))
+        if n_channel <= 0 or n_time <= 0:
+            return False
+
+        shape = (n_global, n_species, n_field, n_n, n_time)
+        nd = int(np.prod(shape))
+        try:
+            shaped = np.reshape(payload[:nd], shape, order="F")
+        except Exception:
+            return False
+        dim_specs = [
+            ("global_index", None, None),
+            ("species", None, None),
+            ("field", None, None),
+            ("ky_index", "ky", self._ky_axis(data, n_n)),
+            ("time_index", "time", self._time_axis(data, n_time)),
+        ]
+        self._write_origin_nd_table(shaped, out_path, dim_specs)
+        return True
+
+    def _write_ky_flux_origin_table(self, data, arr, out_path):
+        """Write ky flux diagnostics as species/moment/field/ky/time rows."""
+        raw = np.asarray(arr).reshape(-1)
+        n_species = self._positive_int(getattr(data, "n_species", 0))
+        n_field = self._positive_int(getattr(data, "n_field", 0))
+        n_n = self._positive_int(getattr(data, "n_n", 0))
+        n_time = self._positive_int(getattr(data, "n_time", 0))
+        base = n_species * n_field * n_n * n_time
+        if base <= 0 or raw.size < base:
+            return False
+
+        n_moment = raw.size // base
+        nd = base * n_moment
+        if n_moment <= 0:
+            return False
+        try:
+            shaped = np.reshape(np.asarray(raw[:nd], dtype=float), (n_species, n_moment, n_field, n_n, n_time), order="F")
+        except Exception:
+            return False
+
+        dim_specs = [
+            ("species", None, None),
+            ("moment", None, None),
+            ("field", None, None),
+            ("ky_index", "ky", self._ky_axis(data, n_n)),
+            ("time_index", "time", self._time_axis(data, n_time)),
+        ]
+        self._write_origin_nd_table(shaped, out_path, dim_specs)
+        return True
+
+    @staticmethod
+    def _positive_int(value):
+        """Return a positive int, or 0 when metadata is absent/invalid."""
+        try:
+            ivalue = int(value)
+        except Exception:
+            return 0
+        return ivalue if ivalue > 0 else 0
+
+    @staticmethod
+    def _complex_payload_from_raw(arr):
+        """
+        Return a 1D complex payload from CGYRO binary data.
+
+        Direct binary reads use complex dtype for known complex diagnostics.
+        If an older reader has already supplied an interleaved real array,
+        recover `real + i*imag` here.
+        """
+        a = np.asarray(arr).reshape(-1)
+        if a.size <= 0:
+            return None
+        if np.iscomplexobj(a):
+            return np.asarray(a, dtype=complex)
+        if a.size % 2 != 0:
+            return None
+        real = np.asarray(a[0::2], dtype=float)
+        imag = np.asarray(a[1::2], dtype=float)
+        return real + 1j * imag
+
+    @staticmethod
+    def _infer_channel_time(total_size, spatial_size, metadata_time, allowed_channels=(1,)):
+        """Infer `(n_channel, n_time)` from payload length and metadata."""
+        total_size = int(total_size)
+        spatial_size = int(spatial_size)
+        metadata_time = int(metadata_time) if metadata_time is not None else 0
+        if total_size <= 0 or spatial_size <= 0:
+            return 0, 0
+
+        for n_channel in allowed_channels:
+            block = spatial_size * int(n_channel)
+            if block > 0 and total_size % block == 0:
+                n_time = total_size // block
+                if metadata_time <= 0 or n_time == metadata_time:
+                    return int(n_channel), int(n_time)
+
+        # Some incomplete/running cases have a stale n_time in the metadata.
+        # Prefer the cleanest divisibility over failing the export.
+        for n_channel in allowed_channels:
+            block = spatial_size * int(n_channel)
+            if block > 0 and total_size % block == 0:
+                return int(n_channel), int(total_size // block)
+
+        return 0, 0
+
+    @staticmethod
+    def _infer_fullt_shape(total_size, spatial_size, n_radial, metadata_time):
+        """Infer `(n_channel, n_time, n_source_kx, legacy_complex)` for FULLT payloads."""
+        total_size = int(total_size)
+        spatial_size = int(spatial_size)
+        n_radial = int(n_radial)
+        metadata_time = int(metadata_time) if metadata_time is not None else 0
+        if total_size <= 0 or spatial_size <= 0 or n_radial <= 0:
+            return 0, 0, 0, False
+
+        source_kx_candidates = [n_radial, 1] if n_radial > 1 else [1]
+        channel_candidates = [2, 1]
+
+        for scale in (1, 2):
+            for n_source_kx in source_kx_candidates:
+                for n_channel in channel_candidates:
+                    block = scale * spatial_size * n_source_kx * n_channel
+                    if block <= 0:
+                        continue
+                    if metadata_time > 0 and total_size == block * metadata_time:
+                        return int(n_channel), int(metadata_time), int(n_source_kx), bool(scale == 2)
+
+        for scale in (1, 2):
+            for n_source_kx in source_kx_candidates:
+                for n_channel in channel_candidates:
+                    block = scale * spatial_size * n_source_kx * n_channel
+                    if block > 0 and total_size % block == 0:
+                        return int(n_channel), int(total_size // block), int(n_source_kx), bool(scale == 2)
+
+        return 0, 0, 0, False
+
+    @staticmethod
+    def _format_origin_value(value):
+        """Format one Origin table numeric cell."""
+        try:
+            v = float(value)
+        except Exception:
+            return "nan"
+        if not np.isfinite(v):
+            return "nan"
+        return f"{v:.16e}"
+
+    @staticmethod
+    def _axis_value(axis, index):
+        """Return finite axis value at index, or NaN when unavailable."""
+        if axis is None:
+            return np.nan
+        arr = np.asarray(axis, dtype=float).reshape(-1)
+        if 0 <= int(index) < arr.size:
+            return arr[int(index)]
+        return np.nan
+
+    def _time_axis(self, data, n_time):
+        """Return time axis with a length compatible with exported data."""
+        t = np.asarray(getattr(data, "t", []), dtype=float).reshape(-1)
+        if t.size >= n_time:
+            return t[:n_time]
+        return np.arange(n_time, dtype=float)
+
+    def _ky_axis(self, data, n_n):
+        """Return stored source-ky axis."""
+        ky = np.asarray(getattr(data, "kynorm", getattr(data, "ky", [])), dtype=float).reshape(-1)
+        if ky.size >= n_n and np.all(np.isfinite(ky[:n_n])):
+            return ky[:n_n]
+        return np.arange(n_n, dtype=float)
+
+    def _theta_plot_axis(self, data, theta_plot):
+        """Return theta-plot axis."""
+        theta = np.asarray(getattr(data, "thetap", []), dtype=float).reshape(-1)
+        if theta.size >= theta_plot and np.all(np.isfinite(theta[:theta_plot])):
+            return theta[:theta_plot]
+
+        theta_full = np.asarray(getattr(data, "theta", []), dtype=float).reshape(-1)
+        if theta_full.size >= theta_plot and theta_plot > 0:
+            if theta_full.size == theta_plot:
+                return theta_full
+            step = max(1, theta_full.size // theta_plot)
+            idx = np.arange(theta_plot, dtype=int) * step
+            idx = np.clip(idx, 0, theta_full.size - 1)
+            return theta_full[idx]
+
+        return np.arange(theta_plot, dtype=float)
+
+    def _full_kx_axis(self, data, n_radial):
+        """Return kx axis including the leftmost CGYRO radial storage bin."""
+        p = np.asarray(getattr(data, "p", []), dtype=float).reshape(-1)
+        length = float(getattr(data, "length", 0.0) or 0.0)
+        if p.size >= n_radial and np.isfinite(length) and abs(length) > 1.0e-12:
+            return 2.0 * np.pi * p[:n_radial] / length
+
+        kx = np.asarray(getattr(data, "kxnorm", getattr(data, "kx", [])), dtype=float).reshape(-1)
+        if kx.size == n_radial:
+            return kx
+        if kx.size == n_radial - 1 and n_radial > 1:
+            if np.isfinite(length) and abs(length) > 1.0e-12:
+                dkx = 2.0 * np.pi / length
+            else:
+                dkx = 1.0
+            p_index = np.arange(n_radial, dtype=float) - (n_radial // 2)
+            return p_index * dkx
+        return np.arange(n_radial, dtype=float)
+
+    def _fullt_target_kx_axis(self, data, n_radial):
+        """Return target kx axis for FULLT/FULLT_ASYM diagnostics."""
+        return self._full_kx_axis(data, n_radial)
+
+    def _fullt_target_ky_axis(self, data, n_n, n_signed):
+        """Return signed target-ky axis for FULLT/FULLT_ASYM diagnostics."""
+        ky_native = np.asarray(getattr(data, "full_t_target_ky", []), dtype=float).reshape(-1)
+        if ky_native.size >= n_signed and np.all(np.isfinite(ky_native[:n_signed])):
+            return ky_native[:n_signed]
+
+        ky_source = self._ky_axis(data, n_n)
+        if n_n > 1 and ky_source.size > 1:
+            dky = float(ky_source[1])
+            return np.arange(-(n_n - 1), n_n, dtype=float) * dky
+        if n_signed == 1:
+            return np.asarray([0.0], dtype=float)
+        return np.arange(-(n_signed // 2), n_signed - (n_signed // 2), dtype=float)
+
+    def _fullt_source_ky_axis(self, data, n_source):
+        """Return source-ky axis for FULLT/FULLT_ASYM diagnostics."""
+        ky_native = np.asarray(getattr(data, "full_t_source_ky", []), dtype=float).reshape(-1)
+        if ky_native.size >= n_source and np.all(np.isfinite(ky_native[:n_source])):
+            return ky_native[:n_source]
+        return self._ky_axis(data, n_source)
+
+    def _fullt_source_kx_axis(self, data, n_source):
+        """Return source-kx axis for FULLT/FULLT_ASYM diagnostics."""
+        if n_source == 1:
+            return np.asarray([0.0], dtype=float)
+
+        kx_native = np.asarray(getattr(data, "full_t_source_kx", []), dtype=float).reshape(-1)
+        if kx_native.size >= n_source and np.all(np.isfinite(kx_native[:n_source])):
+            return kx_native[:n_source]
+
+        kx_index = np.asarray(getattr(data, "full_t_source_kx_index", []), dtype=float).reshape(-1)
+        if kx_index.size >= n_source and np.all(np.isfinite(kx_index[:n_source])):
+            return kx_index[:n_source]
+
+        p = np.asarray(getattr(data, "p", []), dtype=float).reshape(-1)
+        length = float(getattr(data, "length", 0.0) or 0.0)
+        if p.size >= n_source and np.all(np.isfinite(p[:n_source])):
+            if np.isfinite(length) and abs(length) > 1.0e-12:
+                return 2.0 * np.pi * p[:n_source] / length
+            return p[:n_source]
+
+        return np.arange(n_source, dtype=float) - (n_source // 2)
+
+    def _write_origin_nd_table(self, arr, out_path, dim_specs):
+        """
+        Write an N-D array as an Origin-friendly long table.
+
+        `dim_specs` entries are `(index_column, coordinate_column, coordinate_axis)`.
+        Coordinate columns are optional but make Origin filtering and plotting
+        much less painful.
+        """
+        a = np.asarray(arr)
+        is_complex = np.iscomplexobj(a)
+        cols = []
+        for index_col, coord_col, _axis in dim_specs:
+            cols.append(index_col)
+            if coord_col:
+                cols.append(coord_col)
+        if is_complex:
+            cols += ["real", "imag", "abs", "phase"]
+        else:
+            cols += ["value"]
+
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write("\t".join(cols) + "\n")
+            for idx in np.ndindex(a.shape):
+                row = []
+                for dim, (index_col, coord_col, axis) in enumerate(dim_specs):
+                    del index_col
+                    row.append(str(int(idx[dim])))
+                    if coord_col:
+                        row.append(self._format_origin_value(self._axis_value(axis, idx[dim])))
+                v = a[idx]
+                if is_complex:
+                    row.extend([
+                        self._format_origin_value(np.real(v)),
+                        self._format_origin_value(np.imag(v)),
+                        self._format_origin_value(np.abs(v)),
+                        self._format_origin_value(np.angle(v)),
+                    ])
+                else:
+                    row.append(self._format_origin_value(v))
+                f.write("\t".join(row) + "\n")
 
     def _extract_bin_array(self, data, suffix):
         """
         Read one `bin/out` payload using `data.extract`.
 
-        Strategy:
-        - default float read (`cmplx=False`),
-        - for `kxky_*` files, fallback to complex read when needed.
+        pygacode.cgyro.data exposes `extract(f)` and returns the raw real
+        stream.  Known complex diagnostics are converted later from CGYRO's
+        packed real/imag layout, not by passing a `cmplx` keyword.
         """
+        arr = self._extract_payload_compat(data, suffix)
+        if arr is not None:
+            return arr
+        return None
+
+    def _extract_payload_compat(self, data, suffix):
+        """Read one raw payload using pygacode's `extract(f)` API."""
         if not hasattr(data, "extract"):
-            return None
+            return self._read_payload_direct(data, suffix)
 
         try:
-            _tmsg, fmt, raw = data.extract(suffix, cmplx=False)
+            _tmsg, fmt, raw = data.extract(suffix)
             if fmt != "null":
                 arr = np.asarray(raw)
                 if arr.size > 0:
                     return arr
         except Exception:
             pass
+        return self._read_payload_direct(data, suffix)
 
-        # Complex fallback for kxky-like bins.
-        if suffix.startswith(".cgyro.kxky_"):
+    def _read_payload_direct(self, data, suffix):
+        """Directly read `bin/out` payload when `data.extract` cannot."""
+        case_dir = self._resolve_case_dir_for_export(data)
+        if not case_dir:
+            return None
+
+        bin_paths = [
+            os.path.join(case_dir, "bin" + suffix),
+            os.path.join(case_dir, "bin", "bin" + suffix),
+        ]
+        out_path = os.path.join(case_dir, "out" + suffix)
+        for bin_path in bin_paths:
+            if not os.path.isfile(bin_path):
+                continue
             try:
-                _tmsg, fmt, raw = data.extract(suffix, cmplx=True)
-                if fmt != "null":
-                    arr = np.asarray(raw)
-                    if arr.size > 0:
-                        return arr
+                arr = np.fromfile(bin_path, dtype=self._real_dtype_for_data(data))
+            except Exception:
+                continue
+            if arr.size > 0:
+                return arr
+
+        if os.path.isfile(out_path):
+            try:
+                arr = np.fromfile(out_path, dtype=float, sep=" ")
+            except Exception:
+                return None
+            return arr if arr.size > 0 else None
+        return None
+
+    @staticmethod
+    def _real_dtype_for_data(data):
+        """Return real dtype used by the loaded CGYRO data object."""
+        dtype = getattr(data, "BYTE", None)
+        try:
+            return np.dtype(dtype)
+        except Exception:
+            return np.dtype("float64")
+
+    @staticmethod
+    def _complex_dtype_for_data(data):
+        """Return complex dtype matching the loaded CGYRO precision."""
+        dtype = getattr(data, "CBYTE", None)
+        if dtype is not None:
+            try:
+                dt = np.dtype(dtype)
+                if np.issubdtype(dt, np.complexfloating):
+                    return dt
             except Exception:
                 pass
-        return None
+        real_dtype = CgyroDataExportMixin._real_dtype_for_data(data)
+        return np.dtype("complex64") if real_dtype == np.dtype("float32") else np.dtype("complex128")
+
+    @staticmethod
+    def _suffix_is_complex_payload(suffix):
+        """True for CGYRO diagnostics written by bcomplex writers."""
+        suffix = str(suffix)
+        exact = {
+            ".cgyro.triad",
+            ".cgyro.phib",
+            ".cgyro.aparb",
+            ".cgyro.bparb",
+        }
+        if suffix in exact:
+            return True
+        prefixes = (
+            ".cgyro.kxky_",
+            ".cgyro.lky_flux_",
+        )
+        return any(suffix.startswith(prefix) for prefix in prefixes)
 
     def _export_triad_by_channel(self, data, case_name, case_out):
         """
@@ -448,14 +1042,21 @@ class CgyroDataExportMixin:
             out_name = f"Sheet{ch+1}_{self._sanitize_name(label)}.txt"
             out_path = os.path.join(out_dir, out_name)
             arr_ch = triad[:, :, :, ch, :, :]  # [ri, species, radial, n, time]
-            self._write_nd_table(
-                arr_ch,
-                out_path,
-                dim_labels=["ri", "species", "radial", "n", "time"],
-                source_suffix=".cgyro.triad",
-                channel_index=ch + 1,
-                channel_label=label,
-            )
+            if arr_ch.ndim == 5 and arr_ch.shape[0] == 2:
+                arr_complex = arr_ch[0] + 1j * arr_ch[1]
+                dim_specs = [
+                    ("species", None, None),
+                    ("radial_index", "kx", self._full_kx_axis(data, arr_complex.shape[1])),
+                    ("ky_index", "ky", self._ky_axis(data, arr_complex.shape[2])),
+                    ("time_index", "time", self._time_axis(data, arr_complex.shape[3])),
+                ]
+                self._write_origin_nd_table(arr_complex, out_path, dim_specs)
+            else:
+                self._write_nd_table(
+                    arr_ch,
+                    out_path,
+                    dim_labels=["ri", "species", "radial", "n", "time"],
+                )
             wrote += 1
 
         self._write_triad_readme(out_dir, n_chan_use)
@@ -463,6 +1064,12 @@ class CgyroDataExportMixin:
 
     def _load_triad_array_for_export(self, data, case_name):
         """Load triad array with same shape convention used in plotting backend."""
+        triad_raw = getattr(data, "triad", None)
+        if triad_raw is not None:
+            triad = np.asarray(triad_raw)
+            if triad.ndim > 0 and triad.size > 0:
+                return triad
+
         try:
             if hasattr(self, "_load_triad_only_if_needed"):
                 if self._load_triad_only_if_needed(data, case_name):
@@ -475,6 +1082,11 @@ class CgyroDataExportMixin:
         arr = self._extract_bin_array(data, ".cgyro.triad")
         if arr is None:
             return None
+
+        if np.iscomplexobj(arr):
+            arr = np.column_stack(
+                (np.real(arr).reshape(-1), np.imag(arr).reshape(-1))
+            ).reshape(-1)
 
         # Fallback reshape inference: [2, species, radial, 8, n, time] (Fortran order).
         n_n = int(getattr(data, "n_n", 0))
@@ -502,20 +1114,25 @@ class CgyroDataExportMixin:
     @staticmethod
     def _write_flat_table(arr, out_path, source_suffix=""):
         """Write one flat-index table for arbitrary 1D payload."""
+        del source_suffix
         a = np.asarray(arr).reshape(-1)
         is_complex = np.iscomplexobj(a)
         with open(out_path, "w", encoding="utf-8") as f:
-            f.write(f"# source: {source_suffix}\n")
-            f.write(f"# original_ndim: 1 (raw flatten)\n")
-            f.write(f"# original_size: {a.size}\n")
             if is_complex:
-                f.write("flat_index\treal\timag\n")
+                f.write("flat_index\treal\timag\tabs\tphase\n")
                 for i, v in enumerate(a):
-                    f.write(f"{i}\t{float(np.real(v)):.16e}\t{float(np.imag(v)):.16e}\n")
+                    row = [
+                        str(i),
+                        CgyroDataExportMixin._format_origin_value(np.real(v)),
+                        CgyroDataExportMixin._format_origin_value(np.imag(v)),
+                        CgyroDataExportMixin._format_origin_value(np.abs(v)),
+                        CgyroDataExportMixin._format_origin_value(np.angle(v)),
+                    ]
+                    f.write("\t".join(row) + "\n")
             else:
                 f.write("flat_index\tvalue\n")
                 for i, v in enumerate(a):
-                    f.write(f"{i}\t{float(v):.16e}\n")
+                    f.write(f"{i}\t{CgyroDataExportMixin._format_origin_value(v)}\n")
 
     @staticmethod
     def _write_nd_table(arr, out_path, dim_labels, source_suffix="", channel_index=None, channel_label=None):
@@ -527,16 +1144,11 @@ class CgyroDataExportMixin:
         a = np.asarray(arr)
         is_complex = np.iscomplexobj(a)
         with open(out_path, "w", encoding="utf-8") as f:
-            f.write(f"# source: {source_suffix}\n")
-            f.write(f"# shape: {tuple(int(x) for x in a.shape)}\n")
-            if channel_index is not None:
-                f.write(f"# triad_channel_index: {int(channel_index)}\n")
-            if channel_label is not None:
-                f.write(f"# triad_channel_label: {channel_label}\n")
+            del source_suffix, channel_index, channel_label
 
             cols = list(dim_labels)
             if is_complex:
-                cols += ["real", "imag"]
+                cols += ["real", "imag", "abs", "phase"]
             else:
                 cols += ["value"]
             f.write("\t".join(cols) + "\n")
@@ -545,15 +1157,23 @@ class CgyroDataExportMixin:
                 idx_txt = "\t".join(str(int(i)) for i in idx)
                 v = a[idx]
                 if is_complex:
-                    f.write(f"{idx_txt}\t{float(np.real(v)):.16e}\t{float(np.imag(v)):.16e}\n")
+                    row = [
+                        idx_txt,
+                        CgyroDataExportMixin._format_origin_value(np.real(v)),
+                        CgyroDataExportMixin._format_origin_value(np.imag(v)),
+                        CgyroDataExportMixin._format_origin_value(np.abs(v)),
+                        CgyroDataExportMixin._format_origin_value(np.angle(v)),
+                    ]
+                    f.write("\t".join(row) + "\n")
                 else:
-                    f.write(f"{idx_txt}\t{float(v):.16e}\n")
+                    f.write(f"{idx_txt}\t{CgyroDataExportMixin._format_origin_value(v)}\n")
 
     def _write_triad_readme(self, out_dir, n_chan_use):
         """Write channel mapping note for triad sheet files."""
         readme = os.path.join(out_dir, "README_channels.txt")
         with open(readme, "w", encoding="utf-8") as f:
             f.write("triad sheet mapping (Origin import helper)\n")
-            f.write("Each SheetN file preserves dims: [ri, species, radial, n, time]\n\n")
+            f.write("Each SheetN file uses first-row column headers and columns:\n")
+            f.write("species, radial_index, kx, ky_index, ky, time_index, time, real, imag, abs, phase\n\n")
             for i in range(int(n_chan_use)):
                 f.write(f"Sheet{i+1}: {self._TRIAD_CHANNEL_LABELS[i]}\n")

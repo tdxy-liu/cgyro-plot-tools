@@ -169,10 +169,11 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
                 ax.set_axisbelow(True)
             except Exception:
                 pass
-            try:
-                ax.grid(True, color=GRID_COLOR, linewidth=GRID_LINEWIDTH, alpha=GRID_ALPHA)
-            except Exception:
-                pass
+            if not getattr(ax, "_cgyro_custom_grid", False):
+                try:
+                    ax.grid(True, color=GRID_COLOR, linewidth=GRID_LINEWIDTH, alpha=GRID_ALPHA)
+                except Exception:
+                    pass
             for side in ['left', 'right', 'top', 'bottom']:
                 try:
                     ax.spines[side].set_linewidth(AXIS_BORDER_LINEWIDTH)
@@ -708,6 +709,80 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
         return f"{label}{self._format_avg_suffix(t_start, t_end, prefix=prefix)}"
 
     @staticmethod
+    def _parse_optional_axis_limit(value):
+        """Parse one optional numeric axis-limit entry."""
+        try:
+            text = str(value).strip()
+        except Exception:
+            return None
+        if len(text) <= 0:
+            return None
+        try:
+            number = float(text)
+        except Exception:
+            return None
+        if not np.isfinite(number):
+            return None
+        return number
+
+    def _manual_axis_limits(self):
+        """Return optional manual x/y limits from the global Axis controls."""
+        x_min = self._parse_optional_axis_limit(self.axis_kx_min_var.get())
+        x_max = self._parse_optional_axis_limit(self.axis_kx_max_var.get())
+        y_min = self._parse_optional_axis_limit(self.axis_ky_min_var.get())
+        y_max = self._parse_optional_axis_limit(self.axis_ky_max_var.get())
+        if x_min is not None and x_max is not None and x_min > x_max:
+            x_min, x_max = x_max, x_min
+        if y_min is not None and y_max is not None and y_min > y_max:
+            y_min, y_max = y_max, y_min
+        return (x_min, x_max), (y_min, y_max)
+
+    @staticmethod
+    def _is_colorbar_axis(axi):
+        """Return True for matplotlib colorbar axes."""
+        try:
+            if getattr(axi, "_colorbar", None) is not None:
+                return True
+        except Exception:
+            pass
+        try:
+            label = str(axi.get_label())
+            if label.startswith("<colorbar"):
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _apply_manual_axis_limits(self):
+        """Apply optional global Axis limits to visible data axes."""
+        try:
+            (x_min, x_max), (y_min, y_max) = self._manual_axis_limits()
+        except Exception as e:
+            print(f"Warning: failed to parse manual axis limits: {e}")
+            return
+        if x_min is None and x_max is None and y_min is None and y_max is None:
+            return
+
+        for axi in list(self.fig.axes):
+            try:
+                if self._is_colorbar_axis(axi):
+                    continue
+                if x_min is not None or x_max is not None:
+                    cur_x0, cur_x1 = axi.get_xlim()
+                    new_x0 = cur_x0 if x_min is None else x_min
+                    new_x1 = cur_x1 if x_max is None else x_max
+                    if np.isfinite(new_x0) and np.isfinite(new_x1) and new_x0 != new_x1:
+                        axi.set_xlim(new_x0, new_x1)
+                if y_min is not None or y_max is not None:
+                    cur_y0, cur_y1 = axi.get_ylim()
+                    new_y0 = cur_y0 if y_min is None else y_min
+                    new_y1 = cur_y1 if y_max is None else y_max
+                    if np.isfinite(new_y0) and np.isfinite(new_y1) and new_y0 != new_y1:
+                        axi.set_ylim(new_y0, new_y1)
+            except Exception as e:
+                print(f"Warning: failed to apply manual axis limits: {e}")
+
+    @staticmethod
     def _format_avg_range_from_axis(x_axis, valid_idx, prefix="Avg"):
         """Build averaging suffix from axis values and selected index array."""
         try:
@@ -906,7 +981,7 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
             y_label = r"$\langle |\phi_{ZF}(k_x,\theta=0)|/\rho_s \rangle_t$"
         elif plot_type in ["ZF ExB vs gamma_lin (kx=ky)", "ZF ExB Fig4 (kx=ky)"]:
             x_label = r"$k\rho_s\ (k_x=k_y)$"
-            y_label = r"$\langle\omega_{E\times B}^{ZF}\rangle,\ k_y\langle V_{ZF}\rangle,\ \gamma_{lin}\ (c_s/a)$"
+            y_label = r"$\langle\omega_{E\times B}^{ZF}\rangle,\ k_y\langle V_{ZF}\rangle,\ \gamma_{lin}/k_y\ (c_s/a)$"
         elif plot_type == "Integration Error":
             x_label = r"$t\ (a/c_s)$"
             y_label = r"$\mathrm{Integration~Error}$"
@@ -955,6 +1030,13 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
         self._reset_figure_layout_defaults()
         self._apply_global_plot_color_style()
         self.ax = self.fig.add_subplot(111)
+        try:
+            toolbar = getattr(self, "toolbar", None)
+            if toolbar is not None and hasattr(toolbar, "_nav_stack"):
+                toolbar._nav_stack.clear()
+                toolbar.set_history_buttons()
+        except Exception:
+            pass
 
 
     def _plot_selected_cases(self, selected_cases, plot_type):
@@ -966,6 +1048,49 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
             except Exception as e:
                 print(f"Error plotting {case_name}: {e}")
                 traceback.print_exc()
+
+    def _single_case_for_contour_plot(self, selected_cases):
+        """
+        Resolve the one case used by contour-like plots.
+
+        Tk listbox selections are sorted by row, not by the user's most recent
+        click.  For single-case maps this matters: if an old row remains
+        selected, blindly taking selected_cases[0] can redraw the previous case.
+        Prefer the selection anchor, then the last selected row.  Do not use
+        the Tk "active" row here because it can remain on the previous case
+        after the selection changes.
+        """
+        selected_cases = list(selected_cases)
+        if not selected_cases:
+            return []
+
+        try:
+            selected_indices = [int(i) for i in self.case_listbox.curselection()]
+        except Exception:
+            selected_indices = []
+
+        if selected_indices:
+            anchor_idx = None
+            try:
+                anchor_idx = int(self.case_listbox.index("anchor"))
+            except Exception:
+                anchor_idx = None
+
+            candidate_indices = []
+            if anchor_idx is not None:
+                candidate_indices.append(anchor_idx)
+            candidate_indices.extend(reversed(selected_indices))
+
+            for idx in candidate_indices:
+                if idx in selected_indices:
+                    try:
+                        return [self.case_listbox.get(idx)]
+                    except Exception:
+                        pass
+
+        # No explicit selection means `_get_selected_case_names()` returned all
+        # loaded cases.  Keep the historical first-case fallback for that path.
+        return [selected_cases[0]]
 
     def _finalize_plot(self, plot_type_selection, plot_type, display_plot_type):
         """Finalize legends, labels, scales, title, and redraw canvas."""
@@ -989,11 +1114,13 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
                     except Exception:
                         pass
             self._apply_unified_visual_style_to_figure()
+            self._apply_manual_axis_limits()
             self.canvas.draw()
             return
 
         if not self._is_standard_line_plot(plot_type):
             self._apply_unified_visual_style_to_figure()
+            self._apply_manual_axis_limits()
             self.canvas.draw()
             return
 
@@ -1025,6 +1152,7 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
             self.ax.set_yscale('log')
 
         self._apply_unified_visual_style_to_figure()
+        self._apply_manual_axis_limits()
         self.canvas.draw()
 
     def plot_comparison(self):
@@ -1039,11 +1167,17 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
         selected_cases = self._get_selected_case_names()
 
         if self._is_contour_like_plot(plot_type) and len(selected_cases) > 1:
+            original_selected_cases = list(selected_cases)
+            selected_cases = self._single_case_for_contour_plot(selected_cases)
+            print(
+                f"{plot_type}: multiple cases selected {original_selected_cases}; "
+                f"using {selected_cases[0]} for this single-case map."
+            )
             messagebox.showwarning(
                 "Warning",
-                f"{plot_type} only supports one case at a time. Plotting the first selected case."
+                f"{plot_type} only supports one case at a time. "
+                f"Plotting {selected_cases[0]}."
             )
-            selected_cases = list(selected_cases)[:1]
 
         # Hard stop for parity POD when theta resolution is insufficient.
         # Leave plot area blank and show warning dialog.
@@ -1963,20 +2097,18 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
         phi_raw = None
         if hasattr(data, 'kxky_phi'):
             phi_raw = np.asarray(data.kxky_phi)
-        else:
-            print(f"Loading big field data for {label}...")
-            if self._ensure_bigfield_loaded(data, label) and hasattr(data, 'kxky_phi'):
-                phi_raw = np.asarray(data.kxky_phi)
 
-        # Fallback: infer nt from file size when metadata time length mismatches.
+        # Fallback: infer nt from the raw real/imag stream when metadata time
+        # length mismatches.  pygacode's cgyrodata.extract API is extract(f);
+        # complex CGYRO payloads are stored as a leading [real, imag] dimension.
         if phi_raw is None and hasattr(data, 'extract'):
             try:
-                _, fmt, raw = data.extract('.cgyro.kxky_phi', cmplx=True)
+                _, fmt, raw = data.extract('.cgyro.kxky_phi')
                 if fmt != 'null':
                     n_radial = int(getattr(data, 'n_radial', 0))
                     theta_plot = int(getattr(data, 'theta_plot', 0))
                     n_n = int(getattr(data, 'n_n', 0))
-                    spatial = n_radial * theta_plot * n_n
+                    spatial = 2 * n_radial * theta_plot * n_n
                     if spatial > 0:
                         nt = raw.size // spatial
                         rem = raw.size % spatial
@@ -1987,7 +2119,7 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
                                     f"bin.cgyro.kxky_phi for {label}."
                                 )
                                 raw = raw[:spatial * nt]
-                            phi_raw = np.reshape(raw, (n_radial, theta_plot, n_n, nt), order='F')
+                            phi_raw = np.reshape(raw, (2, n_radial, theta_plot, n_n, nt), order='F')
                             data.kxky_phi = phi_raw
                             print(
                                 f"Recovered kxky_phi for {label} via file-size inference "
@@ -2157,10 +2289,10 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
 
     def _coerce_kxky_complex(self, raw, label, tag, species_dependent=False):
         """Normalize diverse `kxky_*` payload shapes into canonical complex arrays."""
-        # pygacode and direct `extract(..., cmplx=True)` do not always expose
-        # the same rank: some arrays are already complex, while binary fallback
-        # reads are packed as [real/imag, ...].  Downstream plotting uses one
-        # canonical convention:
+        # pygacode returns CGYRO complex payloads as real-valued arrays packed
+        # with a leading [real/imag, ...] dimension.  Some direct callers may
+        # already supply complex arrays.  Downstream plotting uses one canonical
+        # convention:
         #   species-independent: [radial, theta, ky, time]
         #   species-dependent:   [radial, theta, species, ky, time]
         arr = np.asarray(raw)
@@ -2202,25 +2334,16 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
         """Load one `kxky_*` complex field with fallback file-size inference."""
         raw = getattr(data, attr_name, None)
 
-        if raw is None and not getattr(data, "_cmp_bigfield_attempted", False):
-            # Normal pygacode path: populate all kxky_* arrays at once.  The
-            # flag prevents repeated expensive reload attempts when the file is
-            # absent or when the case was produced without bigfield output.
-            print(f"Loading big field data for {label}...")
-            self._ensure_bigfield_loaded(data, label)
-            setattr(data, "_cmp_bigfield_attempted", True)
-            raw = getattr(data, attr_name, None)
-
         if raw is None and hasattr(data, 'extract'):
             try:
-                _, fmt, flat = data.extract(file_suffix, cmplx=True)
+                _, fmt, flat = data.extract(file_suffix)
                 if fmt != 'null':
                     n_radial = int(getattr(data, 'n_radial', 0))
                     theta_plot = int(getattr(data, 'theta_plot', 0))
                     n_n = int(getattr(data, 'n_n', 0))
                     n_species = int(getattr(data, 'n_species', 1))
                     if n_radial > 0 and theta_plot > 0 and n_n > 0:
-                        spatial = n_radial * theta_plot * n_n
+                        spatial = 2 * n_radial * theta_plot * n_n
                         if species_dependent:
                             spatial *= max(1, n_species)
                         nt = flat.size // spatial
@@ -2238,9 +2361,9 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
                             # permutation that would look like a blank or
                             # scrambled kxky plot.
                             shape = (
-                                (n_radial, theta_plot, n_species, n_n, nt)
+                                (2, n_radial, theta_plot, n_species, n_n, nt)
                                 if species_dependent else
-                                (n_radial, theta_plot, n_n, nt)
+                                (2, n_radial, theta_plot, n_n, nt)
                             )
                             raw = np.reshape(flat, shape, order='F')
                             setattr(data, attr_name, raw)

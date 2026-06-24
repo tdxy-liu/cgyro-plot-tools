@@ -275,7 +275,7 @@ PREFERRED_FONT_FAMILIES = ["Arial", "DejaVu Sans", "Liberation Sans", "Noto Sans
 - 三层加载策略：
   1. 直接 `getattr(data, attr_name)`。
   2. 若失败且未尝试过 `getbigfield()`，调用 `_ensure_bigfield_loaded(data, label)` 后再试。
-  3. 若仍失败且 `data` 有 `extract` 方法，通过 `data.extract(file_suffix, cmplx=True)` 读取二进制文件，并根据 `n_radial * theta_plot * n_n [ * n_species]` 做文件尺寸推断 reshape（Fortran order）。
+  3. 若仍失败且 `data` 有 `extract` 方法，通过 `data.extract(file_suffix)` 读取原始实数流，并根据 `2 * n_radial * theta_plot * n_n [ * n_species]` 做文件尺寸推断 reshape（Fortran order，首维为 real/imag）。
 - 最终通过 `_coerce_kxky_complex()` 统一形状。
 
 **`_coerce_kxky_complex(raw, label, tag, species_dependent)`**：
@@ -578,7 +578,7 @@ plot_comparison()
   1. `ky` 索引固定为 `0`（`n=0` 的 zonal 模式）。
   2. `theta` 索引为 `itheta0 = 4 * n_theta // 8`（外中平面）。
   3. 径向切片 `[1:, ...]`（跳过第一个径向槽位）。
-- 四层加载：`data.kxky_phi` → `getbigfield()` → `extract('.cgyro.kxky_phi', cmplx=True)` 文件尺寸推断。
+- 四层加载：`data.kxky_phi` → `getbigfield()` → `extract('.cgyro.kxky_phi')` 原始 real/imag 流的文件尺寸推断。
 - 形状兼容：支持 `[nr, theta, nn, nt]`（复数）、`[2, nr, theta, nn, nt]`（实/虚部分离）、`[2, nr, theta, species, nn, nt]`（含物种维）。
 - `kx` 对齐：若 `kx.size == n_radial-1`（已跳过首槽），直接匹配；若 `kx.size == n_radial`，截去首元素；否则动态计算 `2π*p/length`。
 - 返回 `(kx, phi_kx_t, t)`，其中 `phi_kx_t` 为 `[n_radial-1, nt]` 复数。
@@ -601,10 +601,10 @@ plot_comparison()
 - 直接画 `y_phi` vs `kx`。
 
 **`_plot_zf_exb_vs_gamma_lin_kx_equals_ky(...)`**：
-- 读取线性谱文件（`ky, omega, gamma` 三列文本），排序并保留 `ky>=0`。
+- 读取线性谱文件（`ky, omega, gamma` 三列文本），排序并保留 `ky>0`；线性参考曲线使用 `gamma_lin/ky`，避免 `ky=0` 的除零点。
 - 计算 `omega_ZF(kx) = kx² * <|phi|/rho>` 和 `ky * V_ZF_mean`，其中 `V_ZF_mean = 0.5 * sqrt(Σ|kx * <|phi|/rho>|²)`。
-- 三条曲线：`γ_lin(ky)`（灰色实线+圆点）、`ω_ZF(kx)`（红色虚线+x）、`ky·V_ZF_mean`（蓝色点划线+三角）。
-- **比值计算**：若用户在 `zf_gamma_lin_ky_var` 中输入了 ky 值，用 `np.interp` 在该 ky 处插值三条曲线，计算 `ω_ZF/γ_lin` 和 `ky·V_ZF/γ_lin`，并追加到 legend 标签中（如 `$[\omega_{ZF}/\gamma_{lin}=0.523]$`）。
+- 三条曲线：`γ_lin(ky)/ky`（灰色实线+圆点）、`ω_ZF(kx)`（红色虚线+x）、`ky·V_ZF_mean`（蓝色点划线+三角）。
+- **比值计算**：若用户在 `zf_gamma_lin_ky_var` 中输入了 ky 值，用 `np.interp` 在该 ky 处插值三条曲线，计算 `ω_ZF/(γ_lin/ky)` 和 `ky·V_ZF/(γ_lin/ky)`，并追加到 legend 标签中。
 - 在该 ky 处画垂直虚线 `axvline`（通过 `_zf_ky_marker` 属性去重，防止多算例重复画线）。
 - x 轴截断到线性谱的最大 ky 范围内。
 
@@ -768,8 +768,8 @@ plot_comparison()
      - 写入 `README_channels.txt` 说明通道映射。
 
 **`_extract_bin_array(data, suffix)`**：
-- 调用 `data.extract(suffix, cmplx=False)`，若结果非 `"null"` 且 size>0 则返回。
-- 若 `suffix.startswith(".cgyro.kxky_")`，fallback 到 `cmplx=True`。
+- 调用 `data.extract(suffix)`，若结果非 `"null"` 且 size>0 则返回原始实数流。
+- 已知复数诊断（例如 `.cgyro.kxky_*`、`.cgyro.triad`、`.cgyro.fullt`）后续按 CGYRO 的 real/imag 打包格式恢复。
 
 ---
 

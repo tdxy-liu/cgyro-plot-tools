@@ -65,8 +65,10 @@ class CgyroUiMixin:
         "2D scan",
     )
     _ENERGY_BALANCE_SPEC_OPTIONS = ("Total (-1)", "Main ion (0)", "Electron (1)")
-    _ENERGY_BALANCE_SINGLE_QUANTITY_OPTIONS = ("T", "N", "T-N", "entropy")
-    _ENERGY_BALANCE_SINGLE_XAXIS_OPTIONS = ("vs Time", "vs ky", "vs kxky")
+    _ENERGY_BALANCE_SINGLE_QUANTITY_OPTIONS = ("T", "N", "T-N", "Dr", "Dtheta", "Dc", "DZ", "entropy")
+    _ENERGY_BALANCE_SINGLE_XAXIS_OPTIONS = ("vs Time", "vs ky", "vs kx", "vs kxky")
+    _ENERGY_BALANCE_SINGLE_NORM_OPTIONS = ("None", "|min(T)|", "|max(T)|")
+    _ENERGY_BALANCE_TRANSFER_XAXIS_OPTIONS = ("vs kxky", "vs kx")
     _ENERGY_BALANCE_TRANSFER_QUANTITY_OPTIONS = ("Re", "Im", "Abs")
     _OTHERS_PLOT_OPTIONS = ("Error", "rcorr_phi", "POD_parity")
     _OTHERS_FIELD_OPTIONS = ("Phi", "Apar", "Bpar")
@@ -84,6 +86,10 @@ class CgyroUiMixin:
         "t_end_var",
         "log_x_var",
         "log_y_var",
+        "axis_kx_min_var",
+        "axis_kx_max_var",
+        "axis_ky_min_var",
+        "axis_ky_max_var",
         "norm_ky_var",
         "flux_type_var",
         "flux_xaxis_var",
@@ -109,8 +115,14 @@ class CgyroUiMixin:
         "energy_balance_spec_var",
         "energy_balance_single_quantity_var",
         "energy_balance_single_xaxis_var",
+        "energy_balance_single_norm_var",
+        "energy_balance_single_norm_entropy_var",
         "energy_balance_transfer_quantity_var",
+        "energy_balance_transfer_xaxis_var",
         "energy_balance_transfer_ky_var",
+        "energy_balance_transfer_kx_var",
+        "energy_balance_transfer_asym_var",
+        "energy_balance_transfer_norm_max_var",
         "others_plot_var",
         "others_rcorr_field_var",
         "others_rcorr_theta_var",
@@ -156,6 +168,10 @@ class CgyroUiMixin:
         self.time_mode_var = tk.StringVar(value="Manual Start/End")
         self.time_percent_var = tk.StringVar(value="50")
         self.time_duration_var = tk.StringVar(value="")
+        self.axis_kx_min_var = tk.StringVar()
+        self.axis_kx_max_var = tk.StringVar()
+        self.axis_ky_min_var = tk.StringVar()
+        self.axis_ky_max_var = tk.StringVar()
 
         self.cases = {}  # Dictionary to store loaded cases: {name: cgyrodata_object}
         self.ani = None # Animation object
@@ -366,6 +382,11 @@ class CgyroUiMixin:
             value="Root Mean Square",
             command=self.update_options,
         )
+
+        axis_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Axis", menu=axis_menu)
+        axis_menu.add_command(label="Set limits...", command=self.open_axis_limits_dialog)
+        axis_menu.add_command(label="Clear limits", command=self.clear_axis_limits)
 
     def _init_options(self):
         """Initialize all plot-option widgets and bind dynamic callbacks."""
@@ -671,6 +692,18 @@ class CgyroUiMixin:
             state="readonly",
             width=12,
         )
+        self.energy_balance_single_norm_label = ttk.Label(self.energy_balance_options_frame, text="Normalize:")
+        self.energy_balance_single_norm_var = tk.StringVar(value="None")
+        self.energy_balance_single_norm_combo = ttk.Combobox(
+            self.energy_balance_options_frame,
+            textvariable=self.energy_balance_single_norm_var,
+            values=list(self._ENERGY_BALANCE_SINGLE_NORM_OPTIONS),
+            state="readonly",
+            width=12,
+        )
+        # Kept only so older workspace JSON files that saved this BooleanVar
+        # still restore cleanly.  New UI state uses energy_balance_single_norm_var.
+        self.energy_balance_single_norm_entropy_var = tk.BooleanVar(value=False)
         self.energy_balance_transfer_quantity_label = ttk.Label(self.energy_balance_options_frame, text="Quantity:")
         self.energy_balance_transfer_quantity_var = tk.StringVar(value="Re")
         self.energy_balance_transfer_quantity_combo = ttk.Combobox(
@@ -680,12 +713,42 @@ class CgyroUiMixin:
             state="readonly",
             width=10,
         )
-        self.energy_balance_transfer_ky_label = ttk.Label(self.energy_balance_options_frame, text="fixed ky:")
+        self.energy_balance_transfer_xaxis_label = ttk.Label(self.energy_balance_options_frame, text="X-axis:")
+        self.energy_balance_transfer_xaxis_var = tk.StringVar(value="vs kxky")
+        self.energy_balance_transfer_xaxis_combo = ttk.Combobox(
+            self.energy_balance_options_frame,
+            textvariable=self.energy_balance_transfer_xaxis_var,
+            values=list(self._ENERGY_BALANCE_TRANSFER_XAXIS_OPTIONS),
+            state="readonly",
+            width=10,
+        )
+        self.energy_balance_transfer_ky_label = ttk.Label(self.energy_balance_options_frame, text="fixed source ky:")
         self.energy_balance_transfer_ky_var = tk.StringVar(value="0")
         self.energy_balance_transfer_ky_entry = ttk.Entry(
             self.energy_balance_options_frame,
             textvariable=self.energy_balance_transfer_ky_var,
             width=10,
+        )
+        self.energy_balance_transfer_kx_label = ttk.Label(self.energy_balance_options_frame, text="fixed source kx:")
+        self.energy_balance_transfer_kx_var = tk.StringVar(value="0")
+        self.energy_balance_transfer_kx_entry = ttk.Entry(
+            self.energy_balance_options_frame,
+            textvariable=self.energy_balance_transfer_kx_var,
+            width=10,
+        )
+        self.energy_balance_transfer_asym_var = tk.BooleanVar(value=False)
+        self.energy_balance_transfer_asym_check = ttk.Checkbutton(
+            self.energy_balance_options_frame,
+            text="Asym",
+            variable=self.energy_balance_transfer_asym_var,
+            command=self.update_options,
+        )
+        self.energy_balance_transfer_norm_max_var = tk.BooleanVar(value=False)
+        self.energy_balance_transfer_norm_max_check = ttk.Checkbutton(
+            self.energy_balance_options_frame,
+            text="Normalized by max T",
+            variable=self.energy_balance_transfer_norm_max_var,
+            command=self.update_options,
         )
         (
             self.energy_balance_formula_frame,
@@ -765,6 +828,8 @@ class CgyroUiMixin:
         self.energy_balance_mode_combo.bind("<<ComboboxSelected>>", self.update_options)
         self.energy_balance_single_quantity_combo.bind("<<ComboboxSelected>>", self.update_options)
         self.energy_balance_single_xaxis_combo.bind("<<ComboboxSelected>>", self.update_options)
+        self.energy_balance_single_norm_combo.bind("<<ComboboxSelected>>", self.update_options)
+        self.energy_balance_transfer_xaxis_combo.bind("<<ComboboxSelected>>", self.update_options)
         self.fft_mode_combo.bind("<<ComboboxSelected>>", self.update_options)
         self.fft_view_combo.bind("<<ComboboxSelected>>", self.update_options)
         self.fft_spectrum_combo.bind("<<ComboboxSelected>>", self.update_options)
@@ -782,6 +847,77 @@ class CgyroUiMixin:
         self.time_duration_var.set("")
         self.t_start_var.set("")
         self.t_end_var.set("")
+
+    def clear_axis_limits(self):
+        """Clear manual plot-axis limit entries."""
+        self.axis_kx_min_var.set("")
+        self.axis_kx_max_var.set("")
+        self.axis_ky_min_var.set("")
+        self.axis_ky_max_var.set("")
+        try:
+            self._apply_manual_axis_limits()
+            self.canvas.draw_idle()
+        except Exception:
+            pass
+
+    def open_axis_limits_dialog(self):
+        """Open a top-menu Axis dialog for persistent manual plot limits."""
+        if hasattr(self, "_axis_dialog") and self._axis_dialog.winfo_exists():
+            self._axis_dialog.lift()
+            self._axis_dialog.focus_set()
+            return
+
+        dialog = tk.Toplevel(self.root)
+        self._axis_dialog = dialog
+        dialog.title("Axis")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+
+        frame = ttk.Frame(dialog, padding=10)
+        frame.grid(row=0, column=0, sticky=tk.NSEW)
+        for col in (1, 2):
+            frame.columnconfigure(col, weight=1)
+
+        ttk.Label(frame, text="Min").grid(row=0, column=1, sticky=tk.W, padx=(0, 6))
+        ttk.Label(frame, text="Max").grid(row=0, column=2, sticky=tk.W)
+
+        ttk.Label(frame, text="x lim:").grid(row=1, column=0, sticky=tk.W, padx=(0, 8), pady=(4, 0))
+        kx_min_entry = ttk.Entry(frame, textvariable=self.axis_kx_min_var, width=12)
+        kx_min_entry.grid(row=1, column=1, sticky=tk.EW, padx=(0, 6), pady=(4, 0))
+        ttk.Entry(frame, textvariable=self.axis_kx_max_var, width=12).grid(
+            row=1, column=2, sticky=tk.EW, pady=(4, 0)
+        )
+
+        ttk.Label(frame, text="y lim:").grid(row=2, column=0, sticky=tk.W, padx=(0, 8), pady=(4, 0))
+        ttk.Entry(frame, textvariable=self.axis_ky_min_var, width=12).grid(
+            row=2, column=1, sticky=tk.EW, padx=(0, 6), pady=(4, 0)
+        )
+        ttk.Entry(frame, textvariable=self.axis_ky_max_var, width=12).grid(
+            row=2, column=2, sticky=tk.EW, pady=(4, 0)
+        )
+
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=3, column=0, columnspan=3, sticky=tk.E, pady=(10, 0))
+
+        def apply_limits():
+            try:
+                self._manual_axis_limits()
+            except Exception as e:
+                messagebox.showerror("Axis", f"Invalid axis limit: {e}", parent=dialog)
+                return
+            try:
+                self._apply_manual_axis_limits()
+                self.canvas.draw_idle()
+            except Exception:
+                pass
+
+        ttk.Button(btn_frame, text="Apply", command=apply_limits).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_frame, text="Clear", command=self.clear_axis_limits).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_frame, text="Close", command=dialog.destroy).pack(side=tk.LEFT)
+
+        dialog.bind("<Return>", lambda _event: apply_limits())
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        kx_min_entry.focus_set()
 
     def _clear_simple_time_entries(self):
         """Clear left-panel time entries so the top Time menu controls averaging."""
@@ -874,8 +1010,13 @@ class CgyroUiMixin:
             self.energy_balance_spec_label, self.energy_balance_spec_combo,
             self.energy_balance_single_quantity_label, self.energy_balance_single_quantity_combo,
             self.energy_balance_single_xaxis_label, self.energy_balance_single_xaxis_combo,
+            self.energy_balance_single_norm_label, self.energy_balance_single_norm_combo,
             self.energy_balance_transfer_quantity_label, self.energy_balance_transfer_quantity_combo,
+            self.energy_balance_transfer_xaxis_label, self.energy_balance_transfer_xaxis_combo,
             self.energy_balance_transfer_ky_label, self.energy_balance_transfer_ky_entry,
+            self.energy_balance_transfer_kx_label, self.energy_balance_transfer_kx_entry,
+            self.energy_balance_transfer_asym_check,
+            self.energy_balance_transfer_norm_max_check,
             self.energy_balance_formula_frame,
             self.others_plot_label, self.others_plot_combo,
             self.others_rcorr_field_label, self.others_rcorr_field_combo,
@@ -1152,15 +1293,16 @@ class CgyroUiMixin:
                 r"Zonal ExB Shearing Rate (vs $k_x$, exact code path)",
                 r"Source in code: $k_y$ index $0$,",
                 r"$\theta$ index $i_\theta=4N_\theta/8$, radial slice $[1:]$.",
-                r"Code normalization: $\phi_{ZF}(k_x,t)=|\phi(k_x,t)|/\rho_s$ (uses case `rho`).",
-                r"$\omega_{ZF}(k_x)=k_x^2\left\langle\phi_{ZF}(k_x,t)\right\rangle_{t\in[t_0,t_1]}$.",
+                r"Code normalization: $\phi_{abs}(k_x,t)=|\phi(k_x,t)|/\rho_s$ (uses case `rho`).",
+                r"$\phi_{rms}(k_x)=\sqrt{\left\langle\phi_{abs}(k_x,t)^2\right\rangle_{t\in[t_0,t_1]}}$.",
+                r"$\omega_{ZF}(k_x)=2k_x^2\phi_{rms}(k_x)$.",
                 r"If window empty, uses last time slice; display keeps $k_x \geq 0$ branch.",
             ]
         elif mode == "phi vs kx(theta=0)":
             lines = [
                 r"$\phi_{ZF}$ vs $k_x$ (theta label, exact code path)",
                 r"Code uses $k_y$ index $0$, $\theta$ index $i_\theta=4N_\theta/8$, radial slice $[1:]$.",
-                r"$\bar{\phi}_{ZF}(k_x)=\left\langle |\phi(k_x,t)|/\rho_s\right\rangle_{t\in[t_0,t_1]}$.",
+                r"$\phi_{rms}(k_x)=\sqrt{\left\langle |\phi(k_x,t)|^2\right\rangle_{t\in[t_0,t_1]}}/\rho_s$.",
                 r"If window empty, uses last time slice.",
                 r"Plotted on full $k_x$ range (negative and positive).",
             ]
@@ -1171,14 +1313,14 @@ class CgyroUiMixin:
                 r"$\theta$ index $i_\theta=4N_\theta/8$, radial slice $[1:]$.",
                 r"Code normalization: $\phi_{abs}(k_x,t)=|\phi(k_x,t)|/\rho$.",
                 r"If time window is valid:",
-                r"$\bar{\phi}(k_x)=\left\langle \phi_{abs}(k_x,t)\right\rangle_{t\in[t_0,t_1]}$.",
-                r"Else: $\bar{\phi}(k_x)=\phi_{abs}(k_x,t_{last})$.",
-                r"$\omega_{ZF}(k_x)=k_x^2\,\bar{\phi}(k_x)$.",
-                r"$V_{ZF}^{mean}=0.5\sqrt{\sum_{k_x}|k_x\,\bar{\phi}(k_x)|^2}$.",
+                r"$\phi_{rms}(k_x)=\sqrt{\left\langle \phi_{abs}(k_x,t)^2\right\rangle_{t\in[t_0,t_1]}}$.",
+                r"Else: $\phi_{rms}(k_x)=\phi_{abs}(k_x,t_{last})$.",
+                r"$\omega_{ZF}(k_x)=2k_x^2\,\phi_{rms}(k_x)$.",
+                r"$V_{ZF}^{mean}=0.5\sqrt{\sum_{k_x}|k_x\,\phi_{rms}(k_x)|^2}$.",
                 r"Plotted third curve: $k_y V_{ZF}^{mean}$ on the same $k_x=k_y$ grid.",
-                r"$\gamma_{lin}(k_y)$ is read from file;",
-                r"finite values only, then $k_y \geq 0$ is kept.",
-                r"If $k_y^\star$ is set, the ratios use interpolation at $k_y^\star$.",
+                r"$\gamma_{lin}(k_y)$ is read from file; plotted reference is $\gamma_{lin}/k_y$.",
+                r"finite values only, then $k_y>0$ is kept to avoid the zonal division.",
+                r"If $k_y^\star$ is set, the ratios use interpolation of $\gamma_{lin}/k_y$ at $k_y^\star$.",
             ]
         else:
             lines = [
@@ -1303,17 +1445,37 @@ class CgyroUiMixin:
                 r"$\mathrm{Plotted:}\ \mathcal{N}_D/S,\ \mathcal{T}_D/S,\ \mathcal{N}_e/S,\ \mathcal{T}_e/S$",
             ]
         elif is_fullt_mode:
+            use_asym = False
+            try:
+                use_asym = bool(self.energy_balance_transfer_asym_var.get())
+            except Exception:
+                use_asym = False
+            try:
+                view_txt = str(self.energy_balance_transfer_xaxis_var.get()).strip()
+            except Exception:
+                view_txt = "vs kxky"
+            transfer_name = r"\mathrm{FULLT}_{\mathrm{asym}}" if use_asym else r"\mathrm{FULLT}"
+            heading = r"$\bf{FULLT\ asym\ transfer\ map}$" if use_asym else r"$\bf{FULLT\ transfer\ map}$"
+            map_name = r"\mathrm{FULLT}_{\mathrm{asym}}" if use_asym else r"\mathrm{FULLT}"
+            sum_note = (
+                r"$\mathrm{Asym\ diagnostic:}\ C(\psi' H''-\psi'' H')H_k^*,\ "
+                r"\mathrm{not\ summed\ against\ original\ triad.}$"
+                if use_asym
+                else r"$\sum_{k^{\prime}}T_k^\Phi(k^{\prime})\simeq\mathrm{triad\ ch1}(k_x=0,k_{y,\mathrm{sel}}^{\mathrm{target}})$"
+            )
             lines = [
-                r"$\bf{FULLT\ transfer\ map}$",
-                r"$\mathrm{FULLT}[\Re/\Im,\ k_y^{\mathrm{target}},$",
+                heading,
+                rf"${transfer_name}[\Re/\Im,\ k_y^{{\mathrm{{target}}}},$",
                 r"$\quad k_x^{\mathrm{source}},\ k_y^{\mathrm{source}},\ channel,\ t]$",
                 r"$\mathrm{fixed:}\ k=(0,k_y^{\mathrm{target}})$",
                 r"$\mathrm{plot:}\ k^{\prime}=(k_x^{\mathrm{source}},k_y^{\mathrm{source}})$",
-                r"$\mathrm{ch1}=\Re\{T_k^\Phi(k^{\prime})\}$",
-                r"$\mathrm{ch2}=\Im\{T_k^\Phi(k^{\prime})\}\quad(\mathrm{diag})$",
-                r"$\mathrm{Map:}\ \langle\mathrm{FULLT}(k_{y,\mathrm{sel}}^{\mathrm{target}},$",
+                r"$\mathrm{Plotted\ quantity:}\ \Re\{T_k^\Phi(k^{\prime})\}\quad(\mathrm{fixed})$",
+                rf"$\mathrm{{View:}}\ {view_txt}$",
+                rf"$\mathrm{{Map:}}\ \langle{map_name}(k_{{y,\mathrm{{sel}}}}^{{\mathrm{{target}}}},$",
                 r"$\quad k_x^{\prime},k_y^{\prime})\rangle_t=\langle T_k^\Phi(k^{\prime})\rangle_t$",
-                r"$\sum_{k^{\prime}}T_k^\Phi(k^{\prime})\simeq\mathrm{triad\ ch1}(k_x=0,k_{y,\mathrm{sel}}^{\mathrm{target}})$",
+                r"$\mathrm{vs}\ k_x:\ \mathrm{take\ the}\ k_y^{\prime}=k_y^{\mathrm{target}}\ \mathrm{slice\ through\ the\ marker.}$",
+                r"$\mathrm{Optional\ display:}\ T>0\ \mathrm{divided\ by}\ \max(T),\quad T<0\ \mathrm{divided\ by}\ |\min(T)|$",
+                sum_note,
                 r"$T_k^\Phi>0:\ k^{\prime}\rightarrow k;\ \ \ T_k^\Phi<0:\ k\rightarrow k^{\prime}.$",
                 r"$\mathrm{marker:}\ k=(0,k_y^{\mathrm{target}})$",
             ]
@@ -1325,8 +1487,11 @@ class CgyroUiMixin:
                 r"$\delta S_a(k_x,k_y,t)\equiv \Re\{f[a,k_x,\mathrm{idx5},k_y,t]\}$",
                 r"$\mathrm{entropy}_{a}(k_y)=\log\!\left(\sum_{k_x}\left\langle \delta S_a(k_x,k_y,t)\right\rangle_t\right)$",
                 r"$\mathrm{(for\ vs\ ky,\ entropy\ uses\ idx5,\ not\ idx3)}$",
-                r"$\mathrm{Quantity} \in \{T,\ N,\ T\!-\!N,\ entropy\}$",
-                r"$\mathrm{X\!-\!axis} \in \{t,\ k_y\}$;  k_y\ \mathrm{mode\ uses\ time\ average\ over\ selected\ window.}$",
+                r"$\mathrm{Quantity} \in \{T,\ N,\ T\!-\!N,\ D_Z,\ entropy\}$",
+                r"$\mathrm{X\!-\!axis} \in \{t,\ k_y,\ k_x,\ (k_x,k_y)\}$",
+                r"$\mathrm{vs}\ t,\ k_x:\ \mathrm{use\ ky\ scan\ to\ match\ nearest\ stored}\ k_y$",
+                r"$\mathrm{vs}\ k_x:\ \mathrm{plot}\ \langle T(k_x,k_y,t)\rangle_t$",
+                r"$\mathrm{Normalize} \in \{\mathrm{None},|\min(T)|,|\max(T)|\}:\ \{T,N,T\!-\!N\}\rightarrow\{T,N,T\!-\!N\}/\mathrm{scale}$",
             ]
         else:
             lines = [
@@ -1507,6 +1672,8 @@ class CgyroUiMixin:
             xaxis_single = str(self.energy_balance_single_xaxis_var.get()).strip().lower()
             if is_gamma_eff_mode:
                 n_label_txt = "ky:"
+            elif is_single_plot_mode:
+                n_label_txt = "ky scan:"
             else:
                 n_label_txt = "n index:"
             self.energy_balance_n_label.configure(text=n_label_txt)
@@ -1525,6 +1692,7 @@ class CgyroUiMixin:
                 )
                 erow += 1
             if is_single_plot_mode:
+                qty_single = str(self.energy_balance_single_quantity_var.get()).strip().lower()
                 self.energy_balance_single_quantity_label.grid(
                     row=erow, column=0, sticky=tk.W, padx=(0, 6), pady=2
                 )
@@ -1538,11 +1706,20 @@ class CgyroUiMixin:
                     row=erow, column=3, sticky=tk.W + tk.E, pady=2
                 )
                 erow += 1
-            if is_fullt_mode:
-                self.energy_balance_transfer_quantity_label.grid(
+                norm_state = tk.DISABLED if qty_single in ["dr", "dtheta", "dc", "dz", "entropy"] else "readonly"
+                self.energy_balance_single_norm_label.grid(
                     row=erow, column=0, sticky=tk.W, padx=(0, 6), pady=2
                 )
-                self.energy_balance_transfer_quantity_combo.grid(
+                self.energy_balance_single_norm_combo.configure(state=norm_state)
+                self.energy_balance_single_norm_combo.grid(
+                    row=erow, column=1, sticky=tk.W + tk.E, pady=2
+                )
+                erow += 1
+            if is_fullt_mode:
+                self.energy_balance_transfer_xaxis_label.grid(
+                    row=erow, column=0, sticky=tk.W, padx=(0, 6), pady=2
+                )
+                self.energy_balance_transfer_xaxis_combo.grid(
                     row=erow, column=1, sticky=tk.W + tk.E, pady=2
                 )
                 self.energy_balance_transfer_ky_label.grid(
@@ -1550,6 +1727,19 @@ class CgyroUiMixin:
                 )
                 self.energy_balance_transfer_ky_entry.grid(
                     row=erow, column=3, sticky=tk.W + tk.E, pady=2
+                )
+                erow += 1
+                self.energy_balance_transfer_kx_label.grid(
+                    row=erow, column=2, sticky=tk.W, padx=(10, 6), pady=2
+                )
+                self.energy_balance_transfer_kx_entry.grid(
+                    row=erow, column=3, sticky=tk.W + tk.E, pady=2
+                )
+                self.energy_balance_transfer_asym_check.grid(
+                    row=erow, column=0, sticky=tk.W, pady=2
+                )
+                self.energy_balance_transfer_norm_max_check.grid(
+                    row=erow, column=1, sticky=tk.W, padx=(8, 0), pady=2
                 )
                 erow += 1
             if is_gamma_eff_mode:
@@ -1969,10 +2159,17 @@ class CgyroUiMixin:
                 plot_type = f"Energy Balance Single {qty} {xax_plot}"
                 display_plot_type = f"Energy balance: Single plot ({qty}, {xax})"
             elif mode_key == "fullt":
-                qty = str(self.energy_balance_transfer_quantity_var.get()).strip()
                 ky = str(self.energy_balance_transfer_ky_var.get()).strip()
+                kx = str(self.energy_balance_transfer_kx_var.get()).strip()
+                xax = str(self.energy_balance_transfer_xaxis_var.get()).strip()
+                use_asym = False
+                try:
+                    use_asym = bool(self.energy_balance_transfer_asym_var.get())
+                except Exception:
+                    use_asym = False
+                transfer_name = "FULLT asym" if use_asym else "FULLT"
                 plot_type = "Energy Balance FULLT"
-                display_plot_type = f"Energy balance: FULLT transfer map ({qty}, fixed ky={ky})"
+                display_plot_type = f"Energy balance: {transfer_name} transfer ({xax}, Re, source ky={ky}, source kx={kx})"
             elif mode_key == "2d":
                 plot_type = "Energy Balance vs 2D"
                 display_plot_type = "Energy balance: vs 2D"
@@ -2053,6 +2250,15 @@ class CgyroUiMixin:
                 # Ignore variables removed by newer versions of the tool; this
                 # keeps old workspace JSON files loadable after UI evolution.
                 var.set(state[attr])
+            except Exception:
+                pass
+        if (
+            "energy_balance_single_norm_var" not in state
+            and bool(state.get("energy_balance_single_norm_entropy_var", False))
+            and hasattr(self, "energy_balance_single_norm_var")
+        ):
+            try:
+                self.energy_balance_single_norm_var.set("|min(T)|")
             except Exception:
                 pass
 
@@ -2175,14 +2381,21 @@ class CgyroUiMixin:
     def _is_fluc2d_kxky_view(view):
         return str(view).strip().lower() == "vs kxky"
 
-    @staticmethod
-    def _is_contour_like_plot(plot_type):
+    def _is_contour_like_plot(self, plot_type):
         """True when plot type is contour/multi-panel style (single-case rendering)."""
+        is_fullt_kxky = False
+        if plot_type == "Energy Balance FULLT":
+            try:
+                fullt_xaxis = str(self.energy_balance_transfer_xaxis_var.get()).strip().lower()
+            except Exception:
+                fullt_xaxis = "vs kxky"
+            is_fullt_kxky = (fullt_xaxis != "vs kx")
+
         return (
             ("FFT" in plot_type)
             or plot_type.startswith("Fluctuation 2D")
             or plot_type == "POD Parity"
-            or plot_type == "Energy Balance FULLT"
+            or is_fullt_kxky
             or (
                 plot_type.startswith("Energy Balance Single ")
                 and "vs kxky" in plot_type.lower()
@@ -2191,10 +2404,9 @@ class CgyroUiMixin:
             or ("vs ky_time" in plot_type)
         )
 
-    @classmethod
-    def _is_standard_line_plot(cls, plot_type):
+    def _is_standard_line_plot(self, plot_type):
         """True when plot type is standard line rendering."""
-        return not cls._is_contour_like_plot(plot_type)
+        return not self._is_contour_like_plot(plot_type)
 
     def _resolve_species_indices(
         self,
@@ -2294,6 +2506,14 @@ class CgyroUiMixin:
         markers = ("input.cgyro", "out.cgyro.freq", "input.gacode")
         return any(os.path.exists(os.path.join(dir_path, m)) for m in markers)
 
+    @staticmethod
+    def _instantiate_cgyrodata_light(dir_path):
+        """Instantiate cgyrodata without preloading heavy binary diagnostics."""
+        try:
+            return cgyrodata(dir_path, fast=True)
+        except TypeError:
+            return cgyrodata(dir_path)
+
     def _load_case_from_dir(self, dir_path, silent=False):
         """Load one CGYRO case directory and register it in case list."""
         dir_path = dir_path.replace('\\', '/')
@@ -2311,7 +2531,7 @@ class CgyroUiMixin:
 
         try:
             try:
-                data = cgyrodata(dir_path)
+                data = self._instantiate_cgyrodata_light(dir_path)
             except Exception as e:
                 data = cgyrodata_plot(dir_path)
             
@@ -2493,6 +2713,8 @@ class CgyroUiMixin:
             del self.cases[case_name]
             self.case_listbox.delete(index)
         self._update_species_list()
+        if hasattr(self, "_clear_current_plot_data"):
+            self._clear_current_plot_data()
 
     def remove_all_cases(self):
         """Clear all loaded cases after user confirmation."""
@@ -2500,6 +2722,8 @@ class CgyroUiMixin:
             self.cases.clear()
             self.case_listbox.delete(0, tk.END)
             self._update_species_list()
+            if hasattr(self, "_clear_current_plot_data"):
+                self._clear_current_plot_data()
 
     def reload_cases(self):
         """Reload all currently registered cases from their original directories."""
@@ -2514,7 +2738,7 @@ class CgyroUiMixin:
             if dir_path:
                 try:
                     try:
-                        new_data = cgyrodata(dir_path)
+                        new_data = self._instantiate_cgyrodata_light(dir_path)
                     except Exception as e:
                         new_data = cgyrodata_plot(dir_path)
                     self.cases[case_name] = new_data
@@ -2528,6 +2752,8 @@ class CgyroUiMixin:
                 
         if loaded_count > 0:
             self._update_species_list()
+            if hasattr(self, "_clear_current_plot_data"):
+                self._clear_current_plot_data()
             message = f"Successfully reloaded {loaded_count} cases."
             if failed_cases:
                 message += f"\nFailed to reload: {', '.join(failed_cases)}"

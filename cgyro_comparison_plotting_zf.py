@@ -122,11 +122,11 @@ class ZfPlotting:
 
     def _compute_zf_phi_theta0_kx_profile(self, data, label, t_indices, t_start, t_end):
         """
-        Compute time-averaged |phi_ZF|/rho_s profile vs kx at theta=0.
+        Compute RMS |phi_ZF|/rho_s profile vs kx at theta=0.
 
         Returns dict with:
         - x: sorted kx axis
-        - y_phi: sorted <|phi_ZF|/rho_s>_t
+        - y_phi: sorted sqrt(<|phi_ZF|^2>_t)/rho_s
         - label: label with avg suffix when a valid time window exists
         - kx_raw, phi_kx_t, valid_t, n_t: raw arrays for downstream reuse
         """
@@ -139,8 +139,8 @@ class ZfPlotting:
         # collect/cgyro_plot shearing-rate convention.
         rho = self._rho_scalar_for_norm(data, label)
 
-        phi_abs_kx_t = np.abs(phi_kx_t) / rho
-        n_t = min(t.size, phi_abs_kx_t.shape[-1])
+        phi_abs_sq_kx_t = (np.abs(phi_kx_t) / rho) ** 2
+        n_t = min(t.size, phi_abs_sq_kx_t.shape[-1])
         if n_t <= 0:
             print(f"No time samples available for {label}")
             return None
@@ -148,10 +148,10 @@ class ZfPlotting:
         valid_t = np.asarray(t_indices, dtype=int)
         valid_t = valid_t[(valid_t >= 0) & (valid_t < n_t)]
         if valid_t.size > 0:
-            y_phi = np.mean(phi_abs_kx_t[:, valid_t], axis=1)
+            y_phi = np.sqrt(np.mean(phi_abs_sq_kx_t[:, valid_t], axis=1))
             label_out = self._append_avg_suffix(label, t_start, t_end, prefix="Avg")
         else:
-            y_phi = phi_abs_kx_t[:, -1]
+            y_phi = np.sqrt(phi_abs_sq_kx_t[:, -1])
             label_out = label
 
         x = np.asarray(kx, dtype=float).reshape(-1)
@@ -187,7 +187,7 @@ class ZfPlotting:
         x = prof["x"]
         y_phi = prof["y_phi"]
         label_plot = prof["label"]
-        y = (x ** 2) * y_phi
+        y = 2.0 * (x ** 2) * y_phi
 
         self._plot_1d(x, y, label_plot, "ZF ExB Shearing Spectrum")
         self.ax.set_xlabel(r"$k_x \rho_s$")
@@ -201,7 +201,7 @@ class ZfPlotting:
 
         self._plot_1d(prof["x"], prof["y_phi"], prof["label"], "ZF Phi Spectrum (theta0)")
         self.ax.set_xlabel(r"$k_x \rho_s$")
-        self.ax.set_ylabel(r"$\langle |\phi_{ZF}(k_x,\theta=0)|/\rho_s \rangle_t$")
+        self.ax.set_ylabel(r"$\sqrt{\langle |\phi_{ZF}(k_x,\theta=0)|^2\rangle_t}/\rho_s$")
 
     def _plot_zf_exb_fig4_kx_eq_ky(self, data, label, t_indices, t_start, t_end):
         """Legacy wrapper kept for backward compatibility."""
@@ -225,6 +225,8 @@ class ZfPlotting:
             ky_text = str(self.zf_gamma_lin_ky_var.get()).strip()
             if len(ky_text) > 0:
                 ky_target = float(ky_text)
+                if not np.isfinite(ky_target):
+                    ky_target = None
         except Exception:
             ky_target = None
 
@@ -234,7 +236,7 @@ class ZfPlotting:
 
         x_zf = np.asarray(prof["x"], dtype=float).reshape(-1)
         y_phi = np.asarray(prof["y_phi"], dtype=float).reshape(-1)
-        y_zf = (x_zf ** 2) * y_phi
+        y_zf = 2.0 * (x_zf ** 2) * y_phi
 
         kx_raw = np.asarray(prof["kx_raw"], dtype=float).reshape(-1)
         phi_kx_t = np.asarray(prof["phi_kx_t"])
@@ -243,17 +245,23 @@ class ZfPlotting:
 
         rho = self._rho_scalar_for_norm(data, label)
 
-        phi_abs_kx_t = np.abs(np.asarray(phi_kx_t)[:, :n_t]) / rho
+        phi_abs_sq_kx_t = (np.abs(np.asarray(phi_kx_t)[:, :n_t]) / rho) ** 2
         if valid_t.size > 0:
-            zf_kx_norm = np.mean(phi_abs_kx_t[:, valid_t], axis=1)
+            zf_kx_norm = np.sqrt(np.mean(phi_abs_sq_kx_t[:, valid_t], axis=1))
         else:
-            zf_kx_norm = phi_abs_kx_t[:, -1]
+            zf_kx_norm = np.sqrt(phi_abs_sq_kx_t[:, -1])
         n_k = min(kx_raw.size, zf_kx_norm.size)
         kx_for_vzf = np.asarray(kx_raw[:n_k], dtype=float).reshape(-1)
         zf_kx_for_vzf = np.asarray(zf_kx_norm[:n_k], dtype=float).reshape(-1)
-        vzf_mean = float(
-            0.5 * np.sqrt(np.sum(np.abs(kx_for_vzf * zf_kx_for_vzf) ** 2))
-        )
+        finite_vzf = np.isfinite(kx_for_vzf) & np.isfinite(zf_kx_for_vzf)
+        if np.any(finite_vzf):
+            vzf_mean = float(
+                0.5 * np.sqrt(
+                    np.sum(np.abs(kx_for_vzf[finite_vzf] * zf_kx_for_vzf[finite_vzf]) ** 2)
+                )
+            )
+        else:
+            vzf_mean = np.nan
         # Fig4-style comparison plots ky*<V_ZF> against gamma_lin by identifying
         # kx and ky numerically.  This is a diagnostic convention rather than a
         # new CGYRO output quantity.
@@ -288,57 +296,82 @@ class ZfPlotting:
         x_zf = x_zf[order]
         y_zf = y_zf[order]
         y_kx_vzf = y_kx_vzf[order]
+        finite_zf = np.isfinite(x_zf) & np.isfinite(y_zf) & np.isfinite(y_kx_vzf)
+        if np.any(finite_zf):
+            x_zf = x_zf[finite_zf]
+            y_zf = y_zf[finite_zf]
+            y_kx_vzf = y_kx_vzf[finite_zf]
+        else:
+            print(f"No finite ZF comparison points for {label}")
+            return
         if x_zf.size <= 0:
             print(f"No usable kx points for {label}")
             return
 
+        x_lin = np.asarray([], dtype=float)
+        y_lin = np.asarray([], dtype=float)
+        have_gamma_lin = False
         file_path = self._resolve_linear_gamma_file_path(data)
         if file_path is None:
             print(
                 f"Linear spectrum file not found for {label}. "
-                f"Set 'Linear File' to a valid omega/gamma-vs-ky file."
+                "Plotting ZF curves only."
             )
-            return
-
-        ky_lin, _omega_lin, gamma_lin = self._read_linear_omega_gamma_file(file_path, label)
-        if ky_lin is None:
-            return
-
-        finite = np.isfinite(ky_lin) & np.isfinite(gamma_lin)
-        if not np.any(finite):
-            print(f"No finite ky/gamma points in {file_path} for {label}")
-            return
-
-        x_lin = np.asarray(ky_lin[finite], dtype=float).reshape(-1)
-        y_lin = np.asarray(gamma_lin[finite], dtype=float).reshape(-1)
-        mask_nonneg = x_lin >= 0.0
-        if np.any(mask_nonneg):
-            x_lin = x_lin[mask_nonneg]
-            y_lin = y_lin[mask_nonneg]
-        order_lin = np.argsort(x_lin)
-        x_lin = x_lin[order_lin]
-        y_lin = y_lin[order_lin]
-        if x_lin.size <= 0:
-            print(f"No non-negative ky points in {file_path} for {label}")
-            return
-
-        x_max = float(np.max(x_lin))
-        in_right_range = x_zf <= x_max
-        if np.any(in_right_range):
-            x_zf = x_zf[in_right_range]
-            y_zf = y_zf[in_right_range]
-            y_kx_vzf = y_kx_vzf[in_right_range]
         else:
-            print(
-                f"No overlapping k-range for {label}: "
-                f"kx in [{np.min(x_zf):.4g}, {np.max(x_zf):.4g}] "
-                f"vs ky<= {x_max:.4g}"
-            )
-            return
+            ky_lin, _omega_lin, gamma_lin = self._read_linear_omega_gamma_file(file_path, label)
+            if ky_lin is not None:
+                finite = np.isfinite(ky_lin) & np.isfinite(gamma_lin)
+                if np.any(finite):
+                    x_lin = np.asarray(ky_lin[finite], dtype=float).reshape(-1)
+                    y_lin = np.asarray(gamma_lin[finite], dtype=float).reshape(-1)
+                    mask_nonneg = x_lin > 1.0e-12
+                    if np.any(mask_nonneg):
+                        x_lin = x_lin[mask_nonneg]
+                        y_lin = y_lin[mask_nonneg]
+                        y_lin = y_lin / x_lin
+                        order_lin = np.argsort(x_lin)
+                        x_lin = x_lin[order_lin]
+                        y_lin = y_lin[order_lin]
+                        finite_lin = np.isfinite(x_lin) & np.isfinite(y_lin)
+                        if np.any(finite_lin):
+                            x_lin = x_lin[finite_lin]
+                            y_lin = y_lin[finite_lin]
+                            have_gamma_lin = x_lin.size > 0
+                        else:
+                            print(f"No finite ky/gamma points in {file_path} for {label}; plotting ZF curves only.")
+                    else:
+                        print(f"No positive ky points for gamma_lin/ky in {file_path} for {label}; plotting ZF curves only.")
+                else:
+                    print(f"No finite ky/gamma points in {file_path} for {label}; plotting ZF curves only.")
+
+        if have_gamma_lin:
+            x_max = float(np.max(x_lin))
+            if np.isfinite(x_max):
+                in_right_range = x_zf <= x_max
+                if np.any(in_right_range):
+                    x_zf = x_zf[in_right_range]
+                    y_zf = y_zf[in_right_range]
+                    y_kx_vzf = y_kx_vzf[in_right_range]
+                    finite_zf = np.isfinite(x_zf) & np.isfinite(y_zf) & np.isfinite(y_kx_vzf)
+                    if np.any(finite_zf):
+                        x_zf = x_zf[finite_zf]
+                        y_zf = y_zf[finite_zf]
+                        y_kx_vzf = y_kx_vzf[finite_zf]
+                    else:
+                        print(f"No finite overlapping ZF points for {label}; plotting full ZF k range instead.")
+                else:
+                    print(
+                        f"No overlapping k-range for {label}: "
+                        f"kx in [{np.min(x_zf):.4g}, {np.max(x_zf):.4g}] "
+                        f"vs ky<= {x_max:.4g}; plotting full ZF k range instead."
+                    )
+            else:
+                print(f"No finite ky range in {file_path} for {label}; plotting ZF curves only.")
+                have_gamma_lin = False
 
         ratio_wzf = None
         ratio_kxvzf = None
-        if ky_target is not None:
+        if ky_target is not None and have_gamma_lin:
             g_lin_sel = float(np.interp(ky_target, x_lin, y_lin, left=np.nan, right=np.nan)) if x_lin.size > 0 else np.nan
             wzf_sel = float(np.interp(ky_target, x_zf, y_zf, left=np.nan, right=np.nan)) if x_zf.size > 0 else np.nan
             kxvzf_sel = float(np.interp(ky_target, x_zf, y_kx_vzf, left=np.nan, right=np.nan)) if x_zf.size > 0 else np.nan
@@ -348,34 +381,35 @@ class ZfPlotting:
                 ratio_kxvzf = kxvzf_sel / g_lin_sel if np.isfinite(kxvzf_sel) else np.nan
                 print(
                     f"{label}: ky={ky_target:.6g}, "
-                    f"gamma_lin={g_lin_sel:.6g}, "
+                    f"gamma_lin_over_ky={g_lin_sel:.6g}, "
                     f"omegaZF={wzf_sel:.6g}, "
                     f"kyVzf={kxvzf_sel:.6g}, "
-                    f"omegaZF/gamma_lin={ratio_wzf:.6g}, "
-                    f"kyVzf/gamma_lin={ratio_kxvzf:.6g}"
+                    f"omegaZF/(gamma_lin/ky)={ratio_wzf:.6g}, "
+                    f"kyVzf/(gamma_lin/ky)={ratio_kxvzf:.6g}"
                 )
             else:
                 print(
                     f"{label}: ky={ky_target:.6g}, "
-                    "cannot compute omegaZF/gamma_lin and kyVzf/gamma_lin "
-                    "because gamma_lin is missing/zero at selected ky."
+                    "cannot compute omegaZF/(gamma_lin/ky) and kyVzf/(gamma_lin/ky) "
+                    "because gamma_lin/ky is missing/zero at selected ky."
                 )
 
         zf_label_plot = zf_label + r"  $(k_x=k_y)$"
         vzf_label_plot = vzf_label + r"  $(k_x=k_y)$"
         if ratio_wzf is not None and np.isfinite(ratio_wzf):
-            zf_label_plot += rf" $[\omega_{{ZF}}/\gamma_{{lin}}={ratio_wzf:.3g}]$"
+            zf_label_plot += rf" $[\omega_{{ZF}}/(\gamma_{{lin}}/k_y)={ratio_wzf:.3g}]$"
         if ratio_kxvzf is not None and np.isfinite(ratio_kxvzf):
-            vzf_label_plot += rf" $[k_yV_{{ZF}}/\gamma_{{lin}}={ratio_kxvzf:.3g}]$"
+            vzf_label_plot += rf" $[k_yV_{{ZF}}/(\gamma_{{lin}}/k_y)={ratio_kxvzf:.3g}]$"
 
-        self.ax.plot(
-            x_lin,
-            y_lin,
-            marker="o",
-            linestyle="-",
-            color=self._get_gamma_lin_color(),
-            label=f"{label} " + r"$\gamma_{lin}(k_y)$",
-        )
+        if have_gamma_lin:
+            self.ax.plot(
+                x_lin,
+                y_lin,
+                marker="o",
+                linestyle="-",
+                color=self._get_gamma_lin_color(),
+                label=f"{label} " + r"$\gamma_{lin}(k_y)/k_y$",
+            )
         self.ax.plot(
             x_zf,
             y_zf,
@@ -390,9 +424,17 @@ class ZfPlotting:
             linestyle="-.",
             label=vzf_label_plot,
         )
-        self.ax.set_xlim(right=x_max)
+        x_for_limits = np.concatenate((x_lin, x_zf)) if have_gamma_lin else x_zf
+        x_min_plot = float(np.min(x_for_limits))
+        x_max_plot = float(np.max(x_for_limits))
+        if np.isfinite(x_min_plot) and np.isfinite(x_max_plot):
+            if x_max_plot <= x_min_plot:
+                pad = 0.5 if abs(x_min_plot) < 1.0e-12 else abs(x_min_plot) * 0.05
+                x_min_plot -= pad
+                x_max_plot += pad
+            self.ax.set_xlim(left=x_min_plot, right=x_max_plot)
         self.ax.set_xlabel(r"$k\rho_s\ \ (k_x=k_y)$")
-        self.ax.set_ylabel(r"$\langle\omega_{ZF}\rangle,\ k_y\langle V_{ZF}\rangle,\ \gamma_{lin}\ (c_s/a)$")
+        self.ax.set_ylabel(r"$\langle\omega_{ZF}\rangle,\ k_y\langle V_{ZF}\rangle,\ \gamma_{lin}/k_y\ (c_s/a)$")
 
         if ky_target is not None:
             try:
@@ -400,8 +442,9 @@ class ZfPlotting:
             except Exception:
                 ky_mark = np.nan
             if np.isfinite(ky_mark):
-                x_min_vis = float(min(np.min(x_lin), np.min(x_zf)))
-                x_max_vis = float(max(np.max(x_lin), np.max(x_zf)))
+                x_vis = np.concatenate((x_lin, x_zf)) if have_gamma_lin else x_zf
+                x_min_vis = float(np.min(x_vis))
+                x_max_vis = float(np.max(x_vis))
                 if x_min_vis <= ky_mark <= x_max_vis:
                     has_same_marker = False
                     for ln in self.ax.lines:
