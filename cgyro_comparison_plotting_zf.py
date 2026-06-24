@@ -328,7 +328,6 @@ class ZfPlotting:
                     if np.any(mask_nonneg):
                         x_lin = x_lin[mask_nonneg]
                         y_lin = y_lin[mask_nonneg]
-                        y_lin = y_lin / x_lin
                         order_lin = np.argsort(x_lin)
                         x_lin = x_lin[order_lin]
                         y_lin = y_lin[order_lin]
@@ -340,7 +339,7 @@ class ZfPlotting:
                         else:
                             print(f"No finite ky/gamma points in {file_path} for {label}; plotting ZF curves only.")
                     else:
-                        print(f"No positive ky points for gamma_lin/ky in {file_path} for {label}; plotting ZF curves only.")
+                        print(f"No positive ky points in {file_path} for {label}; plotting ZF curves only.")
                 else:
                     print(f"No finite ky/gamma points in {file_path} for {label}; plotting ZF curves only.")
 
@@ -381,25 +380,25 @@ class ZfPlotting:
                 ratio_kxvzf = kxvzf_sel / g_lin_sel if np.isfinite(kxvzf_sel) else np.nan
                 print(
                     f"{label}: ky={ky_target:.6g}, "
-                    f"gamma_lin_over_ky={g_lin_sel:.6g}, "
+                    f"gamma_lin={g_lin_sel:.6g}, "
                     f"omegaZF={wzf_sel:.6g}, "
                     f"kyVzf={kxvzf_sel:.6g}, "
-                    f"omegaZF/(gamma_lin/ky)={ratio_wzf:.6g}, "
-                    f"kyVzf/(gamma_lin/ky)={ratio_kxvzf:.6g}"
+                    f"omegaZF/gamma_lin={ratio_wzf:.6g}, "
+                    f"kyVzf/gamma_lin={ratio_kxvzf:.6g}"
                 )
             else:
                 print(
                     f"{label}: ky={ky_target:.6g}, "
-                    "cannot compute omegaZF/(gamma_lin/ky) and kyVzf/(gamma_lin/ky) "
-                    "because gamma_lin/ky is missing/zero at selected ky."
+                    "cannot compute omegaZF/gamma_lin and kyVzf/gamma_lin "
+                    "because gamma_lin is missing/zero at selected ky."
                 )
 
         zf_label_plot = zf_label + r"  $(k_x=k_y)$"
         vzf_label_plot = vzf_label + r"  $(k_x=k_y)$"
         if ratio_wzf is not None and np.isfinite(ratio_wzf):
-            zf_label_plot += rf" $[\omega_{{ZF}}/(\gamma_{{lin}}/k_y)={ratio_wzf:.3g}]$"
+            zf_label_plot += rf" $[\omega_{{ZF}}/\gamma_{{lin}}={ratio_wzf:.3g}]$"
         if ratio_kxvzf is not None and np.isfinite(ratio_kxvzf):
-            vzf_label_plot += rf" $[k_yV_{{ZF}}/(\gamma_{{lin}}/k_y)={ratio_kxvzf:.3g}]$"
+            vzf_label_plot += rf" $[k_yV_{{ZF}}/\gamma_{{lin}}={ratio_kxvzf:.3g}]$"
 
         if have_gamma_lin:
             self.ax.plot(
@@ -408,7 +407,7 @@ class ZfPlotting:
                 marker="o",
                 linestyle="-",
                 color=self._get_gamma_lin_color(),
-                label=f"{label} " + r"$\gamma_{lin}(k_y)/k_y$",
+                label=f"{label} " + r"$\gamma_{lin}(k_y)$",
             )
         self.ax.plot(
             x_zf,
@@ -434,7 +433,7 @@ class ZfPlotting:
                 x_max_plot += pad
             self.ax.set_xlim(left=x_min_plot, right=x_max_plot)
         self.ax.set_xlabel(r"$k\rho_s\ \ (k_x=k_y)$")
-        self.ax.set_ylabel(r"$\langle\omega_{ZF}\rangle,\ k_y\langle V_{ZF}\rangle,\ \gamma_{lin}/k_y\ (c_s/a)$")
+        self.ax.set_ylabel(r"$\langle\omega_{ZF}\rangle,\ k_y\langle V_{ZF}\rangle,\ \gamma_{lin}\ (c_s/a)$")
 
         if ky_target is not None:
             try:

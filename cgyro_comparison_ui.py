@@ -1318,9 +1318,9 @@ class CgyroUiMixin:
                 r"$\omega_{ZF}(k_x)=2k_x^2\,\phi_{rms}(k_x)$.",
                 r"$V_{ZF}^{mean}=0.5\sqrt{\sum_{k_x}|k_x\,\phi_{rms}(k_x)|^2}$.",
                 r"Plotted third curve: $k_y V_{ZF}^{mean}$ on the same $k_x=k_y$ grid.",
-                r"$\gamma_{lin}(k_y)$ is read from file; plotted reference is $\gamma_{lin}/k_y$.",
-                r"finite values only, then $k_y>0$ is kept to avoid the zonal division.",
-                r"If $k_y^\star$ is set, the ratios use interpolation of $\gamma_{lin}/k_y$ at $k_y^\star$.",
+                r"$\gamma_{lin}(k_y)$ is read from file and plotted directly.",
+                r"finite values only, then $k_y>0$ is kept for the positive branch comparison.",
+                r"If $k_y^\star$ is set, the ratios use interpolation of $\gamma_{lin}$ at $k_y^\star$.",
             ]
         else:
             lines = [
