@@ -48,7 +48,7 @@ class CgyroUiMixin:
     _FLUX_TYPE_OPTIONS = ("Energy", "Particle")
     _FLUX_XAXIS_OPTIONS = ("v.s ky", "v.s kx (estimated)", "v.s Time", "v.s ky_time", "v.s 2D")
     _FLUC_FIELD_OPTIONS = ("Phi", "Apar", "Bpar")
-    _FLUC_XAXIS_OPTIONS = ("v.s ky", "v.s kx", "v.s Time", "fft")
+    _FLUC_XAXIS_OPTIONS = ("v.s ky", "v.s kx", "v.s Time", "v.s theta", "fft")
     _FLUC_MOMENT_OPTIONS = ("Phi", "Density", "Energy", "Temperature", "Apar", "Bpar")
     _FLUC2D_VIEW_OPTIONS = ("vs xy", "vs xt", "vs kxky")
     # User-facing Fluctuation-2D views are translated into exact internal
@@ -107,6 +107,8 @@ class CgyroUiMixin:
         "flux_norm_real_ion_var",
         "fluc_field_var",
         "fluc_xaxis_var",
+        "fluc_theta_kx_var",
+        "fluc_theta_ky_var",
         "species_var",
         "plot_all_species_var",
         "moment_var",
@@ -607,6 +609,20 @@ class CgyroUiMixin:
             values=list(self._FLUC_XAXIS_OPTIONS),
             state="readonly",
             width=15,
+        )
+        self.fluc_theta_kx_label = ttk.Label(self.options_frame, text="kx (blank=avg):")
+        self.fluc_theta_kx_var = tk.StringVar(value="")
+        self.fluc_theta_kx_entry = ttk.Entry(
+            self.options_frame,
+            textvariable=self.fluc_theta_kx_var,
+            width=12,
+        )
+        self.fluc_theta_ky_label = ttk.Label(self.options_frame, text="ky (blank=avg):")
+        self.fluc_theta_ky_var = tk.StringVar(value="")
+        self.fluc_theta_ky_entry = ttk.Entry(
+            self.options_frame,
+            textvariable=self.fluc_theta_ky_var,
+            width=12,
         )
         (
             self.fluc_formula_frame,
@@ -1117,6 +1133,8 @@ class CgyroUiMixin:
             self.flux_scan_xparam_label, self.flux_scan_xparam_combo,
             self.flux_formula_frame,
             self.fluc_field_combo, self.fluc_xaxis_combo,
+            self.fluc_theta_kx_label, self.fluc_theta_kx_entry,
+            self.fluc_theta_ky_label, self.fluc_theta_ky_entry,
             self.fluc_formula_frame,
             self.species_label, self.species_combo, self.plot_all_species_check,
             self.fluc2d_view_label, self.fluc2d_view_combo,
@@ -1335,7 +1353,27 @@ class CgyroUiMixin:
     def _render_fluctuation_1d_formula_math(self):
         """Render formula notes for Fluctuation 1D averaging definition."""
         mode = str(self.fluc_average_var.get()).strip().lower()
-        if mode == "mean absolute":
+        xaxis = str(self.fluc_xaxis_var.get()).strip().lower()
+        if xaxis == "v.s theta":
+            if mode == "mean absolute":
+                lines = [
+                    r"Phi vs theta: Mean Absolute (code definition)",
+                    r"Field slice: $F(k_x,\theta,k_y,t)=\phi/\rho_s$.",
+                    r"Blank kx or ky selection averages over that spectral axis.",
+                    r"Use $idx:n$ for an index or $val:x$ for the nearest physical kx/ky value.",
+                    r"$A(\theta)=\left\langle\mathrm{mean}_{k_x,k_y}|F(k_x,\theta,k_y,t)|\right\rangle_t$.",
+                    r"The time window follows the shared Time controls.",
+                ]
+            else:
+                lines = [
+                    r"Phi vs theta: Root Mean Square (code definition)",
+                    r"Field slice: $F(k_x,\theta,k_y,t)=\phi/\rho_s$.",
+                    r"Blank kx or ky selection averages over that spectral axis.",
+                    r"Use $idx:n$ for an index or $val:x$ for the nearest physical kx/ky value.",
+                    r"$A(\theta)=\sqrt{\left\langle\mathrm{mean}_{k_x,k_y}|F(k_x,\theta,k_y,t)|^2\right\rangle_t}$.",
+                    r"The time window follows the shared Time controls.",
+                ]
+        elif mode == "mean absolute":
             lines = [
                 r"Fluctuation 1D: Mean Absolute (code definition)",
                 r"Field slice used in code: $F(k_x,k_y,t)$ from midplane $\theta$ and radial index $[1:]$.",
@@ -1738,6 +1776,13 @@ class CgyroUiMixin:
             self.fluc_field_combo.grid(row=row, column=0, sticky=tk.W)
             self.fluc_xaxis_combo.grid(row=row, column=1, sticky=tk.W)
             row += 1
+
+            if self.fluc_xaxis_var.get() == "v.s theta":
+                self.fluc_theta_kx_label.grid(row=row, column=0, sticky=tk.W)
+                self.fluc_theta_kx_entry.grid(row=row, column=1, sticky=tk.W)
+                self.fluc_theta_ky_label.grid(row=row, column=2, sticky=tk.W, padx=(8, 0))
+                self.fluc_theta_ky_entry.grid(row=row, column=3, sticky=tk.W)
+                row += 1
             
             # Check if FFT is selected in the sub-option
             if self.fluc_xaxis_var.get() == "fft":
@@ -2273,6 +2318,10 @@ class CgyroUiMixin:
             else:
                 xaxis_str = xaxis.replace("v.s", "vs")
                 plot_type = f"{field} {xaxis_str}"
+                if xaxis == "v.s theta":
+                    kx_text = self.fluc_theta_kx_var.get().strip() or "average"
+                    ky_text = self.fluc_theta_ky_var.get().strip() or "average"
+                    display_plot_type = f"{field} vs theta (kx={kx_text}, ky={ky_text})"
         elif plot_type_selection == "Fluctuation 2D":
             view = self.fluc2d_view_var.get().strip().lower()
             # Use the exact mapping above instead of composing strings here;

@@ -2536,7 +2536,7 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
         1) dedicated broad families (frequency/growth, flux, FFT),
         2) parameterized special modes (energy-balance-single),
         3) exact plot identifiers,
-        4) generic fluctuation 1D (`vs ky/kx/time`) as a final fallback.
+        4) generic fluctuation 1D (`vs ky/kx/time/theta`) as a final fallback.
         """
         exact_handlers = self._build_exact_plot_handler_map(
             data, label, plot_type, t_indices, t_start, t_end
@@ -2565,7 +2565,7 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
         is_fluctuation_1d = (
             ("Flux" not in plot_type)
             and any(field in plot_type for field in ["Phi", "Apar", "Bpar"])
-            and any(axis in plot_type for axis in ["vs ky", "vs kx", "vs Time"])
+            and any(axis in plot_type for axis in ["vs ky", "vs kx", "vs Time", "vs theta"])
         )
         if is_fluctuation_1d:
             self._plot_fluctuation_1d(data, label, plot_type, t_indices, t_start, t_end)

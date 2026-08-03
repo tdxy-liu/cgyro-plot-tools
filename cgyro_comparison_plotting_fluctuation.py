@@ -99,8 +99,128 @@ class FluctuationPlotting:
         print(f"Unsupported fluctuation moment: {moment_key}")
         return None, spec_label
 
+    def _resolve_optional_axis_indices(self, axis_values, raw_text, axis_name, label):
+        """Return all axis indices for blank input, otherwise one requested index."""
+        axis = np.asarray(axis_values, dtype=float).reshape(-1)
+        if axis.size <= 0:
+            return np.array([], dtype=int), "none"
+
+        text = str(raw_text).strip()
+        if not text:
+            return np.arange(axis.size, dtype=int), "average"
+
+        index = self._resolve_axis_selection_index(
+            axis,
+            text,
+            axis_name,
+            label,
+            prefer_value=False,
+        )
+        index = max(0, min(int(index), axis.size - 1))
+        return np.array([index], dtype=int), f"{axis[index]:.4g}"
+
+    def _plot_fluctuation_theta(self, data, label, plot_type, t_indices, t_start, t_end):
+        """Plot a time-averaged Phi/Apar/Bpar profile versus parallel theta."""
+        field_name = plot_type.split()[0]
+        field_complex = self._load_named_kxky_complex(
+            data, label, field_name, species_dependent=False
+        )
+        if field_complex is None:
+            print(f"No {field_name} data available for {label}")
+            return
+
+        field = np.asarray(field_complex, dtype=complex)
+        if field.ndim != 4:
+            print(f"Unsupported {field_name} shape for theta plot in {label}: {field.shape}")
+            return
+
+        n_r, n_theta, n_ky, n_t = field.shape
+        if n_r <= 0 or n_theta <= 0 or n_ky <= 0 or n_t <= 0:
+            print(f"Invalid {field_name} dimensions for theta plot in {label}: {field.shape}")
+            return
+
+        kx_axis, radial_idx = self._build_kx_axis(data, n_r, label)
+        if kx_axis is None or radial_idx is None:
+            print(f"No usable kx axis for theta plot in {label}")
+            return
+        kx_axis = np.asarray(kx_axis, dtype=float).reshape(-1)
+        radial_idx = np.asarray(radial_idx, dtype=int).reshape(-1)
+        n_kx = min(kx_axis.size, radial_idx.size)
+        if n_kx <= 0:
+            print(f"No usable kx points for theta plot in {label}")
+            return
+        kx_axis = kx_axis[:n_kx]
+        radial_idx = radial_idx[:n_kx]
+        valid_radial = (radial_idx >= 0) & (radial_idx < n_r)
+        kx_axis = kx_axis[valid_radial]
+        radial_idx = radial_idx[valid_radial]
+
+        ky_axis = self._positive_ky_axis(getattr(data, "ky", []))
+        if ky_axis.size != n_ky:
+            ky_axis = np.arange(n_ky, dtype=float)
+        else:
+            ky_axis = ky_axis[:n_ky]
+
+        kx_var = getattr(self, "fluc_theta_kx_var", None)
+        ky_var = getattr(self, "fluc_theta_ky_var", None)
+        kx_text = kx_var.get() if kx_var is not None else ""
+        ky_text = ky_var.get() if ky_var is not None else ""
+        kx_indices, kx_selection = self._resolve_optional_axis_indices(
+            kx_axis, kx_text, "kx", label
+        )
+        ky_indices, ky_selection = self._resolve_optional_axis_indices(
+            ky_axis, ky_text, "ky", label
+        )
+        if kx_indices.size <= 0 or ky_indices.size <= 0:
+            print(f"No usable kx/ky selection for theta plot in {label}")
+            return
+
+        valid_t = np.asarray(t_indices, dtype=int).reshape(-1)
+        valid_t = valid_t[(valid_t >= 0) & (valid_t < n_t)]
+        if valid_t.size <= 0:
+            valid_t = np.arange(n_t, dtype=int)
+            time_suffix = " (full time)"
+        else:
+            time_suffix = self._format_avg_suffix(
+                t_start, t_end, prefix=f"Avg-{self._average_mode_short_tag()}"
+            )
+
+        selected = field[
+            np.ix_(radial_idx[kx_indices], np.arange(n_theta), ky_indices, valid_t)
+        ]
+        rho_norm = float(getattr(data, "rho", 1.0))
+        if not np.isfinite(rho_norm) or abs(rho_norm) < 1.0e-12:
+            rho_norm = 1.0
+        selected = selected / rho_norm
+
+        amplitude = np.abs(selected)
+        average_axes = (0, 2, 3)
+        if self._use_mean_absolute_average():
+            profile = np.mean(amplitude, axis=average_axes)
+            y_label = rf"$\langle |{field_name}/\rho_s| \rangle_{{k_x,k_y,t}}$"
+        else:
+            profile = np.sqrt(np.mean(amplitude ** 2, axis=average_axes))
+            y_label = rf"$\sqrt{{\langle |{field_name}/\rho_s|^2 \rangle_{{k_x,k_y,t}}}}$"
+
+        theta_axis = self._build_theta_over_pi_axis(data, n_theta)
+        theta_axis = np.asarray(theta_axis, dtype=float).reshape(-1)
+        if theta_axis.size != n_theta:
+            theta_axis = np.linspace(-1.0, 1.0, n_theta)
+
+        plot_label = (
+            f"{label} (kx={kx_selection}, ky={ky_selection}"
+            f"{time_suffix}, {self._average_mode_name()})"
+        )
+        self._plot_1d(theta_axis, profile, plot_label, plot_type)
+        self.ax.set_xlabel(r"$\theta/\pi$")
+        self.ax.set_ylabel(y_label)
+
     def _plot_fluctuation_1d(self, data, label, plot_type, t_indices, t_start, t_end):
-        """Plot 1D fluctuation cuts versus ky, kx, or time."""
+        """Plot 1D fluctuation cuts versus ky, kx, time, or theta."""
+        if "vs theta" in plot_type:
+            self._plot_fluctuation_theta(data, label, plot_type, t_indices, t_start, t_end)
+            return
+
         # Determine field name from plot_type e.g. "Phi vs ky", "Apar vs Time"
         field_name = plot_type.split()[0]
         field_complex = self._load_named_kxky_complex(
