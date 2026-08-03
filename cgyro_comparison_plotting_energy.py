@@ -235,6 +235,51 @@ class EnergyPlotting:
         """Return nearest ky index using the physical signed ky value."""
         return EnergyPlotting._nearest_finite_index(axis, value)
 
+    @staticmethod
+    def _nearest_source_ky_index(axis, value):
+        """
+        Return nearest FULLT source-ky storage index.
+
+        CGYRO stores FULLT source ky on the nonnegative toroidal grid, while
+        the GUI lets users type the signed physical source ky used in the
+        transfer-map label.  When the storage axis is nonnegative, use |ky| for
+        index selection but keep the signed request for display/slicing.
+        """
+        try:
+            axis_arr = np.asarray(axis, dtype=float).reshape(-1)
+            target = float(value)
+        except Exception:
+            return None
+        finite = np.isfinite(axis_arr)
+        if not np.any(finite) or not np.isfinite(target):
+            return None
+        if target < 0.0 and np.nanmin(axis_arr[finite]) >= -1.0e-12:
+            target = abs(target)
+        return EnergyPlotting._nearest_finite_index(axis_arr, target)
+
+    @staticmethod
+    def _display_source_ky_value(axis, index, requested):
+        """Return signed source ky for plot labels/markers."""
+        try:
+            req = float(requested)
+            axis_arr = np.asarray(axis, dtype=float).reshape(-1)
+            finite = np.isfinite(axis_arr)
+            if np.isfinite(req) and req < 0.0 and np.any(finite) and np.nanmin(axis_arr[finite]) >= -1.0e-12:
+                return req
+        except Exception:
+            pass
+        try:
+            axis_arr = np.asarray(axis, dtype=float).reshape(-1)
+            idx = int(index)
+            if 0 <= idx < axis_arr.size and np.isfinite(axis_arr[idx]):
+                return float(axis_arr[idx])
+        except Exception:
+            pass
+        try:
+            return float(requested)
+        except Exception:
+            return 0.0
+
     def _single_plot_ky_match(self, data, n_n, label, ky_scan=None):
         """Map a requested physical ky value to the nearest stored triad ky index."""
         if ky_scan is None:
@@ -278,6 +323,8 @@ class EnergyPlotting:
             return "min"
         if "max" in text:
             return "max"
+        if "ky=0" in text or "ky0" in text:
+            return "ky0"
         if text:
             return "none"
         # Backward compatibility for workspaces saved before the selector
@@ -312,9 +359,63 @@ class EnergyPlotting:
         return arr / scale
 
     @staticmethod
-    def _single_norm_display(mode):
+    def _normalize_by_self_scale(values, mode, eps=1.0e-300):
+        """Normalize `values` by its own |min| or |max| for one case/window."""
+        arr = np.asarray(values, dtype=float)
+        mode = str(mode).strip().lower()
+        if mode in ("", "none"):
+            return arr
+        finite = arr[np.isfinite(arr)]
+        if finite.size <= 0:
+            return np.full(arr.shape, np.nan, dtype=float)
+        if mode == "min":
+            ref = np.nanmin(finite)
+        elif mode == "max":
+            ref = np.nanmax(finite)
+        else:
+            return arr
+        scale = abs(float(ref))
+        if (not np.isfinite(scale)) or scale <= eps:
+            return np.full(arr.shape, np.nan, dtype=float)
+        return arr / scale
+
+    @staticmethod
+    def _normalize_by_ky0_scale(values, ky_axis, mode, eps=1.0e-300):
+        """Normalize `values(ky)` by the value at the ky point nearest zero."""
+        arr = np.asarray(values, dtype=float)
+        mode = str(mode).strip().lower()
+        if mode != "ky0":
+            return arr
+        ky = np.asarray(ky_axis, dtype=float).reshape(-1)
+        y = np.asarray(arr, dtype=float).reshape(-1)
+        n = min(ky.size, y.size)
+        if n <= 0:
+            return np.full(arr.shape, np.nan, dtype=float)
+        ky = ky[:n]
+        y = y[:n]
+        finite = np.isfinite(ky) & np.isfinite(y)
+        if not np.any(finite):
+            return np.full(arr.shape, np.nan, dtype=float)
+        idx_candidates = np.where(finite)[0]
+        idx0 = idx_candidates[np.argmin(np.abs(ky[idx_candidates]))]
+        ref = float(y[idx0])
+        if (not np.isfinite(ref)) or abs(ref) <= eps:
+            return np.full(arr.shape, np.nan, dtype=float)
+        return arr / ref
+
+    @staticmethod
+    def _single_norm_display(mode, quantity_key=None):
         """Return y-label, legend, and title suffixes for a norm mode."""
         mode = str(mode).strip().lower()
+        quantity_key = str(quantity_key or "").strip().lower()
+        if quantity_key == "entropy":
+            if mode == "min":
+                return r"$\,/\,|\min(S_g)|$", " / |min entropy|", " normalized by |min entropy|"
+            if mode == "max":
+                return r"$\,/\,|\max(S_g)|$", " / |max entropy|", " normalized by |max entropy|"
+            if mode == "ky0":
+                return r"$\,/\,S_g(k_y=0)$", " / ky=0 entropy", " normalized by ky=0 entropy"
+            return "", "", ""
         if mode == "min":
             return r"$\,/\,|\min(T)|$", " / |min(T)|", " normalized by |min(T)|"
         if mode == "max":
@@ -1205,8 +1306,14 @@ class EnergyPlotting:
             s_avg = np.mean(self._triad_real_channel(triad, spec, 4, ky_sel=slice(0, n_ky), time_sel=valid_t), axis=2)
             s_ky = np.sum(s_avg, axis=0)  # [n_ky]
             y = s_ky
-        if normalize_mode != "none" and quantity_key not in ['Dr', 'Dtheta', 'Dc', 'DZ', 'entropy']:
-            y = self._normalize_by_t_scale(y, t_ky, normalize_mode)
+        if normalize_mode != "none":
+            if quantity_key == 'entropy':
+                if normalize_mode == "ky0":
+                    y = self._normalize_by_ky0_scale(y, ky, normalize_mode)
+                else:
+                    y = self._normalize_by_self_scale(y, normalize_mode)
+            elif quantity_key not in ['Dr', 'Dtheta', 'Dc', 'DZ']:
+                y = self._normalize_by_t_scale(y, t_ky, normalize_mode)
 
         ky = np.asarray(ky, dtype=float).reshape(-1)
         y = np.asarray(y, dtype=float).reshape(-1)
@@ -1280,6 +1387,9 @@ class EnergyPlotting:
         t_avg = np.mean(self._triad_real_channel(triad, spec, 0, ky_sel=ky_use, time_sel=valid_t), axis=1)
         n_avg = np.mean(self._triad_real_channel(triad, spec, 1, ky_sel=ky_use, time_sel=valid_t), axis=1)
         s_avg = np.mean(self._triad_real_channel(triad, spec, 4, ky_sel=ky_use, time_sel=valid_t), axis=1)
+        s_ky0_avg = None
+        if quantity_key == 'entropy' and normalize_mode == "ky0":
+            s_ky0_avg = np.mean(self._triad_real_channel(triad, spec, 4, ky_sel=0, time_sel=valid_t), axis=1)
         dr_avg = np.mean(self._triad_real_channel(triad, spec, 5, ky_sel=ky_use, time_sel=valid_t), axis=1)
         dtheta_avg = np.mean(self._triad_real_channel(triad, spec, 6, ky_sel=ky_use, time_sel=valid_t), axis=1)
         dc_avg = np.mean(self._triad_real_channel(triad, spec, 7, ky_sel=ky_use, time_sel=valid_t), axis=1)
@@ -1323,6 +1433,9 @@ class EnergyPlotting:
         radial_idx = radial_idx[:n_use]
         y = np.asarray(y, dtype=float).reshape(-1)[radial_idx]
         t_ref = np.asarray(t_avg, dtype=float).reshape(-1)[radial_idx]
+        ky0_ref = None
+        if s_ky0_avg is not None:
+            ky0_ref = np.asarray(s_ky0_avg, dtype=float).reshape(-1)[radial_idx]
         mask = np.isfinite(kx) & np.isfinite(y)
         if not np.any(mask):
             print(f"No finite T-vs-kx points for {label}")
@@ -1331,11 +1444,21 @@ class EnergyPlotting:
         kx = kx[mask]
         y = y[mask]
         t_ref = t_ref[mask]
-        if normalize_mode != "none" and quantity_key not in ['Dr', 'Dtheta', 'Dc', 'DZ', 'entropy']:
-            y = self._normalize_by_t_scale(y, t_ref, normalize_mode)
+        if ky0_ref is not None:
+            ky0_ref = ky0_ref[mask]
+        if normalize_mode != "none":
+            if quantity_key == 'entropy':
+                if normalize_mode == "ky0":
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        y = y / ky0_ref
+                    y[~np.isfinite(y)] = np.nan
+                else:
+                    y = self._normalize_by_self_scale(y, normalize_mode)
+            elif quantity_key not in ['Dr', 'Dtheta', 'Dc', 'DZ']:
+                y = self._normalize_by_t_scale(y, t_ref, normalize_mode)
             mask = np.isfinite(kx) & np.isfinite(y)
             if not np.any(mask):
-                print(f"No finite normalized T-vs-kx points for {label}")
+                print(f"No finite normalized {quantity_key}-vs-kx points for {label}")
                 return None, None, None
             kx = kx[mask]
             y = y[mask]
@@ -1502,6 +1625,9 @@ class EnergyPlotting:
         t_series = np.sum(self._triad_real_channel(triad, spec, 0, ky_sel=ky_use), axis=0)
         n_series = np.sum(self._triad_real_channel(triad, spec, 1, ky_sel=ky_use), axis=0)
         s_series = np.sum(self._triad_real_channel(triad, spec, 4, ky_sel=ky_use), axis=0)
+        s_ky0_series = None
+        if quantity_key == 'entropy' and normalize_mode == "ky0":
+            s_ky0_series = np.sum(self._triad_real_channel(triad, spec, 4, ky_sel=0), axis=0)
         dr_series = np.sum(self._triad_real_channel(triad, spec, 5, ky_sel=ky_use), axis=0)
         dtheta_series = np.sum(self._triad_real_channel(triad, spec, 6, ky_sel=ky_use), axis=0)
         dc_series = np.sum(self._triad_real_channel(triad, spec, 7, ky_sel=ky_use), axis=0)
@@ -1527,8 +1653,16 @@ class EnergyPlotting:
             y = dz_series
         else:
             y = s_series
-        if normalize_mode != "none" and quantity_key not in ['Dr', 'Dtheta', 'Dc', 'entropy']:
-            y = self._normalize_by_t_scale(y, t_series, normalize_mode)
+        if normalize_mode != "none":
+            if quantity_key == 'entropy':
+                if normalize_mode == "ky0":
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        y = y / s_ky0_series
+                    y[~np.isfinite(y)] = np.nan
+                else:
+                    y = self._normalize_by_self_scale(y, normalize_mode)
+            elif quantity_key not in ['Dr', 'Dtheta', 'Dc', 'DZ']:
+                y = self._normalize_by_t_scale(y, t_series, normalize_mode)
 
         t = np.asarray(getattr(data, 't', []), dtype=float).reshape(-1)
         if t.size <= 0:
@@ -1553,7 +1687,7 @@ class EnergyPlotting:
             data, label, t_indices, avg_suffix=avg_suffix
         )
 
-    def _plot_energy_balance_single_entropy_spectrum(self, data, label, t_indices, avg_suffix=""):
+    def _plot_energy_balance_single_entropy_spectrum(self, data, label, t_indices, avg_suffix="", normalize_mode="none"):
         """
         Plot entropy spectrum (`vs ky`) for single-plot energy-balance mode.
 
@@ -1615,6 +1749,9 @@ class EnergyPlotting:
             ion_idx = [0]
 
         eps = 1.0e-30
+        _y_label_suffix, norm_suffix, norm_label = self._single_norm_display(
+            normalize_mode, quantity_key="entropy"
+        )
         ls_case = self._get_case_linestyle(
             case_label=label,
             map_attr="_energy_entropy_case_style",
@@ -1630,7 +1767,6 @@ class EnergyPlotting:
             self._energy_entropy_axes = (ax_ion, ax_ele)
             self._energy_entropy_axes_active = True
 
-            ax_ion.set_title(r"Entropy of each species  $\log\sum_{k_x}\langle \delta S_a\rangle_t$")
             ax_ion.set_ylabel("Ion")
             ax_ele.set_ylabel("Electron")
             ax_ele.set_xlabel(r"$k_\theta \rho_D$")
@@ -1638,24 +1774,34 @@ class EnergyPlotting:
         else:
             ax_ion, ax_ele = self._energy_entropy_axes
 
+        ax_ion.set_title(r"Entropy of each species  $\log\sum_{k_x}\langle \delta S_a\rangle_t$" + norm_label)
+
         for j, i_sp in enumerate(ion_idx):
             y = np.asarray(ds_sum_kx[i_sp, :n_ky], dtype=float)[mask_k]
             y_log = np.log(np.maximum(np.abs(y), eps))
+            if normalize_mode == "ky0":
+                y_log = self._normalize_by_ky0_scale(y_log, ky_plot, normalize_mode)
+            else:
+                y_log = self._normalize_by_self_scale(y_log, normalize_mode)
             ls = ls_case if j == 0 else '--'
             sp_tag = "" if len(ion_idx) == 1 else str(j + 1)
             ax_ion.plot(
                 ky_plot, y_log, ls, color='k', linewidth=1.6,
-                label=f"{label} ion{sp_tag}{avg_suffix}"
+                label=f"{label} ion{sp_tag}{norm_suffix}{avg_suffix}"
             )
 
         for j, i_sp in enumerate(ele_idx):
             y = np.asarray(ds_sum_kx[i_sp, :n_ky], dtype=float)[mask_k]
             y_log = np.log(np.maximum(np.abs(y), eps))
+            if normalize_mode == "ky0":
+                y_log = self._normalize_by_ky0_scale(y_log, ky_plot, normalize_mode)
+            else:
+                y_log = self._normalize_by_self_scale(y_log, normalize_mode)
             ls = ls_case if j == 0 else '--'
             sp_tag = "" if len(ele_idx) == 1 else str(j + 1)
             ax_ele.plot(
                 ky_plot, y_log, ls, color='r', linewidth=1.6,
-                label=f"{label} elec{sp_tag}{avg_suffix}"
+                label=f"{label} elec{sp_tag}{norm_suffix}{avg_suffix}"
             )
 
     def _plot_energy_balance_single(self, data, label, t_indices, t_start, t_end):
@@ -1693,7 +1839,7 @@ class EnergyPlotting:
             qty_txt = "t-n"
         if qty_txt not in ['t', 'n', 't-n', 'dr', 'dtheta', 'dc', 'dz', 'entropy']:
             qty_txt = 't-n'
-        normalize_mode = self._single_norm_mode() if qty_txt not in ['dr', 'dtheta', 'dc', 'dz', 'entropy'] else "none"
+        normalize_mode = self._single_norm_mode() if qty_txt not in ['dr', 'dtheta', 'dc', 'dz'] else "none"
 
         avg_suffix = ""
         try:
@@ -1729,14 +1875,17 @@ class EnergyPlotting:
         else:
             y_label = r"$(\mathcal{T}-\mathcal{N})^{NZ\rightarrow Z}$"
             qty_name = "T-N"
-        y_label_suffix, norm_suffix, norm_label = self._single_norm_display(normalize_mode)
+        y_label_suffix, norm_suffix, norm_label = self._single_norm_display(
+            normalize_mode, quantity_key=qty_name
+        )
         if y_label_suffix:
             y_label = y_label + y_label_suffix
 
         if mode_txt == 'vs ky':
             if qty_txt == 'entropy':
                 self._plot_energy_balance_single_entropy_spectrum(
-                    data, label, t_indices, avg_suffix=avg_suffix
+                    data, label, t_indices, avg_suffix=avg_suffix,
+                    normalize_mode=normalize_mode,
                 )
             else:
                 ky, y_ky = self._compute_energy_balance_single_vs_ky(
@@ -1908,18 +2057,22 @@ class EnergyPlotting:
 
         use_last_half = False
         try:
-            if len(t_start_txt) == 0 or len(t_end_txt) == 0:
+            have_start = len(t_start_txt) > 0
+            have_end = len(t_end_txt) > 0
+            if not have_start and not have_end:
                 use_last_half = True
             else:
-                t_start = float(t_start_txt)
-                t_end = float(t_end_txt)
-                if (not np.isfinite(t_start)) or (not np.isfinite(t_end)):
-                    use_last_half = True
-                elif t_start < t_min or t_end > t_max:
-                    # User specified range exceeds available data range.
+                t_start = float(t_start_txt) if have_start else t_min
+                t_end = float(t_end_txt) if have_end else t_max
+                if (not np.isfinite(t_start)) or (not np.isfinite(t_end)) or t_start >= t_end:
                     use_last_half = True
                 else:
-                    if t_start >= t_end:
+                    # Use the user-requested window, clipped to each case's
+                    # available time range. Only fall back when there is no
+                    # overlap at all.
+                    t_start = max(t_start, t_min)
+                    t_end = min(t_end, t_max)
+                    if t_start > t_end:
                         use_last_half = True
         except Exception:
             use_last_half = True
@@ -2239,7 +2392,7 @@ class EnergyPlotting:
         source_attr = cache_attr + "_source"
         case_token_attr = cache_attr + "_case_token"
         cache_version_attr = cache_attr + "_cache_version"
-        cache_version = 4
+        cache_version = 5
         try:
             case_token = self._resolve_case_dir(data)
         except Exception:
@@ -2381,7 +2534,8 @@ class EnergyPlotting:
                 return 0
             axis = _source_ky_axis(n_source)
             try:
-                return int(np.nanargmin(np.abs(axis - float(source_ky_value))))
+                idx = self._nearest_source_ky_index(axis, source_ky_value)
+                return 0 if idx is None else int(idx)
             except Exception:
                 return 0
 
@@ -2481,7 +2635,11 @@ class EnergyPlotting:
             source_kx_idx = _select_source_kx_index(n_source_kx)
             _record_source_kx(n_source_kx, source_kx_idx)
             source_ky_axis_full = _source_ky_axis(n_n)
-            source_ky_used = float(source_ky_axis_full[source_ky_idx_full]) if source_ky_axis_full.size > source_ky_idx_full else float(source_ky_idx_full)
+            source_ky_used = self._display_source_ky_value(
+                source_ky_axis_full,
+                source_ky_idx_full,
+                source_ky_value,
+            )
             n_signed = 2 * n_n - 1
             time_idx = _requested_time_indices()
             if time_idx is None:
@@ -2562,9 +2720,17 @@ class EnergyPlotting:
                     # into [ri,source_ky,target_kx,target_ky,channel,time].
                     return np.transpose(arr, (0, 4, 1, 2, 3, 5))
                 if arr.ndim == 7 and arr.shape[1] == n_radial and arr.shape[2] == n_signed and arr.shape[5] == n_n:
+                    # Global FULLT file/raw layout with source-kx:
+                    # [ri,target_kx,target_ky,channel,source_kx,source_ky,time].
                     source_kx_idx = _select_source_kx_index(int(arr.shape[4]))
                     _record_source_kx(int(arr.shape[4]), source_kx_idx)
                     return np.transpose(arr[:, :, :, :, source_kx_idx, :, :], (0, 4, 1, 2, 3, 5))
+                if arr.ndim == 7 and arr.shape[1] == n_radial and arr.shape[2] == n_signed and arr.shape[4] == n_n:
+                    # Older experimental Python readers briefly exposed the
+                    # local-array order [ri,target_kx,target_ky,channel,source_ky,source_kx,time].
+                    source_kx_idx = _select_source_kx_index(int(arr.shape[5]))
+                    _record_source_kx(int(arr.shape[5]), source_kx_idx)
+                    return np.transpose(arr[:, :, :, :, :, source_kx_idx, :], (0, 4, 1, 2, 3, 5))
             return None
 
         if hasattr(data, cache_attr):
@@ -2585,7 +2751,11 @@ class EnergyPlotting:
                     try:
                         ky_full = _source_ky_axis(n_n)
                         ky_target_idx = _select_source_ky_index(n_n)
-                        ky_target = float(ky_full[ky_target_idx]) if ky_full.size > ky_target_idx else float(source_ky_value)
+                        ky_target = self._display_source_ky_value(
+                            ky_full,
+                            ky_target_idx,
+                            source_ky_value,
+                        )
                         ky_delta = abs(float(ky_cached[0]) - ky_target)
                     except Exception:
                         ky_delta = 0.0
@@ -2807,6 +2977,209 @@ class EnergyPlotting:
         print(f"{diag_name} for {label}: read from {fmt}{file_suffix} ({storage}, source_kx_count={n_source_kx}{source_kx_msg}).")
         return True
 
+    def _energy_fullt_source_kx_axis(self, data, n_source_kx):
+        """Return source-kx axis for FULLT source-kx scans."""
+        n_source_kx = int(n_source_kx)
+        axis = np.asarray(getattr(data, 'full_t_source_kx', []), dtype=float).reshape(-1)
+        if axis.size >= n_source_kx and np.all(np.isfinite(axis[:n_source_kx])):
+            return axis[:n_source_kx]
+
+        index = np.asarray(getattr(data, 'full_t_source_kx_index', []), dtype=float).reshape(-1)
+        length = float(getattr(data, 'length', 0.0) or 0.0)
+        if index.size >= n_source_kx and np.all(np.isfinite(index[:n_source_kx])):
+            if np.isfinite(length) and abs(length) > 1.0e-12:
+                return 2.0 * np.pi * index[:n_source_kx] / length
+
+        kx = np.asarray(getattr(data, 'kxnorm', getattr(data, 'kx', [])), dtype=float).reshape(-1)
+        if kx.size >= n_source_kx and np.all(np.isfinite(kx[:n_source_kx])):
+            return kx[:n_source_kx]
+
+        if index.size >= n_source_kx and np.all(np.isfinite(index[:n_source_kx])):
+            return index[:n_source_kx]
+
+        p = np.asarray(getattr(data, 'p', []), dtype=float).reshape(-1)
+        if p.size >= n_source_kx and np.all(np.isfinite(p[:n_source_kx])):
+            if np.isfinite(length) and abs(length) > 1.0e-12:
+                return 2.0 * np.pi * p[:n_source_kx] / length
+            return p[:n_source_kx]
+
+        return np.arange(n_source_kx, dtype=float) - (n_source_kx // 2)
+
+    def _load_fullt_trace_source_slice(self, data, label, asym, source_ky_value, time_indices):
+        """
+        Load FULLT/FULLT_ASYM for one fixed source ky while retaining all source kx.
+
+        Returns dict with `trace[source_kx,target_kx,target_ky,time]` for channel 0.
+        """
+        diag_name = "FULLT_ASYM" if asym else "FULLT"
+        file_suffix = ".cgyro.fullt_asym" if asym else ".cgyro.fullt"
+        try:
+            case_dir = self._resolve_case_dir(data)
+        except Exception:
+            case_dir = getattr(data, "dir", None) or getattr(data, "path", None) or ""
+        case_dir = str(case_dir or "")
+        if not case_dir:
+            print(f"Cannot load {diag_name} trace for {label}: missing case directory.")
+            return None
+
+        path = None
+        for candidate in (
+            os.path.join(case_dir, "bin" + file_suffix),
+            os.path.join(case_dir, "bin", "bin" + file_suffix),
+        ):
+            if os.path.isfile(candidate):
+                path = candidate
+                break
+        if path is None:
+            print(f"No native {diag_name} trace file for {label}: need bin{file_suffix}.")
+            return None
+
+        n_n = int(getattr(data, 'n_n', 0))
+        n_radial = int(getattr(data, 'n_radial', 0))
+        if n_n <= 0 or n_radial <= 0:
+            print(f"Cannot load {diag_name} trace for {label}: missing n_n/n_radial metadata.")
+            return None
+        n_signed = 2 * n_n - 1
+
+        try:
+            dtype = np.dtype(getattr(data, "BYTE", "float64"))
+        except Exception:
+            dtype = np.dtype("float64")
+        try:
+            n_elem = int(os.path.getsize(path) // dtype.itemsize)
+        except Exception as e:
+            print(f"Cannot stat {diag_name} trace file for {label}: {e}")
+            return None
+
+        try:
+            scalars = self._read_input_cgyro_scalars(case_dir)
+        except Exception:
+            scalars = {}
+        try:
+            real_only = int(round(float(scalars.get("FULL_T_REAL_ONLY", 0))))
+        except Exception:
+            real_only = 0
+        try:
+            kx0 = int(round(float(scalars.get("FULL_T_KX0", 0))))
+        except Exception:
+            kx0 = 0
+
+        channel_candidates = [1 if real_only == 1 else 2, 2, 1]
+        channel_candidates = list(dict.fromkeys([int(c) for c in channel_candidates if int(c) in (1, 2)]))
+        source_kx_candidates = [1 if kx0 == 1 else n_radial, n_radial, 1]
+        source_kx_candidates = list(dict.fromkeys([int(c) for c in source_kx_candidates if int(c) > 0]))
+
+        n_time_file = 0
+        try:
+            t_path = os.path.join(case_dir, "out.cgyro.time")
+            if os.path.isfile(t_path):
+                n_time_file = int(np.asarray(np.fromfile(t_path, dtype=float, sep=" ")).size)
+        except Exception:
+            n_time_file = 0
+
+        block_no_time = n_radial * n_signed * n_n
+        n_channel = 0
+        n_time = 0
+        n_source_kx = 0
+        legacy_complex = False
+        if n_time_file > 0:
+            for scale in (1, 2):
+                for n_source_try in source_kx_candidates:
+                    for n_channel_try in channel_candidates:
+                        denom = scale * block_no_time * n_source_try * n_channel_try
+                        if denom > 0 and n_elem == denom * n_time_file:
+                            n_channel = int(n_channel_try)
+                            n_time = int(n_time_file)
+                            n_source_kx = int(n_source_try)
+                            legacy_complex = (scale == 2)
+                            break
+                    if n_channel > 0:
+                        break
+                if n_channel > 0:
+                    break
+        if n_channel <= 0:
+            for scale in (1, 2):
+                for n_source_try in source_kx_candidates:
+                    for n_channel_try in channel_candidates:
+                        denom = scale * block_no_time * n_source_try * n_channel_try
+                        if denom > 0 and n_elem % denom == 0:
+                            n_time_try = int(n_elem // denom)
+                            if n_time_try > 0:
+                                n_channel = int(n_channel_try)
+                                n_time = int(n_time_try)
+                                n_source_kx = int(n_source_try)
+                                legacy_complex = (scale == 2)
+                                break
+                    if n_channel > 0:
+                        break
+                if n_channel > 0:
+                    break
+        if n_channel not in (1, 2) or n_time <= 0 or n_source_kx <= 0:
+            print(f"Cannot infer {diag_name} trace shape for {label}: raw_size={n_elem}.")
+            return None
+
+        source_ky_axis = self._fullt_source_ky_axis(data, n_n)
+        source_ky_axis = np.asarray(source_ky_axis, dtype=float).reshape(-1)
+        if source_ky_axis.size < n_n:
+            source_ky_axis = np.arange(n_n, dtype=float)
+        source_ky_idx = self._nearest_source_ky_index(source_ky_axis[:n_n], source_ky_value)
+        if source_ky_idx is None:
+            print(f"Cannot map source ky={source_ky_value:.6g} for {label}.")
+            return None
+        source_ky_display = self._display_source_ky_value(
+            source_ky_axis[:n_n],
+            source_ky_idx,
+            source_ky_value,
+        )
+
+        time_idx = np.asarray(time_indices, dtype=int).reshape(-1)
+        time_idx = time_idx[(time_idx >= 0) & (time_idx < n_time)]
+        if time_idx.size <= 0:
+            time_idx = np.arange(n_time, dtype=int)
+
+        try:
+            mm = np.memmap(path, dtype=dtype, mode="r", shape=(n_elem,))
+            if legacy_complex:
+                raw = np.reshape(
+                    mm,
+                    (2, n_radial, n_signed, n_channel, n_source_kx, n_n, n_time),
+                    order="F",
+                )
+                trace = np.asarray(raw[0, :, :, 0, :, source_ky_idx, :][:, :, :, time_idx], dtype=float)
+            else:
+                raw = np.reshape(
+                    mm,
+                    (n_radial, n_signed, n_channel, n_source_kx, n_n, n_time),
+                    order="F",
+                )
+                trace = np.asarray(raw[:, :, 0, :, source_ky_idx, :][:, :, :, time_idx], dtype=float)
+            # [target_kx,target_ky,source_kx,time] -> [source_kx,target_kx,target_ky,time]
+            trace = np.transpose(trace, (2, 0, 1, 3))
+        except Exception as e:
+            print(f"{diag_name} trace direct read failed for {label}: {e}")
+            return None
+
+        target_kx_axis, radial_idx = self._energy_fullt_target_kx_axis(data, n_radial, label)
+        target_ky_axis = self._fullt_target_ky_axis(data, n_n, n_signed)
+        source_kx_axis = self._energy_fullt_source_kx_axis(data, n_source_kx)
+        if target_kx_axis is None or target_ky_axis is None or source_kx_axis is None:
+            print(f"Missing {diag_name} trace axes for {label}.")
+            return None
+        print(
+            f"{diag_name} trace for {label}: read {os.path.basename(path)} "
+            f"(source ky={source_ky_display:.6g}, "
+            f"source_kx_count={n_source_kx}, time={time_idx.size}/{n_time})."
+        )
+        return {
+            "trace": trace,
+            "source_kx_axis": np.asarray(source_kx_axis, dtype=float).reshape(-1)[:n_source_kx],
+            "target_kx_axis": np.asarray(target_kx_axis, dtype=float).reshape(-1)[:n_radial],
+            "target_ky_axis": np.asarray(target_ky_axis, dtype=float).reshape(-1)[:n_signed],
+            "source_ky": float(source_ky_display),
+            "source_ky_idx": int(source_ky_idx),
+            "time_indices": np.asarray(time_idx, dtype=int),
+        }
+
     def _energy_fullt_target_kx_axis(self, data, n_radial, label):
         """Build the full target-kx axis, including the leftmost Nyquist storage bin."""
         p = np.asarray(getattr(data, 'p', []), dtype=float).reshape(-1)
@@ -2981,6 +3354,489 @@ class EnergyPlotting:
         )
         return arr
 
+    def _plot_energy_balance_fullt_trace_pxqx(
+        self,
+        data,
+        label,
+        t_indices,
+        t_start,
+        t_end,
+        use_asym,
+        normalize_by_max_t,
+        source_ky_sel,
+        zonal_kx_sel,
+        diag_name,
+        transfer_symbol,
+    ):
+        """
+        Plot a Fig.10-style FULLT trace in the (p_x, q_x) plane.
+
+        The selected source ky is the nonnegative FULLT target/source toroidal
+        mode.  The signed target-ky dimension stores the resolved interaction
+        partner.  Zonal-mediated scattering corresponds to target ky closest to
+        source ky, so that the remaining h-mode has ky_h = source_ky-target_ky
+        near zero.
+        """
+        trace_data = self._load_fullt_trace_source_slice(
+            data,
+            label,
+            asym=use_asym,
+            source_ky_value=source_ky_sel,
+            time_indices=t_indices,
+        )
+        if trace_data is None:
+            return
+
+        trace = np.asarray(trace_data.get("trace", None), dtype=float)
+        if trace.ndim != 4:
+            print(f"Unsupported {diag_name} trace shape for {label}: {trace.shape}")
+            return
+
+        source_kx_axis = np.asarray(trace_data.get("source_kx_axis", []), dtype=float).reshape(-1)
+        target_kx_axis = np.asarray(trace_data.get("target_kx_axis", []), dtype=float).reshape(-1)
+        target_ky_axis = np.asarray(trace_data.get("target_ky_axis", []), dtype=float).reshape(-1)
+        fixed_py = float(trace_data.get("source_ky", source_ky_sel))
+
+        n_source_kx, n_target_kx, n_target_ky, n_t = trace.shape
+        n_p = min(n_source_kx, source_kx_axis.size)
+        n_q = min(n_target_kx, target_kx_axis.size)
+        n_ky = min(n_target_ky, target_ky_axis.size)
+        if n_p <= 0 or n_q <= 0 or n_ky <= 0 or n_t <= 0:
+            print(f"Empty {diag_name} trace axes for {label}")
+            return
+        if n_p <= 1:
+            print(
+                f"{diag_name} trace for {label}: only one source kx is available. "
+                "Set FULL_T_KX0=0 when writing FULLT if a p_x-q_x trace is needed."
+            )
+            return
+
+        source_kx_axis = source_kx_axis[:n_p]
+        target_kx_axis = target_kx_axis[:n_q]
+        target_ky_axis = target_ky_axis[:n_ky]
+        trace = trace[:n_p, :n_q, :n_ky, :n_t]
+
+        def _slice_for_target_ky(iky):
+            z = np.mean(trace[:, :, int(iky), :], axis=2)
+            finite_z = z[np.isfinite(z)]
+            if finite_z.size <= 0:
+                return z, 0.0
+            return z, float(np.nanmax(np.abs(finite_z)))
+
+        ky_candidates = []
+        for target_value, tag in [(fixed_py, "zonal ky_h=0"), (-fixed_py, "opposite signed ky")]:
+            idx = self._nearest_finite_index(target_ky_axis, target_value)
+            if idx is None:
+                continue
+            if any(int(idx) == int(existing[0]) for existing in ky_candidates):
+                continue
+            z_try, amp_try = _slice_for_target_ky(idx)
+            ky_candidates.append((int(idx), tag, float(target_ky_axis[idx]), amp_try, z_try))
+
+        if len(ky_candidates) <= 0:
+            print(f"Could not map target ky slices for {label}")
+            return
+
+        target_ky_idx, target_ky_tag, fixed_qy, target_ky_amp, z_avg = max(
+            ky_candidates,
+            key=lambda item: item[3] if np.isfinite(item[3]) else -1.0,
+        )
+        if (not np.isfinite(target_ky_amp)) or target_ky_amp <= 0.0:
+            best = None
+            for iky in range(n_ky):
+                z_try, amp_try = _slice_for_target_ky(iky)
+                if best is None or amp_try > best[3]:
+                    best = (int(iky), "max |T| ky", float(target_ky_axis[iky]), amp_try, z_try)
+            if best is not None:
+                target_ky_idx, target_ky_tag, fixed_qy, target_ky_amp, z_avg = best
+
+        try:
+            candidate_msg = ", ".join(
+                [
+                    f"{tag}: q_y={qy:.6g}, max|T|={amp:.3e}"
+                    for _idx, tag, qy, amp, _z in ky_candidates
+                ]
+            )
+            print(
+                f"{diag_name} trace ky-slice for {label}: selected {target_ky_tag} "
+                f"(q_y={fixed_qy:.6g}, idx={target_ky_idx}, max|T|={target_ky_amp:.3e}); "
+                f"candidates: {candidate_msg}"
+            )
+        except Exception:
+            pass
+
+        if z_avg.shape != (n_p, n_q):
+            print(
+                f"Unsupported {diag_name} trace average shape for {label}: "
+                f"{z_avg.shape}, expected ({n_p},{n_q})."
+            )
+            return
+        if np.all(~np.isfinite(z_avg)):
+            print(f"No valid {diag_name} trace data for {label}")
+            return
+
+        finite_p = np.isfinite(source_kx_axis)
+        finite_q = np.isfinite(target_kx_axis)
+        if not np.any(finite_p) or not np.any(finite_q):
+            print(f"No finite {diag_name} trace axes for {label}")
+            return
+        source_kx_axis = source_kx_axis[finite_p]
+        target_kx_axis = target_kx_axis[finite_q]
+        z_avg = z_avg[np.ix_(finite_p, finite_q)]
+        if source_kx_axis.size <= 0 or target_kx_axis.size <= 0:
+            print(f"No finite {diag_name} trace points for {label}")
+            return
+
+        p_order = np.argsort(source_kx_axis)
+        q_order = np.argsort(target_kx_axis)
+        source_kx_axis = source_kx_axis[p_order]
+        target_kx_axis = target_kx_axis[q_order]
+        # z_plot rows are q_x, columns are p_x.
+        z_plot = np.asarray(z_avg[np.ix_(p_order, q_order)].T, dtype=float)
+
+        def _axis_step(axis):
+            vals = np.asarray(axis, dtype=float).reshape(-1)
+            vals = vals[np.isfinite(vals)]
+            if vals.size <= 1:
+                return np.nan
+            diffs = np.diff(np.unique(np.sort(vals)))
+            diffs = np.abs(diffs[np.isfinite(diffs) & (np.abs(diffs) > 1.0e-12)])
+            if diffs.size <= 0:
+                return np.nan
+            return float(np.nanmedian(diffs))
+
+        p_step = _axis_step(source_kx_axis)
+        q_step = _axis_step(target_kx_axis)
+        step_candidates = [x for x in (p_step, q_step) if np.isfinite(x) and x > 0.0]
+        if step_candidates:
+            ridge_tol = 0.51 * max(step_candidates)
+        else:
+            ridge_tol = 1.0e-10
+        p_centers, q_centers = np.meshgrid(source_kx_axis, target_kx_axis)
+        kzf_mag = abs(float(zonal_kx_sel))
+        use_zonal_radial_chain = (
+            abs(float(fixed_qy) - float(fixed_py))
+            <= abs(float(fixed_qy) + float(fixed_py))
+        )
+        if not (use_zonal_radial_chain and kzf_mag > 0.0 and np.isfinite(kzf_mag)):
+            print(
+                f"{diag_name} trace for {label}: target ky={fixed_qy:.6g} is not the zonal "
+                f"chain slice target ky=source ky={fixed_py:.6g}."
+            )
+            return
+
+        ridge_plus = np.isfinite(p_centers) & np.isfinite(q_centers) & (
+            np.abs(q_centers - p_centers - kzf_mag) <= ridge_tol
+        )
+        ridge_minus = np.isfinite(p_centers) & np.isfinite(q_centers) & (
+            np.abs(q_centers - p_centers + kzf_mag) <= ridge_tol
+        )
+        ridge_mask = ridge_plus | ridge_minus
+        z_plot = np.where(ridge_mask, z_plot, np.nan)
+        finite_ridge = z_plot[np.isfinite(z_plot)]
+        if finite_ridge.size <= 0:
+            print(
+                f"{diag_name} trace ridges for {label}: no finite T values on "
+                f"q_x-p_x=+/-|k_zf| for |k_zf|={kzf_mag:.6g}."
+            )
+            return
+
+        chain_points = []
+        chain_logs = []
+        max_step = max(source_kx_axis.size, target_kx_axis.size)
+        for sign in (1.0, -1.0):
+            for n_step in range(max_step):
+                source_req = sign * n_step * kzf_mag
+                target_req = sign * (n_step + 1) * kzf_mag
+                source_idx = self._nearest_finite_index(source_kx_axis, source_req)
+                target_idx = self._nearest_finite_index(target_kx_axis, target_req)
+                if source_idx is None or target_idx is None:
+                    break
+                source_val = float(source_kx_axis[source_idx])
+                target_val = float(target_kx_axis[target_idx])
+                source_err = abs(source_val - source_req)
+                target_err = abs(target_val - target_req)
+                if source_err > ridge_tol or target_err > ridge_tol:
+                    break
+                point_key = (int(source_idx), int(target_idx))
+                if point_key in [(p[0], p[1]) for p in chain_points]:
+                    continue
+                t_value = float(z_plot[target_idx, source_idx])
+                if not np.isfinite(t_value):
+                    continue
+                chain_points.append((int(source_idx), int(target_idx), source_val, target_val, t_value))
+                chain_logs.append(
+                    f"({source_val:.6g}->{target_val:.6g}, T={t_value:.3e})"
+                )
+
+        print(
+            f"{diag_name} trace ridges for {label}: |k_zf|={kzf_mag:.6g}, "
+            f"tolerance={ridge_tol:.3g}, ridge points={finite_ridge.size}"
+            + (("; chain " + "; ".join(chain_logs)) if chain_logs else "")
+        )
+
+        norm_pos = np.nan
+        norm_neg = np.nan
+        if normalize_by_max_t:
+            finite_norm = z_plot[np.isfinite(z_plot)]
+            if finite_norm.size > 0:
+                positive = finite_norm[finite_norm > 0.0]
+                negative = finite_norm[finite_norm < 0.0]
+                norm_pos = float(np.nanmax(positive)) if positive.size > 0 else np.nan
+                norm_neg = float(abs(np.nanmin(negative))) if negative.size > 0 else np.nan
+                z_norm = np.zeros_like(z_plot, dtype=float)
+                valid_pos = np.isfinite(norm_pos) and norm_pos > 0.0
+                valid_neg = np.isfinite(norm_neg) and norm_neg > 0.0
+                if valid_pos:
+                    pos_mask = np.isfinite(z_plot) & (z_plot > 0.0)
+                    z_norm[pos_mask] = z_plot[pos_mask] / norm_pos
+                if valid_neg:
+                    neg_mask = np.isfinite(z_plot) & (z_plot < 0.0)
+                    z_norm[neg_mask] = z_plot[neg_mask] / norm_neg
+                z_norm[~np.isfinite(z_plot)] = np.nan
+                z_plot = z_norm
+                print(
+                    f"{diag_name} trace normalization for {label}: "
+                    f"positive max T={norm_pos:.6e}, negative max |T|={norm_neg:.6e}."
+                )
+            else:
+                print(f"{diag_name} trace normalization for {label}: no finite T values.")
+
+        p_edges = self._axis_cell_edges_from_centers(source_kx_axis)
+        q_edges = self._axis_cell_edges_from_centers(target_kx_axis)
+        if p_edges is None or q_edges is None:
+            print(f"Invalid {diag_name} trace plot grid for {label}")
+            return
+
+        finite = z_plot[np.isfinite(z_plot)]
+        if finite.size > 0:
+            vmax = float(np.nanmax(np.abs(finite)))
+        else:
+            vmax = 1.0
+        if normalize_by_max_t:
+            vmax = 1.0
+        elif finite.size > 0:
+            clip = float(np.nanpercentile(np.abs(finite), 99.7))
+            if np.isfinite(clip) and clip > 0.0:
+                vmax = clip
+        if (not np.isfinite(vmax)) or vmax <= 0.0:
+            vmax = 1.0
+
+        use_symlog_color = False
+        try:
+            use_symlog_color = bool(self.log_y_var.get())
+        except Exception:
+            use_symlog_color = False
+        color_limits = dict(vmin=-vmax, vmax=vmax)
+        if use_symlog_color:
+            color_limits = dict(norm=SymLogNorm(
+                linthresh=max(vmax * 2.0e-2, np.finfo(float).tiny),
+                linscale=1.0,
+                vmin=-vmax,
+                vmax=vmax,
+                base=10,
+            ))
+
+        self.fig.clear()
+        self._reset_figure_layout_defaults()
+        try:
+            toolbar = getattr(self, "toolbar", None)
+            if toolbar is not None and hasattr(toolbar, "_nav_stack"):
+                toolbar._nav_stack.clear()
+                toolbar.set_history_buttons()
+        except Exception:
+            pass
+        self.ax = self.fig.add_subplot(111)
+        try:
+            self.ax.set_facecolor('white')
+        except Exception:
+            pass
+
+        masked_z_plot = np.ma.masked_invalid(z_plot)
+        extent = [
+            float(p_edges[0]),
+            float(p_edges[-1]),
+            float(q_edges[0]),
+            float(q_edges[-1]),
+        ]
+        if use_symlog_color:
+            pcm = self.ax.imshow(
+                masked_z_plot,
+                origin='lower',
+                extent=extent,
+                interpolation='nearest',
+                aspect='auto',
+                cmap=FULLT_DIVERGING_CMAP,
+                **color_limits,
+            )
+        else:
+            pcm = self.ax.imshow(
+                masked_z_plot,
+                origin='lower',
+                extent=extent,
+                interpolation='nearest',
+                aspect='auto',
+                cmap=FULLT_DIVERGING_CMAP,
+                resample=False,
+                **color_limits,
+            )
+        cbar = self.fig.colorbar(pcm, ax=self.ax, extend='both')
+        if normalize_by_max_t:
+            cbar.set_label(rf"$\langle \Re\,{transfer_symbol}\rangle_t/\max |T|_{{\pm}}$")
+        else:
+            cbar.set_label(rf"$\langle \Re\,{transfer_symbol}\rangle_t$")
+        cbar.set_ticks(np.linspace(-vmax, vmax, 9))
+
+        self.ax.axhline(0.0, color='0.18', linewidth=0.9, alpha=0.55)
+        self.ax.axvline(0.0, color='0.18', linewidth=0.9, alpha=0.55)
+
+        if use_zonal_radial_chain and kzf_mag > 0.0 and np.isfinite(kzf_mag):
+            x_min = min(float(p_edges[0]), float(p_edges[-1]))
+            x_max = max(float(p_edges[0]), float(p_edges[-1]))
+            y_min = min(float(q_edges[0]), float(q_edges[-1]))
+            y_max = max(float(q_edges[0]), float(q_edges[-1]))
+
+            def _inside(px, qx):
+                return x_min <= px <= x_max and y_min <= qx <= y_max
+
+            def _draw_step_arrow(start, end):
+                if not (_inside(start[0], start[1]) and _inside(end[0], end[1])):
+                    return
+                self.ax.plot(
+                    [start[0], end[0]],
+                    [start[1], end[1]],
+                    linestyle=':',
+                    color='0.45',
+                    linewidth=1.7,
+                    alpha=0.95,
+                    zorder=6,
+                )
+                self.ax.annotate(
+                    "",
+                    xy=(
+                        start[0] + 0.82 * (end[0] - start[0]),
+                        start[1] + 0.82 * (end[1] - start[1]),
+                    ),
+                    xytext=(
+                        start[0] + 0.58 * (end[0] - start[0]),
+                        start[1] + 0.58 * (end[1] - start[1]),
+                    ),
+                    arrowprops=dict(
+                        arrowstyle='-|>',
+                        color='0.45',
+                        linewidth=1.4,
+                        mutation_scale=13,
+                        shrinkA=0,
+                        shrinkB=0,
+                        alpha=0.95,
+                    ),
+                    zorder=7,
+                )
+
+            n_pos_max = int(np.ceil((x_max + kzf_mag) / kzf_mag)) + 1
+            n_neg_max = int(np.ceil((abs(x_min) + kzf_mag) / kzf_mag)) + 1
+
+            # Start both chains at the origin, then step outward along the
+            # two q_x-p_x = +/- k_zf branches.
+            _draw_step_arrow((0.0, 0.0), (0.0, kzf_mag))
+            _draw_step_arrow((0.0, 0.0), (0.0, -kzf_mag))
+
+            # Positive source-kx branch: origin -> +k_zf, then staircase to
+            # larger positive source kx.
+            for n_step in range(0, n_pos_max + 1):
+                px = n_step * kzf_mag
+                lower = px - kzf_mag
+                upper = px + kzf_mag
+                next_px = (n_step + 1) * kzf_mag
+                next_lower = next_px - kzf_mag
+
+                if n_step > 0:
+                    _draw_step_arrow((px, lower), (px, upper))
+                _draw_step_arrow((px, upper), (next_px, next_lower))
+
+            # Negative source-kx branch: mirrored staircase, also starting from
+            # the origin and pointing outward to more negative source kx.
+            for n_step in range(0, n_neg_max + 1):
+                px = -n_step * kzf_mag
+                upper = px + kzf_mag
+                lower = px - kzf_mag
+                next_px = -(n_step + 1) * kzf_mag
+                next_upper = next_px + kzf_mag
+
+                if n_step > 0:
+                    _draw_step_arrow((px, upper), (px, lower))
+                _draw_step_arrow((px, lower), (next_px, next_upper))
+
+        self.ax.set_xlim(float(p_edges[0]), float(p_edges[-1]))
+        self.ax.set_ylim(float(q_edges[0]), float(q_edges[-1]))
+        self.ax.set_xlabel(r"$p_x\rho_s$  (source mode $k_x$)")
+        self.ax.set_ylabel(r"$q_x\rho_s$  (target mode $k_x$)")
+        norm_title = " normalized by max T" if normalize_by_max_t else ""
+        self.ax.set_title(
+            f"{diag_name} trace p_x-q_x{norm_title}: "
+            rf"$p_y\rho_s={fixed_py:.3g},\ q_y\rho_s={fixed_qy:.3g},\ "
+            rf"|k_{{zf}}|\rho_s={kzf_mag:.3g}$"
+        )
+        self.ax.grid(False)
+        self.ax.tick_params(axis='x', labelrotation=0, labelsize=8)
+        self.ax.tick_params(axis='y', labelsize=8)
+
+        case_label = str(label)
+        if len(case_label) > 56:
+            case_label = "..." + case_label[-53:]
+        time_idx = np.asarray(trace_data.get("time_indices", []), dtype=int).reshape(-1)
+        time_msg = ""
+        if time_idx.size > 0:
+            time_msg = f"\ntime index: {int(time_idx[0])}-{int(time_idx[-1])}"
+        self.ax.text(
+            0.015,
+            0.985,
+            f"case: {case_label}\nsource ky index: {int(trace_data.get('source_ky_idx', -1))}{time_msg}",
+            transform=self.ax.transAxes,
+            ha='left',
+            va='top',
+            fontsize=8,
+            color='0.25',
+            bbox=dict(facecolor='white', edgecolor='none', alpha=0.65, pad=2.0),
+        )
+        try:
+            t_start_txt = float(t_start)
+            t_end_txt = float(t_end)
+            if not (np.isfinite(t_start_txt) and np.isfinite(t_end_txt)):
+                raise ValueError("non-finite time window")
+            self.ax.text(
+                0.985,
+                0.985,
+                rf"$\langle\cdot\rangle_t:\ {t_start_txt:.1f}-{t_end_txt:.1f}$",
+                transform=self.ax.transAxes,
+                ha='right',
+                va='top',
+                fontsize=8,
+                color='0.25',
+                bbox=dict(facecolor='white', edgecolor='none', alpha=0.65, pad=2.0),
+            )
+        except Exception:
+            pass
+
+        coord_p = np.asarray(source_kx_axis, dtype=float).copy()
+        coord_q = np.asarray(target_kx_axis, dtype=float).copy()
+        coord_z = np.asarray(z_plot, dtype=float).copy()
+        if hasattr(self, "_record_current_plot_xyz_dataset"):
+            dataset_norm = " normalized_by_max_T" if normalize_by_max_t else ""
+            self._record_current_plot_xyz_dataset(
+                f"{diag_name} trace Re{dataset_norm} {label}",
+                coord_p,
+                coord_q,
+                coord_z,
+            )
+        self.ax.format_coord = lambda x, y: self._format_fullt_coord(
+            x,
+            y,
+            coord_p,
+            coord_q,
+            coord_z,
+        )
+
     def _plot_energy_balance_fullt(self, data, label, t_indices, t_start, t_end):
         """Plot FULLT for one fixed source ky over scanned target kx/target ky."""
         try:
@@ -2998,7 +3854,12 @@ class EnergyPlotting:
             view_txt = str(self.energy_balance_transfer_xaxis_var.get()).strip().lower()
         except Exception:
             view_txt = "vs kxky"
-        view_mode = "vs kx" if view_txt == "vs kx" else "vs kxky"
+        if view_txt == "vs kx":
+            view_mode = "vs kx"
+        elif view_txt == "trace pxqx":
+            view_mode = "trace pxqx"
+        else:
+            view_mode = "vs kxky"
 
         try:
             ky_sel = float(str(self.energy_balance_transfer_ky_var.get()).strip())
@@ -3008,10 +3869,29 @@ class EnergyPlotting:
         try:
             kx_sel = float(str(self.energy_balance_transfer_kx_var.get()).strip())
         except Exception:
-            print(f"Invalid {diag_name} fixed source-kx input for {label}")
+            if view_mode == "trace pxqx":
+                print(f"Invalid {diag_name} fixed zonal-kx input for {label}")
+            else:
+                print(f"Invalid {diag_name} fixed source-kx input for {label}")
             return
 
         valid_t_request = np.asarray(t_indices, dtype=int).reshape(-1)
+        if view_mode == "trace pxqx":
+            self._plot_energy_balance_fullt_trace_pxqx(
+                data,
+                label,
+                valid_t_request,
+                t_start,
+                t_end,
+                use_asym,
+                normalize_by_max_t,
+                ky_sel,
+                kx_sel,
+                diag_name,
+                transfer_symbol,
+            )
+            return
+
         if not self._load_fullt_if_needed(
             data,
             label,
@@ -3081,11 +3961,15 @@ class EnergyPlotting:
         if ky_source_preferred.size == 1 and n_source == 1:
             source_ky_idx = 0
         else:
-            source_ky_idx = self._nearest_ky_index(ky_source_axis[:n_source], ky_sel)
+            source_ky_idx = self._nearest_source_ky_index(ky_source_axis[:n_source], ky_sel)
         if source_ky_idx is None:
             print(f"Could not map selected fixed source ky for {label}")
             return
-        fixed_ky = float(ky_source_axis[source_ky_idx])
+        fixed_ky = self._display_source_ky_value(
+            ky_source_axis[:n_source],
+            source_ky_idx,
+            ky_sel,
+        )
         if ky_source_preferred.size > 0 and np.isfinite(ky_source_preferred[0]):
             fixed_ky = float(ky_source_preferred[0])
         try:

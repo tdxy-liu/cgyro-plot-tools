@@ -329,6 +329,13 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
         except Exception:
             return False
 
+    def _use_fluc2d_log_z(self):
+        """Return True when the Fluctuation-2D kx-ky map should use logarithmic colors."""
+        try:
+            return bool(self.fluc2d_log_z_var.get())
+        except Exception:
+            return False
+
     @staticmethod
     def _positive_ky_axis(ky_like):
         """Return ky array for plotting with non-negative convention."""

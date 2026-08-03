@@ -5,6 +5,7 @@ Auto-extracted from cgyro_comparison_plotting.py during refactor.
 
 import numpy as np
 import matplotlib.animation as animation
+from matplotlib.colors import LogNorm
 
 class FluctuationPlotting:
     def _get_fluctuation_case_color(self, case_label):
@@ -449,6 +450,23 @@ class FluctuationPlotting:
         z = z[np.ix_(kx_order, ky_order)]
 
         z_plot = np.ma.masked_invalid(z.T)
+        use_log_z = self._use_fluc2d_log_z()
+        image_norm = None
+        title_scale_suffix = ""
+        if use_log_z:
+            positive_values = z[np.isfinite(z) & (z > 0.0)]
+            if positive_values.size > 0:
+                z_min = float(np.min(positive_values))
+                z_max = float(np.max(positive_values))
+                if z_max > z_min:
+                    z_plot = np.ma.masked_less_equal(z_plot, 0.0)
+                    image_norm = LogNorm(vmin=z_min, vmax=z_max)
+                    cbar_label += " (log scale)"
+                    title_scale_suffix = " [Log z]"
+                else:
+                    print(f"Log z unavailable for {label}: kxky map has only one positive value.")
+            else:
+                print(f"Log z unavailable for {label}: kxky map has no positive values.")
 
         def _extent_bounds(axis):
             axis = np.asarray(axis, dtype=float).reshape(-1)
@@ -467,12 +485,15 @@ class FluctuationPlotting:
             aspect='auto',
             interpolation='bicubic',
             cmap=self._get_2d_contour_cmap(),
+            norm=image_norm,
         )
         cbar = self.fig.colorbar(pcm, ax=self.ax)
         cbar.set_label(cbar_label)
         self.ax.set_xlabel(r'$k_x \rho_s$')
         self.ax.set_ylabel(r'$k_y \rho_s$')
-        self.ax.set_title(f'{field_name} vs kxky: {label}{avg_suffix} ({avg_mode})')
+        self.ax.set_title(
+            f'{field_name} vs kxky: {label}{avg_suffix} ({avg_mode}){title_scale_suffix}'
+        )
 
         if hasattr(self, "_record_current_plot_xyz_dataset"):
             # Store the physical axes and z values before Matplotlib turns them

@@ -11,10 +11,17 @@ import numpy as np
 
 # Ensure pygacode can be imported.
 _script_dir = os.path.dirname(__file__)
-for rel_path in ('../gacode/f2py', '../gacode-master/f2py'):
-    candidate = os.path.abspath(os.path.join(_script_dir, rel_path))
+_pygacode_candidates = [
+    os.path.abspath(os.path.join(_script_dir, rel_path))
+    for rel_path in (
+        '../f2py',
+        '../gacode/f2py',
+        '../gacode-master/f2py',
+    )
+]
+for candidate in reversed(_pygacode_candidates):
     if os.path.isdir(candidate) and candidate not in sys.path:
-        sys.path.append(candidate)
+        sys.path.insert(0, candidate)
 
 try:
     from pygacode.cgyro.data import cgyrodata

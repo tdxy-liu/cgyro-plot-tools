@@ -5,8 +5,10 @@ UI and case-management mixin for CGYRO comparison GUI.
 import os
 import re
 import json
+import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
+import webbrowser
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
@@ -32,6 +34,11 @@ except ImportError:
         DEFAULT_LINEAR_GAMMA_FILE,
         default_share_dir,
     )
+
+try:
+    from cgyro_update import APP_VERSION, REPOSITORY_URL, UpdateCheckError, check_for_updates
+except ImportError:
+    from .cgyro_update import APP_VERSION, REPOSITORY_URL, UpdateCheckError, check_for_updates
 
 
 class CgyroUiMixin:
@@ -68,7 +75,8 @@ class CgyroUiMixin:
     _ENERGY_BALANCE_SINGLE_QUANTITY_OPTIONS = ("T", "N", "T-N", "Dr", "Dtheta", "Dc", "DZ", "entropy")
     _ENERGY_BALANCE_SINGLE_XAXIS_OPTIONS = ("vs Time", "vs ky", "vs kx", "vs kxky")
     _ENERGY_BALANCE_SINGLE_NORM_OPTIONS = ("None", "|min(T)|", "|max(T)|")
-    _ENERGY_BALANCE_TRANSFER_XAXIS_OPTIONS = ("vs kxky", "vs kx")
+    _ENERGY_BALANCE_SINGLE_ENTROPY_NORM_OPTIONS = ("None", "min entropy", "max entropy", "ky=0 entropy")
+    _ENERGY_BALANCE_TRANSFER_XAXIS_OPTIONS = ("vs kxky", "vs kx", "trace pxqx")
     _ENERGY_BALANCE_TRANSFER_QUANTITY_OPTIONS = ("Re", "Im", "Abs")
     _OTHERS_PLOT_OPTIONS = ("Error", "rcorr_phi", "POD_parity")
     _OTHERS_FIELD_OPTIONS = ("Phi", "Apar", "Bpar")
@@ -95,6 +103,7 @@ class CgyroUiMixin:
         "flux_xaxis_var",
         "flux_scan_xparam_var",
         "flux_decomp_var",
+        "flux_2d_errorbar_var",
         "flux_norm_real_ion_var",
         "fluc_field_var",
         "fluc_xaxis_var",
@@ -103,6 +112,7 @@ class CgyroUiMixin:
         "moment_var",
         "fluc2d_view_var",
         "fluc2d_x_elec_var",
+        "fluc2d_log_z_var",
         "linear_gamma_file_var",
         "fft_mode_var",
         "fft_view_var",
@@ -181,9 +191,13 @@ class CgyroUiMixin:
         self._drag_start_index = None
         self._manual_pager_active = False
         self._manual_pager_label = "Page"
+        self._update_check_in_progress = False
+        self._update_check_menu = None
         
         self._create_layout()
         self._create_menu()
+        # Do not hold up startup or show an error for an offline workstation.
+        self.root.after(1500, self._check_for_updates_silently)
 
     def _create_layout(self):
         """Create top-level panels, control widgets, and matplotlib canvas."""
@@ -388,6 +402,103 @@ class CgyroUiMixin:
         axis_menu.add_command(label="Set limits...", command=self.open_axis_limits_dialog)
         axis_menu.add_command(label="Clear limits", command=self.clear_axis_limits)
 
+        help_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(label="Check for Updates...", command=self.check_for_updates)
+        help_menu.add_command(label="About", command=self.show_about)
+        self._update_check_menu = help_menu
+
+    def _check_for_updates_silently(self):
+        """Run the startup check without interrupting offline users."""
+        self._start_update_check(silent=True)
+
+    def check_for_updates(self):
+        """Start a user-requested update check in the background."""
+        self._start_update_check(silent=False)
+
+    def _start_update_check(self, silent):
+        if self._update_check_in_progress:
+            if not silent:
+                messagebox.showinfo(
+                    "Check for Updates",
+                    "An update check is already in progress.",
+                    parent=self.root,
+                )
+            return
+
+        self._update_check_in_progress = True
+        if self._update_check_menu is not None:
+            self._update_check_menu.entryconfig("Check for Updates...", state="disabled")
+
+        worker = threading.Thread(
+            target=self._update_check_worker,
+            args=(silent,),
+            name="cgyro-update-check",
+            daemon=True,
+        )
+        worker.start()
+
+    def _update_check_worker(self, silent):
+        try:
+            result = check_for_updates(APP_VERSION)
+        except UpdateCheckError as exc:
+            self._post_update_check_result(silent, None, str(exc))
+        except Exception as exc:  # Keep an unexpected network/parser error from killing the worker.
+            self._post_update_check_result(silent, None, str(exc))
+        else:
+            self._post_update_check_result(silent, result, None)
+
+    def _post_update_check_result(self, silent, result, error):
+        """Hand the worker result back to Tk unless the window was closed."""
+        try:
+            self.root.after(0, self._finish_update_check, silent, result, error)
+        except tk.TclError:
+            pass
+
+    def _finish_update_check(self, silent, result, error):
+        self._update_check_in_progress = False
+        if self._update_check_menu is not None:
+            self._update_check_menu.entryconfig("Check for Updates...", state="normal")
+
+        if error:
+            if not silent:
+                messagebox.showwarning("Check for Updates", error, parent=self.root)
+            return
+
+        if result.update_available:
+            release_label = f"\n{result.release_name}" if result.release_name else ""
+            open_page = messagebox.askyesno(
+                "Update Available",
+                f"A newer version of CGYRO Comparison Tool is available.\n\n"
+                f"Current version: {result.current_version}\n"
+                f"Latest version: {result.latest_version}{release_label}\n\n"
+                "Open the project download page?",
+                parent=self.root,
+            )
+            if open_page:
+                try:
+                    webbrowser.open(result.release_url or REPOSITORY_URL)
+                except Exception as exc:
+                    messagebox.showwarning(
+                        "Update Available",
+                        f"Could not open the download page:\n{exc}",
+                        parent=self.root,
+                    )
+        elif not silent:
+            messagebox.showinfo(
+                "Check for Updates",
+                f"You are using the latest version ({result.current_version}).",
+                parent=self.root,
+            )
+
+    def show_about(self):
+        """Show the local version and project page."""
+        messagebox.showinfo(
+            "About CGYRO Comparison Tool",
+            f"CGYRO Comparison Tool\nVersion {APP_VERSION}\n\n{REPOSITORY_URL}",
+            parent=self.root,
+        )
+
     def _init_options(self):
         """Initialize all plot-option widgets and bind dynamic callbacks."""
         self.options_frame.columnconfigure(0, weight=1)
@@ -457,6 +568,12 @@ class CgyroUiMixin:
         
         self.flux_decomp_var = tk.BooleanVar(value=False)
         self.flux_decomp_check = ttk.Checkbutton(self.options_frame, text="Decompose by Field", variable=self.flux_decomp_var)
+        self.flux_2d_errorbar_var = tk.BooleanVar(value=False)
+        self.flux_2d_errorbar_check = ttk.Checkbutton(
+            self.options_frame,
+            text="Error bars",
+            variable=self.flux_2d_errorbar_var,
+        )
         self.flux_norm_real_ion_var = tk.BooleanVar(value=False)
         self.flux_norm_real_ion_check = ttk.Checkbutton(
             self.options_frame,
@@ -533,6 +650,12 @@ class CgyroUiMixin:
             self.options_frame,
             text=r"Spatial axes normalize to electron scale (x,y)/\rho_e",
             variable=self.fluc2d_x_elec_var,
+        )
+        self.fluc2d_log_z_var = tk.BooleanVar(value=False)
+        self.fluc2d_log_z_check = ttk.Checkbutton(
+            self.options_frame,
+            text="Log z",
+            variable=self.fluc2d_log_z_var,
         )
 
         # 6. FFT Options (reused from before, but managed dynamically)
@@ -823,6 +946,7 @@ class CgyroUiMixin:
         self.flux_xaxis_combo.bind("<<ComboboxSelected>>", self.update_options)
         self.flux_type_combo.bind("<<ComboboxSelected>>", self.update_options)
         self.fluc_xaxis_combo.bind("<<ComboboxSelected>>", self.update_options)
+        self.fluc2d_view_combo.bind("<<ComboboxSelected>>", self.update_options)
         self.moment_combo.bind("<<ComboboxSelected>>", self.update_options)
         self.zf_xaxis_combo.bind("<<ComboboxSelected>>", self.update_options)
         self.energy_balance_mode_combo.bind("<<ComboboxSelected>>", self.update_options)
@@ -989,14 +1113,14 @@ class CgyroUiMixin:
         widgets = [
             self.norm_ky_check,
             self.flux_type_combo, self.flux_xaxis_combo, self.flux_decomp_check,
-            self.flux_norm_real_ion_check,
+            self.flux_2d_errorbar_check, self.flux_norm_real_ion_check,
             self.flux_scan_xparam_label, self.flux_scan_xparam_combo,
             self.flux_formula_frame,
             self.fluc_field_combo, self.fluc_xaxis_combo,
             self.fluc_formula_frame,
             self.species_label, self.species_combo, self.plot_all_species_check,
             self.fluc2d_view_label, self.fluc2d_view_combo,
-            self.fluc2d_x_elec_check,
+            self.fluc2d_x_elec_check, self.fluc2d_log_z_check,
             self.moment_label, self.moment_combo,
             self.fft_options_frame,
             self.fft_formula_frame,
@@ -1474,6 +1598,8 @@ class CgyroUiMixin:
                 rf"$\mathrm{{Map:}}\ \langle{map_name}(k_{{y,\mathrm{{sel}}}}^{{\mathrm{{target}}}},$",
                 r"$\quad k_x^{\prime},k_y^{\prime})\rangle_t=\langle T_k^\Phi(k^{\prime})\rangle_t$",
                 r"$\mathrm{vs}\ k_x:\ \mathrm{take\ the}\ k_y^{\prime}=k_y^{\mathrm{target}}\ \mathrm{slice\ through\ the\ marker.}$",
+                r"$\mathrm{trace}\ p_xq_x:\ \mathrm{fix}\ k_y^{source}=k_y^{target},\ \mathrm{plot}\ T(p_x,q_x).$",
+                r"$\mathrm{zonal\ chain:}\ q_x=p_x\pm k_{zf};\ \ q_x\ \mathrm{becomes\ the\ next}\ p_x.$",
                 r"$\mathrm{Optional\ display:}\ T>0\ \mathrm{divided\ by}\ \max(T),\quad T<0\ \mathrm{divided\ by}\ |\min(T)|$",
                 sum_note,
                 r"$T_k^\Phi>0:\ k^{\prime}\rightarrow k;\ \ \ T_k^\Phi<0:\ k\rightarrow k^{\prime}.$",
@@ -1491,7 +1617,8 @@ class CgyroUiMixin:
                 r"$\mathrm{X\!-\!axis} \in \{t,\ k_y,\ k_x,\ (k_x,k_y)\}$",
                 r"$\mathrm{vs}\ t,\ k_x:\ \mathrm{use\ ky\ scan\ to\ match\ nearest\ stored}\ k_y$",
                 r"$\mathrm{vs}\ k_x:\ \mathrm{plot}\ \langle T(k_x,k_y,t)\rangle_t$",
-                r"$\mathrm{Normalize} \in \{\mathrm{None},|\min(T)|,|\max(T)|\}:\ \{T,N,T\!-\!N\}\rightarrow\{T,N,T\!-\!N\}/\mathrm{scale}$",
+                r"$\mathrm{Normalize:}\ \{T,N,T\!-\!N\}/|\min(T)|\ \mathrm{or}\ /|\max(T)|;$",
+                r"$\mathrm{entropy:}\ S_g/|\min(S_g)|,\ S_g/|\max(S_g)|,\ \mathrm{or}\ S_g/S_g(k_y=0).$",
             ]
         else:
             lines = [
@@ -1593,6 +1720,8 @@ class CgyroUiMixin:
                 self.flux_scan_xparam_label.grid(row=row, column=0, sticky=tk.W)
                 self.flux_scan_xparam_combo.grid(row=row, column=1, sticky=tk.W + tk.E)
                 row += 1
+                self.flux_2d_errorbar_check.grid(row=row, column=0, columnspan=2, sticky=tk.W)
+                row += 1
             else:
                 self.flux_decomp_check.grid(row=row, column=0, columnspan=2, sticky=tk.W)
                 row += 1
@@ -1632,7 +1761,9 @@ class CgyroUiMixin:
                  self.species_label.grid(row=row, column=0, sticky=tk.W)
                  self.species_combo.grid(row=row, column=1, sticky=tk.W)
                  row += 1
-            if not self._is_fluc2d_kxky_view(self.fluc2d_view_var.get()):
+            if self._is_fluc2d_kxky_view(self.fluc2d_view_var.get()):
+                self.fluc2d_log_z_check.grid(row=row, column=0, columnspan=2, sticky=tk.W)
+            else:
                 self.fluc2d_x_elec_check.grid(row=row, column=0, columnspan=2, sticky=tk.W)
 
         elif plot_type == "Zonal ExB Shearing Rate":
@@ -1706,7 +1837,22 @@ class CgyroUiMixin:
                     row=erow, column=3, sticky=tk.W + tk.E, pady=2
                 )
                 erow += 1
-                norm_state = tk.DISABLED if qty_single in ["dr", "dtheta", "dc", "dz", "entropy"] else "readonly"
+                if qty_single == "entropy":
+                    self.energy_balance_single_norm_combo.configure(
+                        values=list(self._ENERGY_BALANCE_SINGLE_ENTROPY_NORM_OPTIONS)
+                    )
+                    current_norm = str(self.energy_balance_single_norm_var.get()).strip().lower()
+                    if current_norm not in ["none", "min entropy", "max entropy", "ky=0 entropy"]:
+                        self.energy_balance_single_norm_var.set("None")
+                    norm_state = "readonly"
+                else:
+                    self.energy_balance_single_norm_combo.configure(
+                        values=list(self._ENERGY_BALANCE_SINGLE_NORM_OPTIONS)
+                    )
+                    current_norm = str(self.energy_balance_single_norm_var.get()).strip()
+                    if current_norm.lower() in ["min entropy", "max entropy", "ky=0 entropy"]:
+                        self.energy_balance_single_norm_var.set("None")
+                    norm_state = tk.DISABLED if qty_single in ["dr", "dtheta", "dc", "dz"] else "readonly"
                 self.energy_balance_single_norm_label.grid(
                     row=erow, column=0, sticky=tk.W, padx=(0, 6), pady=2
                 )
@@ -1729,6 +1875,11 @@ class CgyroUiMixin:
                     row=erow, column=3, sticky=tk.W + tk.E, pady=2
                 )
                 erow += 1
+                transfer_view = str(self.energy_balance_transfer_xaxis_var.get()).strip().lower()
+                if transfer_view == "trace pxqx":
+                    self.energy_balance_transfer_kx_label.configure(text="fixed zonal kx:")
+                else:
+                    self.energy_balance_transfer_kx_label.configure(text="fixed source kx:")
                 self.energy_balance_transfer_kx_label.grid(
                     row=erow, column=2, sticky=tk.W, padx=(10, 6), pady=2
                 )
@@ -2169,7 +2320,10 @@ class CgyroUiMixin:
                     use_asym = False
                 transfer_name = "FULLT asym" if use_asym else "FULLT"
                 plot_type = "Energy Balance FULLT"
-                display_plot_type = f"Energy balance: {transfer_name} transfer ({xax}, Re, source ky={ky}, source kx={kx})"
+                if xax.strip().lower() == "trace pxqx":
+                    display_plot_type = f"Energy balance: {transfer_name} trace ({xax}, Re, source ky={ky}, zonal kx={kx})"
+                else:
+                    display_plot_type = f"Energy balance: {transfer_name} transfer ({xax}, Re, source ky={ky}, source kx={kx})"
             elif mode_key == "2d":
                 plot_type = "Energy Balance vs 2D"
                 display_plot_type = "Energy balance: vs 2D"

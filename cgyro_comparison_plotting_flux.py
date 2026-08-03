@@ -582,6 +582,11 @@ class FluxPlotting:
         except Exception:
             x_param = ""
 
+        try:
+            show_errorbar = bool(self.flux_2d_errorbar_var.get())
+        except Exception:
+            show_errorbar = False
+
         varying_params = []
         try:
             varying_params = list(self._get_flux_2d_varying_params(selected_cases))
@@ -690,12 +695,15 @@ class FluxPlotting:
                 t_idx = np.arange(max(0, n_t // 2), n_t, dtype=int)
                 if t_idx.size <= 0:
                     t_idx = np.arange(n_t, dtype=int)
-            y_val = float(np.mean(y_t[t_idx])) if t_idx.size > 0 else float(y_t[-1])
+            y_window = np.asarray(y_t[t_idx], dtype=float)
+            y_val = float(np.mean(y_window)) if y_window.size > 0 else float(y_t[-1])
+            y_err = float(np.std(y_window)) if y_window.size > 1 else 0.0
 
             flux_norm_scale = self._get_flux_real_ion_norm_scale(
                 data, moment_idx, label=f"{case_name}{' - ' + spec_label if spec_label else ''}"
             )
             y_val = float(y_val) * float(flux_norm_scale)
+            y_err = float(y_err) * abs(float(flux_norm_scale))
 
             # Group by all other varying parameters.
             grp_parts = []
@@ -706,7 +714,7 @@ class FluxPlotting:
                 except Exception:
                     grp_parts.append((str(k), np.nan))
             grp_key = tuple(grp_parts)
-            grouped.setdefault(grp_key, []).append((float(x_val), float(y_val), case_name, t0_used, t1_used))
+            grouped.setdefault(grp_key, []).append((float(x_val), float(y_val), float(y_err), case_name, t0_used, t1_used))
 
         if len(grouped) <= 0:
             messagebox.showwarning(
@@ -722,19 +730,25 @@ class FluxPlotting:
 
             x_vals = np.asarray([p[0] for p in pts], dtype=float)
             y_vals = np.asarray([p[1] for p in pts], dtype=float)
+            y_err_vals = np.asarray([p[2] for p in pts], dtype=float)
             finite = np.isfinite(x_vals) & np.isfinite(y_vals)
+            if show_errorbar:
+                finite = finite & np.isfinite(y_err_vals)
             if not np.any(finite):
                 continue
             x_vals = x_vals[finite]
             y_vals = y_vals[finite]
+            y_err_vals = y_err_vals[finite]
 
             order = np.argsort(x_vals)
             x_vals = x_vals[order]
             y_vals = y_vals[order]
+            y_err_vals = y_err_vals[order]
 
             # Merge repeated x by averaging.
             x_unique = []
             y_unique = []
+            yerr_unique = []
             i0 = 0
             while i0 < len(x_vals):
                 x0 = x_vals[i0]
@@ -742,7 +756,13 @@ class FluxPlotting:
                 while i1 < len(x_vals) and abs(x_vals[i1] - x0) <= 1.0e-12:
                     i1 += 1
                 x_unique.append(x0)
-                y_unique.append(float(np.mean(y_vals[i0:i1])))
+                y_slice = y_vals[i0:i1]
+                y_mean = float(np.mean(y_slice))
+                y_unique.append(y_mean)
+                if show_errorbar:
+                    e_slice = np.maximum(y_err_vals[i0:i1], 0.0)
+                    scatter = y_slice - y_mean
+                    yerr_unique.append(float(np.sqrt(np.mean(e_slice**2 + scatter**2))))
                 i0 = i1
 
             if len(grp_key) <= 0:
@@ -756,15 +776,40 @@ class FluxPlotting:
                         parts.append(f"{k}=NA")
                 curve_label = ", ".join(parts)
 
-            self.ax.plot(
-                np.asarray(x_unique, dtype=float),
-                np.asarray(y_unique, dtype=float),
-                linestyle='-',
-                marker='o',
-                markersize=5.0,
-                linewidth=1.8,
-                label=curve_label,
-            )
+            x_plot = np.asarray(x_unique, dtype=float)
+            y_plot = np.asarray(y_unique, dtype=float)
+            if show_errorbar:
+                yerr_plot = np.asarray(yerr_unique, dtype=float)
+                err_container = self.ax.errorbar(
+                    x_plot,
+                    y_plot,
+                    yerr=yerr_plot,
+                    linestyle='-',
+                    marker='o',
+                    markersize=5.0,
+                    linewidth=1.8,
+                    capsize=3.0,
+                    capthick=1.8,
+                    elinewidth=1.8,
+                    barsabove=True,
+                    zorder=10,
+                    label=curve_label,
+                )
+                errorbar_alpha = 0.60
+                for capline in err_container[1]:
+                    capline.set_alpha(errorbar_alpha)
+                for barlinecol in err_container[2]:
+                    barlinecol.set_alpha(errorbar_alpha)
+            else:
+                self.ax.plot(
+                    x_plot,
+                    y_plot,
+                    linestyle='-',
+                    marker='o',
+                    markersize=5.0,
+                    linewidth=1.8,
+                    label=curve_label,
+                )
 
         self.ax.set_xlabel(x_param)
         sub = self._get_flux_species_subscript()
