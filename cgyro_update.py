@@ -8,6 +8,7 @@ choose the appropriate execution model (the Tk UI runs it in a worker thread).
 
 import json
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -17,7 +18,7 @@ from urllib.request import Request, urlopen
 REPOSITORY_URL = "https://github.com/tdxy-liu/cgyro-plot-tools"
 RELEASE_API_URL = f"https://api.github.com/repos/tdxy-liu/cgyro-plot-tools/releases/latest"
 VERSION_URL = "https://raw.githubusercontent.com/tdxy-liu/cgyro-plot-tools/main/VERSION"
-DEFAULT_VERSION = "0.2.0"
+DEFAULT_VERSION = "0.2.1"
 DEFAULT_TIMEOUT = 5.0
 
 _VERSION_PATTERN = re.compile(
@@ -87,6 +88,12 @@ def _fetch_text(url, timeout=DEFAULT_TIMEOUT, allow_not_found=False):
         raise UpdateCheckError(f"Update service returned HTTP {exc.code}.") from exc
     except (URLError, TimeoutError, OSError) as exc:
         raise UpdateCheckError("Could not connect to the update service.") from exc
+
+
+def _cache_busted_url(url):
+    """Avoid stale CDN responses when reading the GitHub version manifest."""
+    separator = "&" if "?" in str(url) else "?"
+    return f"{url}{separator}cb={time.time_ns()}"
 
 
 def _release_info(payload, current_version):
@@ -159,7 +166,7 @@ def check_for_updates(current_version=APP_VERSION, timeout=DEFAULT_TIMEOUT):
         errors.append(exc)
 
     try:
-        manifest_payload = _fetch_text(VERSION_URL, timeout=timeout)
+        manifest_payload = _fetch_text(_cache_busted_url(VERSION_URL), timeout=timeout)
         return _manifest_info(manifest_payload, current_version)
     except UpdateCheckError as exc:
         errors.append(exc)
