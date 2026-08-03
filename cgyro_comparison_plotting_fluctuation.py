@@ -25,6 +25,28 @@ class FluctuationPlotting:
             color_map[case_label] = palette[len(color_map) % len(palette)]
         return color_map[case_label]
 
+    def _fluctuation_max_normalization_enabled(self):
+        """Return whether 1D fluctuation profiles should be scaled by max(abs(y))."""
+        var = getattr(self, "fluc_norm_max_var", None)
+        try:
+            return bool(var.get()) if var is not None else False
+        except Exception:
+            return False
+
+    def _normalize_fluctuation_profile(self, values):
+        """Normalize a plotted 1D profile by its finite maximum when requested."""
+        profile = np.asarray(values, dtype=float)
+        if not self._fluctuation_max_normalization_enabled():
+            return profile, False
+
+        finite = np.isfinite(profile)
+        if not np.any(finite):
+            return profile, False
+        max_value = float(np.max(np.abs(profile[finite])))
+        if not np.isfinite(max_value) or max_value <= 1.0e-15:
+            return profile, False
+        return profile / max_value, True
+
     def _load_fluctuation_moment_field(self, data, label, moment, main_ion_policy="all"):
         """
         Load fluctuation moment into unified complex shape `[nr, theta, ky, t]`.
@@ -202,14 +224,19 @@ class FluctuationPlotting:
             profile = np.sqrt(np.mean(amplitude ** 2, axis=average_axes))
             y_label = rf"$\sqrt{{\langle |{field_name}/\rho_s|^2 \rangle_{{k_x,k_y,t}}}}$"
 
+        profile, max_normalized = self._normalize_fluctuation_profile(profile)
+        if max_normalized:
+            y_label = f"{y_label} (max=1)"
+
         theta_axis = self._build_theta_over_pi_axis(data, n_theta)
         theta_axis = np.asarray(theta_axis, dtype=float).reshape(-1)
         if theta_axis.size != n_theta:
             theta_axis = np.linspace(-1.0, 1.0, n_theta)
 
+        normalization_suffix = ", max-normalized" if max_normalized else ""
         plot_label = (
             f"{label} (kx={kx_selection}, ky={ky_selection}"
-            f"{time_suffix}, {self._average_mode_name()})"
+            f"{time_suffix}, {self._average_mode_name()}{normalization_suffix})"
         )
         self._plot_1d(theta_axis, profile, plot_label, plot_type)
         self.ax.set_xlabel(r"$\theta/\pi$")
@@ -262,24 +289,61 @@ class FluctuationPlotting:
         # Calculate amplitude squared |field|^2
         field_sq = np.abs(field_data)**2
         ky = self._positive_ky_axis(getattr(data, 'ky', []))
+        if ky.size != field_data.shape[1]:
+            ky = np.arange(field_data.shape[1], dtype=float)
+        else:
+            ky = ky[:field_data.shape[1]]
         t_valid = np.asarray(t_indices, dtype=int)
         t_valid = t_valid[(t_valid >= 0) & (t_valid < field_sq.shape[-1])]
 
         if "vs ky" in plot_type:
             # Plot time-averaged amplitude vs ky.
-            # Sum over kx (axis 0) -> [ny, nt]
+            # Blank kx input averages over all kx modes.
+            kx_axis, radial_idx = self._build_kx_axis(data, field_data.shape[0], label)
+            if kx_axis is None or radial_idx is None:
+                print(f"No usable kx axis for {label}")
+                return
+            kx_axis = np.asarray(kx_axis, dtype=float).reshape(-1)
+            radial_idx = np.asarray(radial_idx, dtype=int).reshape(-1)
+            n_kx = min(kx_axis.size, radial_idx.size)
+            kx_axis = kx_axis[:n_kx]
+            radial_idx = radial_idx[:n_kx]
+            valid_kx = (
+                (radial_idx >= 0)
+                & (radial_idx < field_data.shape[0])
+                & np.isfinite(kx_axis)
+            )
+            kx_axis = kx_axis[valid_kx]
+            radial_idx = radial_idx[valid_kx]
+            kx_var = getattr(self, "fluc_theta_kx_var", None)
+            kx_text = kx_var.get() if kx_var is not None else ""
+            kx_indices, kx_selection = self._resolve_optional_axis_indices(
+                kx_axis, kx_text, "kx", label
+            )
+            if kx_indices.size <= 0:
+                print(f"No usable kx selection for {label}")
+                return
+            selected = field_data[radial_idx[kx_indices], :, :]
             if self._use_mean_absolute_average():
-                field_ky_t = np.sum(np.abs(field_data), axis=0)
+                field_ky_t = np.mean(np.abs(selected), axis=0)
             else:
-                field_ky_t = np.sum(field_sq, axis=0)
+                field_ky_t = np.mean(np.abs(selected) ** 2, axis=0)
             
+            if self._use_mean_absolute_average():
+                y_label = fr'$\langle | {field_name}/\rho_s | \rangle_{{k_x,t}}$'
+            else:
+                y_label = fr'$\sqrt{{\langle | {field_name}/\rho_s |^2 \rangle_{{k_x,t}}}}$'
+
             # Time average over selected window
-            if len(t_valid) > 0:
+            plot_label = f"{label} (kx={kx_selection}, ky=all, {avg_mode})"
+            if t_valid.size > 0:
                 if self._use_mean_absolute_average():
                     y_vals = np.mean(field_ky_t[:, t_valid], axis=1)
                 else:
                     y_vals = np.sqrt(np.mean(field_ky_t[:, t_valid], axis=1))
-                label = self._append_avg_suffix(label, t_start, t_end, prefix=f"Avg-{avg_tag}")
+                plot_label = self._append_avg_suffix(
+                    plot_label, t_start, t_end, prefix=f"Avg-{avg_tag}"
+                )
             else:
                 # Fallback to last time point
                 if self._use_mean_absolute_average():
@@ -287,58 +351,80 @@ class FluctuationPlotting:
                 else:
                     y_vals = np.sqrt(np.maximum(field_ky_t[:, -1], 0.0))
 
-            y = y_vals
-            
+            y, max_normalized = self._normalize_fluctuation_profile(y_vals)
+            if max_normalized:
+                y_label = f"{y_label} (max=1)"
+                plot_label += " [max-normalized]"
             x = ky
-            if x.size != y.size:
-                n = min(x.size, y.size)
-                x = x[:n]
-                y = y[:n]
-            
-            self._plot_1d(x, y, label, plot_type)
+            n = min(x.size, y.size)
+            self._plot_1d(x[:n], y[:n], plot_label, plot_type)
             self.ax.set_xlabel(r'$k_y \rho_s$')
-            self.ax.set_ylabel(y_label_rho_norm)
+            self.ax.set_ylabel(y_label)
             # self.ax.set_yscale('log')
             # self.ax.set_xscale('log') # Usually log-log for spectra
 
         elif "vs kx" in plot_type:
-            # Plot time-averaged amplitude vs kx.
-            # Sum over ky (axis 1) -> [kx, nt]
+            # The x-axis is kx; blank fixed-ky input averages over all ky modes.
+            ky_var = getattr(self, "fluc_theta_ky_var", None)
+            ky_text = ky_var.get() if ky_var is not None else ""
+            ky_indices, ky_selection = self._resolve_optional_axis_indices(
+                ky, ky_text, "ky", label
+            )
+            if ky_indices.size <= 0:
+                print(f"No usable ky selection for {label}")
+                return
+            kx_axis, radial_idx = self._build_kx_axis(data, field_data.shape[0], label)
+            if kx_axis is None or radial_idx is None:
+                print(f"No usable kx axis for {label}")
+                return
+            kx_axis = np.asarray(kx_axis, dtype=float).reshape(-1)
+            radial_idx = np.asarray(radial_idx, dtype=int).reshape(-1)
+            n_kx = min(kx_axis.size, radial_idx.size)
+            kx_axis = kx_axis[:n_kx]
+            radial_idx = radial_idx[:n_kx]
+            valid_kx = (
+                (radial_idx >= 0)
+                & (radial_idx < field_data.shape[0])
+                & np.isfinite(kx_axis)
+            )
+            kx_axis = kx_axis[valid_kx]
+            radial_idx = radial_idx[valid_kx]
+            selected = field_data[radial_idx, :, :][:, ky_indices, :]
             if self._use_mean_absolute_average():
-                field_kx_t = np.sum(np.abs(field_data), axis=1)
+                field_kx_t = np.mean(np.abs(selected), axis=1)
             else:
-                field_kx_t = np.sum(field_sq, axis=1)
+                field_kx_t = np.mean(np.abs(selected) ** 2, axis=1)
 
-            if len(t_valid) > 0:
+            if self._use_mean_absolute_average():
+                y_label = fr'$\langle | {field_name}/\rho_s | \rangle_{{k_y,t}}$'
+            else:
+                y_label = fr'$\sqrt{{\langle | {field_name}/\rho_s |^2 \rangle_{{k_y,t}}}}$'
+
+            plot_label = f"{label} (kx=all, ky={ky_selection}, {avg_mode})"
+            if t_valid.size > 0:
                 if self._use_mean_absolute_average():
                     y_vals = np.mean(field_kx_t[:, t_valid], axis=1)
                 else:
                     y_vals = np.sqrt(np.mean(field_kx_t[:, t_valid], axis=1))
-                label = self._append_avg_suffix(label, t_start, t_end, prefix=f"Avg-{avg_tag}")
+                plot_label = self._append_avg_suffix(
+                    plot_label, t_start, t_end, prefix=f"Avg-{avg_tag}"
+                )
             else:
                 if self._use_mean_absolute_average():
                     y_vals = np.abs(field_kx_t[:, -1])
                 else:
                     y_vals = np.sqrt(np.maximum(field_kx_t[:, -1], 0.0))
 
-            y = y_vals
+            y, max_normalized = self._normalize_fluctuation_profile(y_vals)
+            if max_normalized:
+                y_label = f"{y_label} (max=1)"
+                plot_label += " [max-normalized]"
 
-            n_kx = y.size
-            x = np.asarray(getattr(data, 'kx', [])).reshape(-1)
-            if x.size == n_kx + 1:
-                # Some datasets include one extra "special" leftmost element.
-                x = x[1:]
-            if x.size != n_kx:
-                if x.size > 1:
-                    dkx = float(x[1] - x[0])
-                else:
-                    length = float(getattr(data, 'length', 0.0))
-                    dkx = 2 * np.pi / length if length > 0 else 1.0
-                x = (np.arange(n_kx) - (n_kx // 2)) * dkx
-
-            self._plot_1d(x, y, label, plot_type)
+            x = kx_axis
+            n = min(x.size, y.size)
+            self._plot_1d(x[:n], y[:n], plot_label, plot_type)
             self.ax.set_xlabel(r'$k_x \rho_s$')
-            self.ax.set_ylabel(y_label_rho_norm)
+            self.ax.set_ylabel(y_label)
 
         
         elif "vs Time" in plot_type:

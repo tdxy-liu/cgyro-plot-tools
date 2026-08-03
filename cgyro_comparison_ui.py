@@ -107,6 +107,7 @@ class CgyroUiMixin:
         "flux_norm_real_ion_var",
         "fluc_field_var",
         "fluc_xaxis_var",
+        "fluc_norm_max_var",
         "fluc_theta_kx_var",
         "fluc_theta_ky_var",
         "species_var",
@@ -184,6 +185,8 @@ class CgyroUiMixin:
         self.axis_kx_max_var = tk.StringVar()
         self.axis_ky_min_var = tk.StringVar()
         self.axis_ky_max_var = tk.StringVar()
+        self.status_var = tk.StringVar(value="Ready")
+        self.case_summary_var = tk.StringVar(value="0 cases loaded")
 
         self.cases = {}  # Dictionary to store loaded cases: {name: cgyrodata_object}
         self.ani = None # Animation object
@@ -201,16 +204,114 @@ class CgyroUiMixin:
         # Do not hold up startup or show an error for an offline workstation.
         self.root.after(1500, self._check_for_updates_silently)
 
+    def _configure_ui_styles(self):
+        """Apply a small, theme-friendly visual system to the main window."""
+        style = ttk.Style(self.root)
+        self._ui_style = style
+        try:
+            style.configure("App.TFrame", padding=0)
+            style.configure("AppTitle.TLabel", font=("Segoe UI", 13, "bold"))
+            style.configure("SectionLabel.TLabel", font=("Segoe UI", 9, "bold"))
+            style.configure("Muted.TLabel", foreground="#667085", font=("Segoe UI", 9))
+            style.configure("Status.TLabel", foreground="#667085", font=("Segoe UI", 9))
+            style.configure("Card.TLabelframe", padding=8)
+            style.configure("Card.TLabelframe.Label", font=("Segoe UI", 10, "bold"))
+            style.configure("Inner.TLabelframe", padding=6)
+            style.configure("Inner.TLabelframe.Label", font=("Segoe UI", 9, "bold"))
+            style.configure("Compact.TButton", padding=(7, 4))
+            style.configure("Accent.TButton", font=("Segoe UI", 10, "bold"), padding=(10, 7))
+        except tk.TclError:
+            # Some platform themes expose fewer style options.  The default
+            # ttk theme is still fully usable when a custom option is rejected.
+            pass
+
+    def _set_initial_pane_position(self):
+        """Set a comfortable initial control-panel width after geometry settles."""
+        try:
+            pane_width = int(self.main_pane.winfo_width())
+            if pane_width <= 0:
+                self.root.after(50, self._set_initial_pane_position)
+                return
+            left_min = int(getattr(self, "_left_pane_min_width", 340))
+            right_min = int(getattr(self, "_right_pane_min_width", 500))
+            max_position = max(left_min, pane_width - right_min)
+            desired_position = min(440, max(left_min, int(pane_width * 0.32)))
+            position = min(desired_position, max_position)
+            self.main_pane.sashpos(0, position)
+            self._enforce_pane_minimums()
+        except (AttributeError, tk.TclError, ValueError):
+            pass
+
+    def _enforce_pane_minimums(self, _event=None):
+        """Keep both panes usable on Tk versions without a ``minsize`` option."""
+        try:
+            pane_width = int(self.main_pane.winfo_width())
+            if pane_width <= 0:
+                return
+            left_min = int(getattr(self, "_left_pane_min_width", 340))
+            right_min = int(getattr(self, "_right_pane_min_width", 500))
+            current_position = int(self.main_pane.sashpos(0))
+            max_position = max(left_min, pane_width - right_min)
+            position = min(max(current_position, left_min), max_position)
+            if position != current_position:
+                self.main_pane.sashpos(0, position)
+        except (AttributeError, tk.TclError, ValueError):
+            pass
+
+    def _refresh_case_summary(self, status_prefix="Ready"):
+        """Refresh the compact case count and status-bar summary."""
+        try:
+            count = int(self.case_listbox.size())
+            selected = len(self.case_listbox.curselection())
+        except (AttributeError, tk.TclError):
+            count = len(getattr(self, "cases", {}))
+            selected = 0
+
+        case_word = "case" if count == 1 else "cases"
+        summary = f"{count} {case_word} loaded"
+        if selected:
+            summary += f" | {selected} selected"
+        self.case_summary_var.set(summary)
+
+        plot_var = getattr(self, "plot_type_var", None)
+        plot_name = str(plot_var.get()).strip() if plot_var is not None else ""
+        status = f"{status_prefix} | {summary}"
+        if plot_name:
+            status += f" | {plot_name}"
+        self.status_var.set(status)
+
     def _create_layout(self):
         """Create top-level panels, control widgets, and matplotlib canvas."""
-        # Main container
-        main_frame = ttk.Frame(self.root)
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        self._configure_ui_styles()
+
+        # Keep a small, always-visible status strip separate from the scrollable
+        # control panel so long option lists never hide important feedback.
+        status_frame = ttk.Frame(self.root, padding=(10, 4))
+        status_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        ttk.Separator(status_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, side=tk.TOP)
+        ttk.Label(
+            status_frame,
+            textvariable=self.status_var,
+            style="Status.TLabel",
+        ).pack(anchor=tk.W, pady=(3, 0))
+
+        # A PanedWindow makes the control area resizable instead of locking it
+        # to a fixed 420 px column on every screen size.
+        main_frame = ttk.Frame(self.root, style="App.TFrame", padding=(8, 8, 8, 0))
+        main_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self._left_pane_min_width = 340
+        self._right_pane_min_width = 500
+        self.main_pane = ttk.PanedWindow(main_frame, orient=tk.HORIZONTAL)
+        self.main_pane.pack(fill=tk.BOTH, expand=True)
+        self.main_pane.bind("<Configure>", self._enforce_pane_minimums, add="+")
+        self.main_pane.bind("<B1-Motion>", self._enforce_pane_minimums, add="+")
+        self.main_pane.bind("<ButtonRelease-1>", self._enforce_pane_minimums, add="+")
 
         # Left panel (scrollable): Controls and Case List
-        left_container = ttk.Frame(main_frame, width=420)
-        left_container.pack(side=tk.LEFT, fill=tk.Y)
+        left_container = ttk.Frame(self.main_pane, width=390)
+        self.main_pane.add(left_container, weight=0)
         left_container.pack_propagate(False)
+        self.left_container = left_container
 
         self.left_scrollbar = ttk.Scrollbar(left_container, orient=tk.VERTICAL)
         self.left_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -220,7 +321,8 @@ class CgyroUiMixin:
         self.left_canvas.configure(yscrollcommand=self.left_scrollbar.set)
         self.left_scrollbar.configure(command=self.left_canvas.yview)
 
-        left_panel = ttk.Frame(self.left_canvas, padding=10)
+        left_panel = ttk.Frame(self.left_canvas, padding=12, style="App.TFrame")
+        self.left_panel = left_panel
         self._left_panel_window = self.left_canvas.create_window((0, 0), window=left_panel, anchor=tk.NW)
         left_panel.bind("<Configure>", self._on_left_panel_configure)
         self.left_canvas.bind("<Configure>", self._on_left_canvas_configure)
@@ -229,47 +331,68 @@ class CgyroUiMixin:
         left_panel.bind("<Enter>", self._on_left_panel_enter)
         left_panel.bind("<Leave>", self._on_left_panel_leave)
         
+        self.root.after_idle(self._set_initial_pane_position)
+
+        # Header
+        header = ttk.Frame(left_panel, style="App.TFrame")
+        header.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(header, text=DEFAULT_APP_TITLE, style="AppTitle.TLabel").pack(anchor=tk.W)
+        ttk.Label(header, textvariable=self.case_summary_var, style="Muted.TLabel").pack(anchor=tk.W, pady=(2, 0))
+
         # Case List
-        ttk.Label(left_panel, text="Loaded Cases:").pack(anchor=tk.W)
-        self.case_listbox = tk.Listbox(left_panel, selectmode=tk.EXTENDED, height=10)
-        self.case_listbox.pack(fill=tk.X, pady=5)
+        case_section = ttk.LabelFrame(left_panel, text="Cases", padding=8, style="Card.TLabelframe")
+        case_section.pack(fill=tk.X, pady=(0, 8))
+        self.case_listbox = tk.Listbox(
+            case_section,
+            selectmode=tk.EXTENDED,
+            height=8,
+            activestyle="none",
+            relief=tk.FLAT,
+            borderwidth=1,
+            highlightthickness=1,
+            highlightcolor="#7aa2d6",
+            selectbackground="#2f6fad",
+            selectforeground="white",
+        )
+        self.case_listbox.pack(fill=tk.X, pady=(0, 6))
         
         # Enable drag and drop reordering
         self.case_listbox.bind('<Button-1>', self._on_drag_start)
         self.case_listbox.bind('<B1-Motion>', self._on_drag_motion)
         self.case_listbox.bind('<<ListboxSelect>>', self.update_options)
         
-        btn_frame_load = ttk.Frame(left_panel)
-        btn_frame_load.pack(fill=tk.X, pady=5)
+        btn_frame_load = ttk.Frame(case_section)
+        btn_frame_load.pack(fill=tk.X, pady=(0, 2))
         btn_frame_load.columnconfigure(0, weight=1)
         btn_frame_load.columnconfigure(1, weight=1)
         ttk.Button(
-            btn_frame_load, text="Add Case (Single)", command=self.add_case_single
+            btn_frame_load, text="Add Case", command=self.add_case_single, style="Compact.TButton"
         ).grid(row=0, column=0, padx=2, pady=2, sticky=tk.EW)
         ttk.Button(
-            btn_frame_load, text="Add Case (Multiple)", command=self.add_case_multiple
+            btn_frame_load, text="Add Multiple", command=self.add_case_multiple, style="Compact.TButton"
         ).grid(row=0, column=1, padx=2, pady=2, sticky=tk.EW)
-        ttk.Button(btn_frame_load, text="Add Group", command=self.add_group).grid(
+        ttk.Button(btn_frame_load, text="Add Group", command=self.add_group, style="Compact.TButton").grid(
             row=1, column=0, columnspan=2, padx=2, pady=2, sticky=tk.EW
         )
 
-        btn_frame_manage = ttk.Frame(left_panel)
-        btn_frame_manage.pack(fill=tk.X, pady=2)
+        btn_frame_manage = ttk.Frame(case_section)
+        btn_frame_manage.pack(fill=tk.X, pady=(2, 0))
         btn_frame_manage.columnconfigure(0, weight=1)
         btn_frame_manage.columnconfigure(1, weight=1)
-        ttk.Button(btn_frame_manage, text="Remove", command=self.remove_case).grid(
+        ttk.Button(btn_frame_manage, text="Remove", command=self.remove_case, style="Compact.TButton").grid(
             row=0, column=0, padx=2, pady=2, sticky=tk.EW
         )
-        ttk.Button(btn_frame_manage, text="Remove All", command=self.remove_all_cases).grid(
+        ttk.Button(btn_frame_manage, text="Remove All", command=self.remove_all_cases, style="Compact.TButton").grid(
             row=0, column=1, padx=2, pady=2, sticky=tk.EW
         )
-        ttk.Button(btn_frame_manage, text="Reload", command=self.reload_cases).grid(
+        ttk.Button(btn_frame_manage, text="Reload", command=self.reload_cases, style="Compact.TButton").grid(
             row=1, column=0, columnspan=2, padx=2, pady=2, sticky=tk.EW
         )
 
         # Plot Controls
-        ttk.Separator(left_panel, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
-        ttk.Label(left_panel, text="Plot Type:").pack(anchor=tk.W)
+        plot_section = ttk.LabelFrame(left_panel, text="Plot setup", padding=8, style="Card.TLabelframe")
+        plot_section.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(plot_section, text="Plot type:", style="SectionLabel.TLabel").pack(anchor=tk.W)
         
         self.plot_type_var = tk.StringVar(value="Frequency")
         plot_types = [
@@ -282,24 +405,52 @@ class CgyroUiMixin:
             "Zonal ExB Shearing Rate",
             "Others",
         ]
-        self.plot_type_combo = ttk.Combobox(left_panel, textvariable=self.plot_type_var, values=plot_types, state="readonly")
-        self.plot_type_combo.pack(fill=tk.X, pady=5)
+        self.plot_type_combo = ttk.Combobox(plot_section, textvariable=self.plot_type_var, values=plot_types, state="readonly")
+        self.plot_type_combo.pack(fill=tk.X, pady=(3, 0))
         self.plot_type_combo.bind("<<ComboboxSelected>>", self.update_options)
 
         # Dynamic Options Frame
-        self.options_frame = ttk.LabelFrame(left_panel, text="Options", padding=5)
-        self.options_frame.pack(fill=tk.X, pady=10)
+        self.options_frame = ttk.LabelFrame(plot_section, text="Options", padding=7, style="Inner.TLabelframe")
+        self.options_frame.pack(fill=tk.X, pady=(8, 0))
         self._init_options()
+        self._refresh_case_summary()
 
         # Action Buttons
-        ttk.Button(left_panel, text="Plot", command=self.plot_comparison).pack(fill=tk.X, pady=10)
-        ttk.Button(left_panel, text="Check out.cgyro.info", command=self.plot_case_info).pack(fill=tk.X, pady=(0, 6))
-        ttk.Button(left_panel, text="Diff input.cgyro", command=self.plot_input_diff).pack(fill=tk.X, pady=(0, 6))
-        ttk.Button(left_panel, text="Clear Plot", command=self.clear_plot).pack(fill=tk.X)
+        action_section = ttk.LabelFrame(left_panel, text="Actions", padding=8, style="Card.TLabelframe")
+        action_section.pack(fill=tk.X, pady=(0, 8))
+        action_section.columnconfigure(0, weight=1)
+        action_section.columnconfigure(1, weight=1)
+        self.plot_button = ttk.Button(
+            action_section,
+            text="Plot",
+            command=self.plot_comparison,
+            style="Accent.TButton",
+        )
+        self.plot_button.grid(row=0, column=0, columnspan=2, sticky=tk.EW, pady=(0, 5))
+        ttk.Button(
+            action_section,
+            text="Case info",
+            command=self.plot_case_info,
+            style="Compact.TButton",
+        ).grid(row=1, column=0, padx=(0, 3), sticky=tk.EW)
+        ttk.Button(
+            action_section,
+            text="Diff input",
+            command=self.plot_input_diff,
+            style="Compact.TButton",
+        ).grid(row=1, column=1, padx=(3, 0), sticky=tk.EW)
+        ttk.Button(
+            action_section,
+            text="Clear plot",
+            command=self.clear_plot,
+            style="Compact.TButton",
+        ).grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=(5, 0))
 
         # Animation Controls
-        self.anim_controls_frame = ttk.Frame(left_panel)
-        self.anim_controls_frame.pack(fill=tk.X, pady=10)
+        animation_section = ttk.LabelFrame(left_panel, text="Animation", padding=8, style="Card.TLabelframe")
+        animation_section.pack(fill=tk.X, pady=(0, 8))
+        self.anim_controls_frame = ttk.Frame(animation_section)
+        self.anim_controls_frame.pack(fill=tk.X)
         
         self.btn_prev = ttk.Button(self.anim_controls_frame, text="< Prev", command=self.prev_frame, state="disabled")
         self.btn_prev.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -311,8 +462,9 @@ class CgyroUiMixin:
         self.btn_next.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # Right panel: Plot Area
-        right_panel = ttk.Frame(main_frame, padding=10)
-        right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        right_panel = ttk.Frame(self.main_pane, padding=10)
+        self.main_pane.add(right_panel, weight=1)
+        self.right_panel = right_panel
         right_panel.rowconfigure(0, weight=1)
         right_panel.rowconfigure(1, weight=0, minsize=38)
         right_panel.columnconfigure(0, weight=1)
@@ -609,6 +761,12 @@ class CgyroUiMixin:
             values=list(self._FLUC_XAXIS_OPTIONS),
             state="readonly",
             width=15,
+        )
+        self.fluc_norm_max_var = tk.BooleanVar(value=False)
+        self.fluc_norm_max_check = ttk.Checkbutton(
+            self.options_frame,
+            text="Normalize by max value",
+            variable=self.fluc_norm_max_var,
         )
         self.fluc_theta_kx_label = ttk.Label(self.options_frame, text="kx (blank=avg):")
         self.fluc_theta_kx_var = tk.StringVar(value="")
@@ -1133,6 +1291,7 @@ class CgyroUiMixin:
             self.flux_scan_xparam_label, self.flux_scan_xparam_combo,
             self.flux_formula_frame,
             self.fluc_field_combo, self.fluc_xaxis_combo,
+            self.fluc_norm_max_check,
             self.fluc_theta_kx_label, self.fluc_theta_kx_entry,
             self.fluc_theta_ky_label, self.fluc_theta_ky_entry,
             self.fluc_formula_frame,
@@ -1361,6 +1520,7 @@ class CgyroUiMixin:
                     r"Field slice: $F(k_x,\theta,k_y,t)=\phi/\rho_s$.",
                     r"Blank kx or ky selection averages over that spectral axis.",
                     r"Use $idx:n$ for an index or $val:x$ for the nearest physical kx/ky value.",
+                    r"Optional max normalization divides the final profile by its finite maximum.",
                     r"$A(\theta)=\left\langle\mathrm{mean}_{k_x,k_y}|F(k_x,\theta,k_y,t)|\right\rangle_t$.",
                     r"The time window follows the shared Time controls.",
                 ]
@@ -1370,6 +1530,7 @@ class CgyroUiMixin:
                     r"Field slice: $F(k_x,\theta,k_y,t)=\phi/\rho_s$.",
                     r"Blank kx or ky selection averages over that spectral axis.",
                     r"Use $idx:n$ for an index or $val:x$ for the nearest physical kx/ky value.",
+                    r"Optional max normalization divides the final profile by its finite maximum.",
                     r"$A(\theta)=\sqrt{\left\langle\mathrm{mean}_{k_x,k_y}|F(k_x,\theta,k_y,t)|^2\right\rangle_t}$.",
                     r"The time window follows the shared Time controls.",
                 ]
@@ -1378,8 +1539,10 @@ class CgyroUiMixin:
                 r"Fluctuation 1D: Mean Absolute (code definition)",
                 r"Field slice used in code: $F(k_x,k_y,t)$ from midplane $\theta$ and radial index $[1:]$.",
                 r"Normalization in code: $F\leftarrow F/\rho_s$ (uses case `rho`; if invalid, fallback $1$).",
-                r"vs $k_y$: $A(k_y)=\left\langle\sum_{k_x}|F(k_x,k_y,t)|\right\rangle_{t\in[t_0,t_1]}$.",
-                r"vs $k_x$: $A(k_x)=\left\langle\sum_{k_y}|F(k_x,k_y,t)|\right\rangle_{t\in[t_0,t_1]}$.",
+                r"Blank fixed-axis selection averages; enter $idx:n$ or $val:x$ to select a mode.",
+                r"Optional max normalization divides the final profile by its finite maximum.",
+                r"vs $k_y$: $A(k_y)=\left\langle\mathrm{mean}_{k_x}|F(k_x,k_y,t)|\right\rangle_{t\in[t_0,t_1]}$; fixed kx selects one mode.",
+                r"vs $k_x$: $A(k_x)=\left\langle\mathrm{mean}_{k_y}|F(k_x,k_y,t)|\right\rangle_{t\in[t_0,t_1]}$; fixed ky selects one mode.",
                 r"vs Time: $n=0$ and $n>0$ channels are split, each sums over $k_x$ (and $k_y\neq0$ for $n>0$).",
                 r"If selected window is empty, code uses last time slice.",
             ]
@@ -1388,8 +1551,10 @@ class CgyroUiMixin:
                 r"Fluctuation 1D: Root Mean Square (code definition)",
                 r"Field slice used in code: $F(k_x,k_y,t)$ from midplane $\theta$ and radial index $[1:]$.",
                 r"Normalization in code: $F\leftarrow F/\rho_s$ (uses case `rho`; if invalid, fallback $1$).",
-                r"vs $k_y$: $A(k_y)=\sqrt{\left\langle\sum_{k_x}|F(k_x,k_y,t)|^2\right\rangle_{t\in[t_0,t_1]}}$.",
-                r"vs $k_x$: $A(k_x)=\sqrt{\left\langle\sum_{k_y}|F(k_x,k_y,t)|^2\right\rangle_{t\in[t_0,t_1]}}$.",
+                r"Blank fixed-axis selection averages; enter $idx:n$ or $val:x$ to select a mode.",
+                r"Optional max normalization divides the final profile by its finite maximum.",
+                r"vs $k_y$: $A(k_y)=\sqrt{\left\langle\mathrm{mean}_{k_x}|F(k_x,k_y,t)|^2\right\rangle_{t\in[t_0,t_1]}}$; fixed kx selects one mode.",
+                r"vs $k_x$: $A(k_x)=\sqrt{\left\langle\mathrm{mean}_{k_y}|F(k_x,k_y,t)|^2\right\rangle_{t\in[t_0,t_1]}}$; fixed ky selects one mode.",
                 r"vs Time: $A_{n=0}(t)=\sqrt{\sum_{k_x}|F(k_x,k_y=0,t)|^2}$,",
                 r"$A_{n>0}(t)=\sqrt{\sum_{k_x}\sum_{k_y\neq0}|F(k_x,k_y,t)|^2}$.",
                 r"If selected window is empty, code uses last time slice.",
@@ -1737,6 +1902,7 @@ class CgyroUiMixin:
 
     def update_options(self, event=None):
         """Refresh dynamic option layout according to currently selected plot type."""
+        self._refresh_case_summary()
         self._hide_dynamic_options()
         plot_type = self.plot_type_var.get()
         row = 3 # Start below the shared Time Start/End and log-scale controls.
@@ -1777,11 +1943,28 @@ class CgyroUiMixin:
             self.fluc_xaxis_combo.grid(row=row, column=1, sticky=tk.W)
             row += 1
 
-            if self.fluc_xaxis_var.get() == "v.s theta":
+            fluc_xaxis = self.fluc_xaxis_var.get()
+            if fluc_xaxis == "v.s ky":
+                self.fluc_theta_kx_label.configure(text="fixed kx (blank=avg):")
+                self.fluc_theta_kx_label.grid(row=row, column=0, sticky=tk.W)
+                self.fluc_theta_kx_entry.grid(row=row, column=1, sticky=tk.W)
+                row += 1
+            elif fluc_xaxis == "v.s kx":
+                self.fluc_theta_ky_label.configure(text="fixed ky (blank=avg):")
+                self.fluc_theta_ky_label.grid(row=row, column=0, sticky=tk.W)
+                self.fluc_theta_ky_entry.grid(row=row, column=1, sticky=tk.W)
+                row += 1
+            elif fluc_xaxis == "v.s theta":
+                self.fluc_theta_kx_label.configure(text="kx (blank=avg):")
+                self.fluc_theta_ky_label.configure(text="ky (blank=avg):")
                 self.fluc_theta_kx_label.grid(row=row, column=0, sticky=tk.W)
                 self.fluc_theta_kx_entry.grid(row=row, column=1, sticky=tk.W)
                 self.fluc_theta_ky_label.grid(row=row, column=2, sticky=tk.W, padx=(8, 0))
                 self.fluc_theta_ky_entry.grid(row=row, column=3, sticky=tk.W)
+                row += 1
+
+            if fluc_xaxis in ("v.s ky", "v.s kx", "v.s theta"):
+                self.fluc_norm_max_check.grid(row=row, column=0, columnspan=2, sticky=tk.W)
                 row += 1
             
             # Check if FFT is selected in the sub-option
@@ -2318,10 +2501,15 @@ class CgyroUiMixin:
             else:
                 xaxis_str = xaxis.replace("v.s", "vs")
                 plot_type = f"{field} {xaxis_str}"
-                if xaxis == "v.s theta":
+                if xaxis in ("v.s ky", "v.s kx", "v.s theta"):
                     kx_text = self.fluc_theta_kx_var.get().strip() or "average"
                     ky_text = self.fluc_theta_ky_var.get().strip() or "average"
-                    display_plot_type = f"{field} vs theta (kx={kx_text}, ky={ky_text})"
+                    if xaxis == "v.s ky":
+                        display_plot_type = f"{field} vs ky (kx={kx_text})"
+                    elif xaxis == "v.s kx":
+                        display_plot_type = f"{field} vs kx (ky={ky_text})"
+                    else:
+                        display_plot_type = f"{field} vs theta (kx={kx_text}, ky={ky_text})"
         elif plot_type_selection == "Fluctuation 2D":
             view = self.fluc2d_view_var.get().strip().lower()
             # Use the exact mapping above instead of composing strings here;
@@ -2740,6 +2928,7 @@ class CgyroUiMixin:
             
             self.cases[case_name] = data
             self.case_listbox.insert(tk.END, case_name)
+            self._refresh_case_summary("Loaded")
             if not silent:
                 print(f"Loaded case: {case_name} from {dir_path}")
             return True
@@ -2916,6 +3105,7 @@ class CgyroUiMixin:
             del self.cases[case_name]
             self.case_listbox.delete(index)
         self._update_species_list()
+        self._refresh_case_summary("Removed")
         if hasattr(self, "_clear_current_plot_data"):
             self._clear_current_plot_data()
 
@@ -2925,6 +3115,7 @@ class CgyroUiMixin:
             self.cases.clear()
             self.case_listbox.delete(0, tk.END)
             self._update_species_list()
+            self._refresh_case_summary("Removed all")
             if hasattr(self, "_clear_current_plot_data"):
                 self._clear_current_plot_data()
 

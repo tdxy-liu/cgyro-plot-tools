@@ -1169,6 +1169,8 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
         This method builds effective plot mode, applies single-case constraints
         for contour-like plots, dispatches plotting, then finalizes figure state.
         """
+        if hasattr(self, "_refresh_case_summary"):
+            self._refresh_case_summary("Plotting")
         self._reset_plot_area()
         plot_type_selection, plot_type, display_plot_type = self._build_effective_plot_type()
         selected_cases = self._get_selected_case_names()
@@ -1193,6 +1195,8 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
             if data0 is not None and self._case_theta_resolution_is_insufficient(data0):
                 self._show_pod_theta_resolution_warning()
                 self.canvas.draw()
+                if hasattr(self, "_refresh_case_summary"):
+                    self._refresh_case_summary("Ready")
                 return
 
         if (
@@ -1213,6 +1217,8 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
             self._plot_selected_cases(selected_cases, plot_type)
 
         self._finalize_plot(plot_type_selection, plot_type, display_plot_type)
+        if hasattr(self, "_refresh_case_summary"):
+            self._refresh_case_summary("Ready")
 
     def plot_case_info(self):
         """
