@@ -5,10 +5,10 @@ UI and case-management mixin for CGYRO comparison GUI.
 import os
 import re
 import json
+import subprocess
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
-import webbrowser
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
@@ -621,29 +621,119 @@ class CgyroUiMixin:
 
         if result.update_available:
             release_label = f"\n{result.release_name}" if result.release_name else ""
-            open_page = messagebox.askyesno(
+            update_now = messagebox.askyesno(
                 "Update Available",
                 f"A newer version of CGYRO Comparison Tool is available.\n\n"
                 f"Current version: {result.current_version}\n"
                 f"Latest version: {result.latest_version}{release_label}\n\n"
-                "Open the project download page?",
+                "Download the update with git pull now?\n"
+                "The application must be restarted after updating.",
                 parent=self.root,
             )
-            if open_page:
-                try:
-                    webbrowser.open(result.release_url or REPOSITORY_URL)
-                except Exception as exc:
-                    messagebox.showwarning(
-                        "Update Available",
-                        f"Could not open the download page:\n{exc}",
-                        parent=self.root,
-                    )
+            if update_now:
+                self._pull_update_from_git(result.latest_version)
         elif not silent:
             messagebox.showinfo(
                 "Check for Updates",
                 f"You are using the latest version ({result.current_version}).",
                 parent=self.root,
             )
+
+    def _pull_update_from_git(self, latest_version):
+        """Fast-forward the current Git checkout after explicit user approval."""
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+        try:
+            repo_check = subprocess.run(
+                ["git", "-C", app_dir, "rev-parse", "--show-toplevel"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            self._show_manual_git_update(app_dir, f"Could not locate Git: {exc}")
+            return
+
+        if repo_check.returncode != 0:
+            self._show_manual_git_update(
+                app_dir,
+                "This application is not running from a Git checkout.",
+            )
+            return
+
+        repo_root = repo_check.stdout.strip() or app_dir
+        branch_check = subprocess.run(
+            ["git", "-C", repo_root, "branch", "--show-current"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+        branch = branch_check.stdout.strip()
+        if branch != "main":
+            self._show_manual_git_update(
+                repo_root,
+                f"The current Git branch is '{branch or 'detached HEAD'}', not 'main'.",
+            )
+            return
+
+        status_check = subprocess.run(
+            ["git", "-C", repo_root, "status", "--porcelain"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+        if status_check.returncode != 0 or status_check.stdout.strip():
+            self._show_manual_git_update(
+                repo_root,
+                "Local Git changes were found, so the update was not applied automatically.",
+            )
+            return
+
+        try:
+            pull_result = subprocess.run(
+                ["git", "-C", repo_root, "pull", "--ff-only", "origin", "main"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=False,
+                timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            self._show_manual_git_update(repo_root, f"The Git update failed: {exc}")
+            return
+
+        output = pull_result.stdout.strip()
+        if pull_result.returncode == 0:
+            messagebox.showinfo(
+                "Update Downloaded",
+                f"Version {latest_version} has been downloaded.\n"
+                "Please restart the application to use it.\n\n"
+                f"{output}",
+                parent=self.root,
+            )
+        else:
+            self._show_manual_git_update(
+                repo_root,
+                f"The Git update failed:\n{output or 'unknown error'}",
+            )
+
+    def _show_manual_git_update(self, repo_dir, reason):
+        """Show a copyable command when an automatic fast-forward is unsafe."""
+        command = f'git -C "{repo_dir}" pull --ff-only origin main'
+        messagebox.showwarning(
+            "Update Not Applied",
+            f"{reason}\n\nRun this command manually after checking the repository:\n\n{command}",
+            parent=self.root,
+        )
 
     def show_about(self):
         """Show the local version and project page."""
