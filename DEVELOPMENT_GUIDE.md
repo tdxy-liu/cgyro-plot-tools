@@ -248,8 +248,8 @@ PREFERRED_FONT_FAMILIES = ["Arial", "DejaVu Sans", "Liberation Sans", "Noto Sans
 5. 计算转换比率（基于 D-归一化 CGYRO 惯例，`m_D=1`）：
    - `vc = cs_ri/cs = sqrt(1/m_i)`
    - `rhoc = rho_s_ri/rho_s = sqrt(m_i)`
-   - `gc = Gamma_GB,ri / Gamma_GB = vc * rhoc^2`
-   - `qc = Q_GB,ri / Q_GB = vc * rhoc^2`（与 gc 公式相同，但物理含义不同）
+   - `gc = Gamma_GB,ri / Gamma_GB,D = vc * rhoc^2`
+   - `qc = Q_GB,ri / Q_GB,D = vc * rhoc^2`（与 gc 公式相同，但物理含义不同）
 6. 缓存并打印详细信息（物种号、Z、M、DENS、各比率）。
 7. 失败时打印 Warning 并缓存 `{'valid': False}`。
 
@@ -402,8 +402,8 @@ plot_comparison()
   - `Growth Rate` → `x: $k_y \rho_s$`, `y: $\gamma\ (c_s/a)$`
   - `ZF ExB Shearing Rate` → `x: $t\ (a/c_s)$`, `y: $\omega_{E\times B}^{ZF}\ (c_s/a)$`
   - `Flux` + `vs ky` → 根据实离子归一化决定 `$k_y \rho_{s,ri}$` 或 `$k_y \rho_s$`
-  - `Flux` + `Energy` → `$Q_s/Q_{GB}$`（或 `$Q_{GB,ri}$`）
-  - `Flux` + `Particle` → `$\Gamma_s/\Gamma_{GB}$`（或 `$\Gamma_{GB,ri}$`）
+  - `Flux` + `Energy` → `$Q_s/Q_{GB,D}$`（或 `$Q_{GB,ri}$`）
+  - `Flux` + `Particle` → `$\Gamma_s/\Gamma_{GB,D}$`（或 `$\Gamma_{GB,ri}$`）
   - `vs Time` → `$t\ (a/c_s)$`
 
 ### 4.8 辅助诊断：Case Info 与 Input Diff

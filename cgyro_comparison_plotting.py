@@ -370,8 +370,8 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
           c_s = sqrt(T_e/m_ref), rho_s ~ sqrt(m_ref)
         so for reference change D -> real-ion:
           cs_ri/cs = sqrt(1/m_i), rho_s_ri/rho_s = sqrt(m_i)
-          gc = Gamma_GB,ri / Gamma_GB = (cs_ri/cs)*(rho_s_ri/rho_s)^2
-          qc = Q_GB,ri / Q_GB = (cs_ri/cs)*(rho_s_ri/rho_s)^2
+          gc = Gamma_GB,ri / Gamma_GB,D = (cs_ri/cs)*(rho_s_ri/rho_s)^2
+          qc = Q_GB,ri / Q_GB,D = (cs_ri/cs)*(rho_s_ri/rho_s)^2
         so plotted flux values should be multiplied by 1/gc (particle) or 1/qc (energy).
         """
         cached = getattr(data, '_cmp_flux_real_ion_norm_ctx', None)
@@ -528,8 +528,8 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
             )
             print(
                 "Info: normalization ratios -> "
-                "QGB_Ri/QGB={:.6g}, rho_s_ri/rho_s={:.6g}, cs_ri/cs={:.6g}, "
-                "GammaGB_Ri/GammaGB={:.6g}".format(
+                "QGB_Ri/QGB_D={:.6g}, rho_s_ri/rho_s={:.6g}, cs_ri/cs={:.6g}, "
+                "GammaGB_Ri/GammaGB_D={:.6g}".format(
                     qgb_ratio, rho_ratio, cs_ratio, gc_ratio
                 )
             )
@@ -1005,13 +1005,13 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
                 x_label = r"$(c_{s,ri}/a)\,t$" if use_real_ion_norm else r"$t\ (a/c_s)$"
             sub = self._get_flux_species_subscript()
             if "Energy" in plot_type:
-                denom = r"Q_{GB,\mathrm{ri}}" if use_real_ion_norm else r"Q_{GB}"
+                denom = r"Q_{GB,\mathrm{ri}}" if use_real_ion_norm else r"Q_{GB,\mathrm{D}}"
                 y_label = rf"$Q_{{{sub}}}/{denom}$"
             else:
                 if use_real_ion_norm:
                     y_label = rf"$\Gamma_{{{sub}}}/\Gamma_{{GB,\mathrm{{ri}}}}$"
                 else:
-                    y_label = rf"$\Gamma_{{{sub}}}/\Gamma_{{GB}}$"
+                    y_label = rf"$\Gamma_{{{sub}}}/\Gamma_{{GB,\mathrm{{D}}}}$"
         elif "vs ky" in plot_type:
             x_label = r"$k_y \rho_s$"
         elif "vs kx" in plot_type:

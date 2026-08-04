@@ -815,13 +815,13 @@ class FluxPlotting:
         sub = self._get_flux_species_subscript()
         use_real_ion_norm = self._use_flux_real_ion_norm()
         if flux_is_energy:
-            denom = r"Q_{GB,\mathrm{ri}}" if use_real_ion_norm else r"Q_{GB}"
+            denom = r"Q_{GB,\mathrm{ri}}" if use_real_ion_norm else r"Q_{GB,\mathrm{D}}"
             self.ax.set_ylabel(rf"$Q_{{{sub}}}/{denom}$")
         else:
             if use_real_ion_norm:
                 self.ax.set_ylabel(rf"$\Gamma_{{{sub}}}/\Gamma_{{GB,\mathrm{{ri}}}}$")
             else:
-                self.ax.set_ylabel(rf"$\Gamma_{{{sub}}}/\Gamma_{{GB}}$")
+                self.ax.set_ylabel(rf"$\Gamma_{{{sub}}}/\Gamma_{{GB,\mathrm{{D}}}}$")
 
         if skipped > 0:
             print(f"Flux vs 2D: skipped {skipped} case(s) due to missing parameter/flux/time data.")

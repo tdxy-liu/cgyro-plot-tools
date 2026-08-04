@@ -18,7 +18,7 @@ from urllib.request import Request, urlopen
 REPOSITORY_URL = "https://github.com/tdxy-liu/cgyro-plot-tools"
 RELEASE_API_URL = f"https://api.github.com/repos/tdxy-liu/cgyro-plot-tools/releases/latest"
 VERSION_URL = "https://raw.githubusercontent.com/tdxy-liu/cgyro-plot-tools/main/VERSION"
-DEFAULT_VERSION = "0.2.2"
+DEFAULT_VERSION = "0.2.3"
 DEFAULT_TIMEOUT = 5.0
 
 _VERSION_PATTERN = re.compile(

@@ -1148,7 +1148,7 @@ class EnergyPlotting:
 
         self.ax.set_xlim(float(t[0]), float(t[-1]))
         self.ax.set_xlabel(r"$t\ (a/c_s)$")
-        self.ax.set_ylabel(r"$[L_{T_e}Q_{GBD}]$")
+        self.ax.set_ylabel(r"$[L_{T_e}Q_{GB,\mathrm{D}}]$")
         self.ax.set_title(rf"Eq. 12 - $\delta S_Z^{{(g)}}$ energy balance ($n_e={ne_txt}$)")
 
     def _plot_energy_balance_zf(self, data, label, t_indices, t_start, t_end):
@@ -1217,7 +1217,7 @@ class EnergyPlotting:
         self.ax.set_xlim(float(t[0]), float(t[-1]))
         self.ax.set_title(rf"Eq. 13 - $W_{{es}}$ energy balance ($n_e={ne_txt}$)")
         self.ax.set_xlabel(r"Simulation Time  $[c_s/a]$")
-        self.ax.set_ylabel(r"$[L_{T_e}\,Q_{GBD}]$")
+        self.ax.set_ylabel(r"$[L_{T_e}\,Q_{GB,\mathrm{D}}]$")
 
     def _compute_energy_balance_single_vs_ky(
         self, data, label, n_sel, quantity_key, t_indices, normalize_mode="none"

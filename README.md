@@ -26,9 +26,9 @@
 
 *   **Frequency**: 模的实频 $\omega$ vs $k_y$。
 *   **Growth Rate**: 模的增长率 $\gamma$ vs $k_y$。
-*   **Energy Flux vs ky**: 能量通量谱 $Q/Q_{GB}$ vs $k_y$。
+*   **Energy Flux vs ky**: 能量通量谱 $Q/Q_{GB,D}$ vs $k_y$。
 *   **Energy Flux vs Time**: 能量通量随时间演化 $Q(t)$。
-*   **Particle Flux vs ky**: 粒子通量谱 $\Gamma/\Gamma_{GB}$ vs $k_y$。
+*   **Particle Flux vs ky**: 粒子通量谱 $\Gamma/\Gamma_{GB,D}$ vs $k_y$。
 *   **Particle Flux vs Time**: 粒子通量随时间演化 $\Gamma(t)$。
 *   **Phi FFT**: 电势 $\phi$ 的频谱分析（$\omega$ vs $k_y$ 等高线图）。
 *   **Fluctuation 2D**: 支持实空间动画（$x$ vs $y$）、时空等高线（$x$ vs $t$）和频谱平面图（$k_x$ vs $k_y$）。
