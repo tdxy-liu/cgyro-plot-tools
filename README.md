@@ -5,6 +5,7 @@
 ## 功能特性
 
 ### 最新更新
+- **更新后自动恢复**: 通过 Git 更新后自动重启程序，并恢复已加载算例、选中状态、绘图选项、窗口布局；若更新前已有图像则自动重绘。
 - **File -> Save workspace / Load workspace**: 可将当前加载的案例列表、选中案例和主要绘图选项保存为 JSON workspace，并在之后恢复同一绘图环境。默认保存/加载目录优先使用 `/data/share/$USER`。
 - **Data -> Save current plot data**: 可将当前图中的曲线或二维图数据导出为 Origin 友好的竖排文本表。单数据集格式为 `X  Y  Z`，多数据集格式为 `X  Y  Z  Dataset`。
 - **统一导出目录**: readable bin export、plot data export 和 workspace 文件默认从 `/data/share/$USER` 开始选择，若该目录不存在则回退到 `/data/share` 或当前工作目录。

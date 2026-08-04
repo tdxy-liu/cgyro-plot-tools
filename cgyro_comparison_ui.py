@@ -5,7 +5,9 @@ UI and case-management mixin for CGYRO comparison GUI.
 import os
 import re
 import json
+import sys
 import subprocess
+import tempfile
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
@@ -198,9 +200,12 @@ class CgyroUiMixin:
         self._manual_pager_label = "Page"
         self._update_check_in_progress = False
         self._update_check_menu = None
+        self._auto_workspace_path = os.environ.get("CGYRO_AUTO_WORKSPACE", "").strip()
         
         self._create_layout()
         self._create_menu()
+        if self._auto_workspace_path:
+            self.root.after(100, self._restore_auto_workspace)
         # Do not hold up startup or show an error for an offline workstation.
         self.root.after(1500, self._check_for_updates_silently)
 
@@ -627,7 +632,7 @@ class CgyroUiMixin:
                 f"Current version: {result.current_version}\n"
                 f"Latest version: {result.latest_version}{release_label}\n\n"
                 "Download the update with git pull now?\n"
-                "The application must be restarted after updating.",
+                "After downloading, the application will restart and restore the current workspace.",
                 parent=self.root,
             )
             if update_now:
@@ -698,6 +703,15 @@ class CgyroUiMixin:
             return
 
         try:
+            auto_workspace_path = self._save_auto_workspace()
+        except Exception as exc:
+            self._show_manual_git_update(
+                repo_root,
+                f"Could not save the current workspace before updating: {exc}",
+            )
+            return
+
+        try:
             pull_result = subprocess.run(
                 ["git", "-C", repo_root, "pull", "--ff-only", "origin", "main"],
                 stdin=subprocess.DEVNULL,
@@ -707,24 +721,79 @@ class CgyroUiMixin:
                 check=False,
                 timeout=60,
             )
-        except (OSError, subprocess.SubprocessError) as exc:
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            self._remove_auto_workspace(auto_workspace_path)
             self._show_manual_git_update(repo_root, f"The Git update failed: {exc}")
             return
 
         output = pull_result.stdout.strip()
         if pull_result.returncode == 0:
-            messagebox.showinfo(
-                "Update Downloaded",
-                f"Version {latest_version} has been downloaded.\n"
-                "Please restart the application to use it.\n\n"
-                f"{output}",
-                parent=self.root,
-            )
+            try:
+                self._restart_after_update(auto_workspace_path, latest_version)
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                self._remove_auto_workspace(auto_workspace_path)
+                messagebox.showerror(
+                    "Update Restart Failed",
+                    f"Version {latest_version} was downloaded, but the application could not restart automatically.\n\n"
+                    f"{exc}\n\nPlease restart the application manually.\n\n{output}",
+                    parent=self.root,
+                )
         else:
+            self._remove_auto_workspace(auto_workspace_path)
             self._show_manual_git_update(
                 repo_root,
                 f"The Git update failed:\n{output or 'unknown error'}",
             )
+
+    def _save_auto_workspace(self):
+        """Save a restart workspace in the system temporary directory."""
+        path = os.path.join(
+            tempfile.gettempdir(),
+            f"cgyro_comparison_autorestore_{os.getpid()}.json",
+        )
+        try:
+            self._write_workspace_file(path, self._build_workspace_payload())
+        except Exception:
+            self._remove_auto_workspace(path)
+            raise
+        return path
+
+    @staticmethod
+    def _remove_auto_workspace(path):
+        """Remove a temporary restart workspace when it is no longer needed."""
+        if not path:
+            return
+        try:
+            os.remove(path)
+        except (FileNotFoundError, OSError):
+            pass
+
+    def _restart_after_update(self, workspace_path, latest_version):
+        """Start the updated checkout and close this pre-update process."""
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+        script_path = os.path.abspath(sys.argv[0])
+        if not os.path.isfile(script_path):
+            script_path = os.path.join(app_dir, "cgyro_comparison.py")
+        if not os.path.isfile(script_path):
+            raise OSError(f"Could not locate the application entry point: {script_path}")
+
+        env = os.environ.copy()
+        env["CGYRO_AUTO_WORKSPACE"] = str(workspace_path)
+        env["CGYRO_AUTO_UPDATE_VERSION"] = str(latest_version)
+        command = [sys.executable, script_path, *sys.argv[1:]]
+        popen_kwargs = {
+            "cwd": app_dir,
+            "env": env,
+            "stdin": subprocess.DEVNULL,
+        }
+        if os.name == "nt":
+            popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        else:
+            popen_kwargs["start_new_session"] = True
+
+        subprocess.Popen(command, **popen_kwargs)
+        self.status_var.set(f"Updated to {latest_version}; restarting and restoring workspace...")
+        self.root.after(250, self.root.destroy)
 
     def _show_manual_git_update(self, repo_dir, reason):
         """Show a copyable command when an automatic fast-forward is unsafe."""
@@ -2752,6 +2821,88 @@ class CgyroUiMixin:
             pass
         return default_share_dir()
 
+    def _has_plot_content(self):
+        """Return whether the main axes currently contain rendered content."""
+        try:
+            return any(
+                bool(getattr(self.ax, attr, []))
+                for attr in ("lines", "collections", "images", "patches", "texts", "artists")
+            )
+        except Exception:
+            return False
+
+    def _build_workspace_payload(self):
+        """Build a serializable snapshot of the current GUI workspace."""
+        selected_names = [
+            self.case_listbox.get(i)
+            for i in self.case_listbox.curselection()
+        ]
+        workspace = {
+            "version": 1,
+            "tool": "cgyro_comparison_tool",
+            "cases": self._get_workspace_case_entries(),
+            "selected_cases": selected_names,
+            "state": self._get_workspace_state(),
+            "replot": self._has_plot_content(),
+        }
+        try:
+            workspace["window_geometry"] = self.root.geometry()
+        except (AttributeError, tk.TclError):
+            pass
+        try:
+            workspace["pane_position"] = int(self.main_pane.sashpos(0))
+        except (AttributeError, tk.TclError, TypeError, ValueError):
+            pass
+        return workspace
+
+    @staticmethod
+    def _write_workspace_file(out_path, workspace):
+        """Write a workspace JSON file, creating its parent directory if needed."""
+        parent_dir = os.path.dirname(os.path.abspath(out_path))
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(workspace, f, indent=2)
+
+    def _restore_auto_workspace(self):
+        """Restore the workspace passed by the update-restarted process."""
+        path = self._auto_workspace_path
+        self._auto_workspace_path = ""
+        if not path:
+            return
+
+        try:
+            result = self._load_workspace_file(path, show_message=False)
+        except Exception as exc:
+            print(f"Failed to restore the workspace after update: {exc}")
+            result = None
+        finally:
+            self._remove_auto_workspace(path)
+
+        if result is None:
+            self.status_var.set("Updated successfully, but the previous workspace could not be restored.")
+            return
+
+        loaded_count = result["loaded_count"]
+        failed = result["failed"]
+        self._refresh_case_summary("Restored")
+        if failed:
+            self.status_var.set(
+                f"Restored {loaded_count} case(s); skipped {len(failed)} unavailable case(s)."
+            )
+        else:
+            self.status_var.set(f"Restored {loaded_count} case(s) after update.")
+
+        if result["workspace"].get("replot") and loaded_count > 0:
+            self.root.after_idle(self._restore_auto_plot)
+
+    def _restore_auto_plot(self):
+        """Re-render the last workspace after its cases and options are restored."""
+        try:
+            self.plot_comparison()
+        except Exception as exc:
+            print(f"Failed to restore the previous plot after update: {exc}")
+
     def save_workspace(self):
         """Save current case list, selection, and plotting options to JSON."""
         if not hasattr(self, "cases") or len(self.cases) == 0:
@@ -2770,51 +2921,32 @@ class CgyroUiMixin:
         if not out_path:
             return
 
-        selected_names = [
-            self.case_listbox.get(i)
-            for i in self.case_listbox.curselection()
-        ]
-        # Version the JSON explicitly so future schema changes can be handled
-        # without guessing whether a file was written by an older tool.
-        workspace = {
-            "version": 1,
-            "tool": "cgyro_comparison_tool",
-            "cases": self._get_workspace_case_entries(),
-            "selected_cases": selected_names,
-            "state": self._get_workspace_state(),
-        }
-
         try:
-            with open(out_path, "w", encoding="utf-8") as f:
-                json.dump(workspace, f, indent=2)
+            self._write_workspace_file(out_path, self._build_workspace_payload())
             messagebox.showinfo("Save workspace", f"Workspace saved:\n{out_path}")
         except Exception as e:
             messagebox.showerror("Save workspace", f"Failed to save workspace:\n{e}")
 
-    def load_workspace(self):
-        """Load case list, selection, and plotting options from a JSON workspace."""
-        in_path = filedialog.askopenfilename(
-            title="Load CGYRO comparison workspace",
-            filetypes=[
-                ("Workspace files", "*.json"),
-                ("All files", "*.*"),
-            ],
-            initialdir=self._default_workspace_dir(),
-        )
-        if not in_path:
-            return
-
+    def _load_workspace_file(self, in_path, show_message=True):
+        """Load and apply a workspace file, optionally without user dialogs."""
         try:
             with open(in_path, "r", encoding="utf-8") as f:
                 workspace = json.load(f)
         except Exception as e:
-            messagebox.showerror("Load workspace", f"Failed to read workspace:\n{e}")
-            return
+            if show_message:
+                messagebox.showerror("Load workspace", f"Failed to read workspace:\n{e}")
+            return None
+
+        if not isinstance(workspace, dict):
+            if show_message:
+                messagebox.showerror("Load workspace", "Invalid workspace: expected a JSON object.")
+            return None
 
         cases = workspace.get("cases", [])
         if not isinstance(cases, list):
-            messagebox.showerror("Load workspace", "Invalid workspace: missing case list.")
-            return
+            if show_message:
+                messagebox.showerror("Load workspace", "Invalid workspace: missing case list.")
+            return None
 
         self.cases.clear()
         self.case_listbox.delete(0, tk.END)
@@ -2851,12 +2983,47 @@ class CgyroUiMixin:
                 if self.case_listbox.get(i) in selected:
                     self.case_listbox.selection_set(i)
 
-        msg = f"Loaded {loaded_count} case(s) from workspace."
-        if failed:
-            msg += "\n\nSkipped:\n- " + "\n- ".join(failed[:20])
-            if len(failed) > 20:
-                msg += f"\n- ... ({len(failed) - 20} more)"
-        messagebox.showinfo("Load workspace", msg)
+        geometry = workspace.get("window_geometry")
+        if geometry:
+            try:
+                self.root.geometry(str(geometry))
+            except (tk.TclError, TypeError, ValueError):
+                pass
+        pane_position = workspace.get("pane_position")
+        if pane_position is not None:
+            try:
+                pane_position = int(pane_position)
+                self.root.after_idle(lambda: self.main_pane.sashpos(pane_position))
+            except (tk.TclError, TypeError, ValueError):
+                pass
+
+        result = {
+            "workspace": workspace,
+            "loaded_count": loaded_count,
+            "failed": failed,
+        }
+        if show_message:
+            msg = f"Loaded {loaded_count} case(s) from workspace."
+            if failed:
+                msg += "\n\nSkipped:\n- " + "\n- ".join(failed[:20])
+                if len(failed) > 20:
+                    msg += f"\n- ... ({len(failed) - 20} more)"
+            messagebox.showinfo("Load workspace", msg)
+        return result
+
+    def load_workspace(self):
+        """Load case list, selection, and plotting options from a JSON workspace."""
+        in_path = filedialog.askopenfilename(
+            title="Load CGYRO comparison workspace",
+            filetypes=[
+                ("Workspace files", "*.json"),
+                ("All files", "*.*"),
+            ],
+            initialdir=self._default_workspace_dir(),
+        )
+        if not in_path:
+            return
+        self._load_workspace_file(in_path, show_message=True)
 
     @staticmethod
     def _is_fluc2d_kxky_view(view):
