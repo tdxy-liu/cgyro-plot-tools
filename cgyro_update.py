@@ -21,7 +21,7 @@ from urllib.request import Request, urlopen
 REPOSITORY_URL = "https://github.com/tdxy-liu/cgyro-plot-tools"
 RELEASE_API_URL = f"https://api.github.com/repos/tdxy-liu/cgyro-plot-tools/releases/latest"
 VERSION_URL = "https://raw.githubusercontent.com/tdxy-liu/cgyro-plot-tools/main/VERSION"
-DEFAULT_VERSION = "0.2.7"
+DEFAULT_VERSION = "0.2.8"
 DEFAULT_TIMEOUT = 5.0
 
 _VERSION_PATTERN = re.compile(
@@ -260,8 +260,14 @@ def update_from_git(
         )
     repo_root = Path(_git_output(repo_check) or str(repo_dir)).resolve()
 
-    branch_check = _run_git(repo_root, ["branch", "--show-current"], timeout)
-    current_branch = _git_output(branch_check)
+    branch_check = _run_git(repo_root, ["symbolic-ref", "HEAD"], timeout)
+    branch_ref = _git_output(branch_check)
+    branch_prefix = "refs/heads/"
+    current_branch = (
+        branch_ref[len(branch_prefix):]
+        if branch_ref.startswith(branch_prefix)
+        else ""
+    )
     if branch_check.returncode != 0 or current_branch != branch:
         current = current_branch or "detached HEAD"
         raise GitUpdateError(

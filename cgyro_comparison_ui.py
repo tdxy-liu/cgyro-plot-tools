@@ -676,7 +676,7 @@ class CgyroUiMixin:
 
         repo_root = repo_check.stdout.strip() or app_dir
         branch_check = subprocess.run(
-            ["git", "branch", "--show-current"],
+            ["git", "symbolic-ref", "HEAD"],
             cwd=repo_root,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -685,7 +685,13 @@ class CgyroUiMixin:
             check=False,
             timeout=10,
         )
-        branch = branch_check.stdout.strip()
+        branch_ref = branch_check.stdout.strip()
+        branch_prefix = "refs/heads/"
+        branch = (
+            branch_ref[len(branch_prefix):]
+            if branch_ref.startswith(branch_prefix)
+            else ""
+        )
         if branch != "main":
             self._show_manual_git_update(
                 repo_root,
