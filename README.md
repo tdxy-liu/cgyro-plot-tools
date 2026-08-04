@@ -5,6 +5,7 @@
 ## 功能特性
 
 ### 最新更新
+- **内置用户说明书**: 新增 `USER_GUIDE.md`，可通过 `Help -> User Guide...` 或 `F1` 在程序内离线查看和搜索，不依赖浏览器。
 - **左侧栏布局优化**: Cases 固定在顶部、Plot setup 独立滚动、Plot 与翻页操作固定在底部；case 列表新增独立滚动条和紧凑的两行管理按钮。
 - **菜单栏重构**: 顶部菜单按 `File / Cases / Data / Plot / Help` 重新分组，时间窗、平均方式和坐标轴设置集中到 `Plot`，并增加工作区、case、导出、绘图等常用快捷键。
 - **Lock selection**: 在 case 列表下方锁定当前选择，切换绘图类型或其他 Plot Options 时不再退回默认的全部 case；状态会随 workspace 保存和恢复。

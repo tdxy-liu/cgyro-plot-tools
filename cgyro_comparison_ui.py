@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import threading
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, simpledialog
+from tkinter import ttk, filedialog, messagebox, simpledialog, font as tkfont
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
@@ -209,6 +209,12 @@ class CgyroUiMixin:
         self._manual_pager_label = "Page"
         self._update_check_in_progress = False
         self._update_check_menu = None
+        self._user_guide_window = None
+        self._user_guide_text = None
+        self._user_guide_search_var = None
+        self._user_guide_search_status_var = None
+        self._user_guide_last_query = ""
+        self._user_guide_search_start = "1.0"
         self._auto_workspace_path = os.environ.get("CGYRO_AUTO_WORKSPACE", "").strip()
         
         self._create_layout()
@@ -810,6 +816,14 @@ class CgyroUiMixin:
 
         help_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Help", menu=help_menu, underline=0)
+        self._add_menu_command(
+            help_menu,
+            "User Guide...",
+            self.show_user_guide,
+            accelerator="F1",
+            shortcut="<F1>",
+        )
+        help_menu.add_separator()
         help_menu.add_command(label="Check for Updates...", command=self.check_for_updates)
         help_menu.add_separator()
         help_menu.add_command(label="About", command=self.show_about)
@@ -1062,6 +1076,311 @@ class CgyroUiMixin:
             f"{reason}\n\nRun this command manually after checking the repository:\n\n{command}",
             parent=self.root,
         )
+
+    def _user_guide_path(self):
+        """Return the offline guide stored beside the application sources."""
+        return os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "USER_GUIDE.md",
+        )
+
+    @staticmethod
+    def _user_guide_plain_text(value):
+        """Remove lightweight Markdown markers for the built-in text viewer."""
+        text = str(value).replace("**", "").replace("__", "").replace("`", "")
+        return re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", text)
+
+    def _insert_user_guide_content(self, text_widget, content):
+        """Render the guide with simple heading, bullet, and code styles."""
+        text_widget.configure(state=tk.NORMAL)
+        text_widget.delete("1.0", tk.END)
+        in_code = False
+        for raw_line in str(content).splitlines():
+            stripped = raw_line.strip()
+            if stripped.startswith("```"):
+                in_code = not in_code
+                if not in_code:
+                    text_widget.insert(tk.END, "\n")
+                continue
+
+            if in_code:
+                text_widget.insert(tk.END, f"{raw_line}\n", "code")
+                continue
+
+            if raw_line.startswith("### "):
+                text_widget.insert(
+                    tk.END,
+                    f"{self._user_guide_plain_text(raw_line[4:])}\n",
+                    "heading3",
+                )
+            elif raw_line.startswith("## "):
+                text_widget.insert(
+                    tk.END,
+                    f"{self._user_guide_plain_text(raw_line[3:])}\n",
+                    "heading2",
+                )
+            elif raw_line.startswith("# "):
+                text_widget.insert(
+                    tk.END,
+                    f"{self._user_guide_plain_text(raw_line[2:])}\n",
+                    "heading1",
+                )
+            elif raw_line.lstrip().startswith("- "):
+                indent = len(raw_line) - len(raw_line.lstrip())
+                body = self._user_guide_plain_text(raw_line.lstrip()[2:])
+                text_widget.insert(tk.END, f"{' ' * indent}  • {body}\n", "body")
+            else:
+                text_widget.insert(
+                    tk.END,
+                    f"{self._user_guide_plain_text(raw_line)}\n",
+                    "body",
+                )
+
+        text_widget.mark_set("insert", "1.0")
+        text_widget.configure(state=tk.DISABLED)
+
+    def _reset_user_guide_search(self):
+        """Reset the next-search cursor when the query changes."""
+        self._user_guide_last_query = ""
+        self._user_guide_search_start = "1.0"
+        text_widget = getattr(self, "_user_guide_text", None)
+        if text_widget is not None:
+            try:
+                text_widget.tag_remove("search_hit", "1.0", tk.END)
+            except tk.TclError:
+                pass
+
+    def _find_next_user_guide_match(self, _event=None):
+        """Find and reveal the next case-insensitive guide match."""
+        text_widget = getattr(self, "_user_guide_text", None)
+        search_var = getattr(self, "_user_guide_search_var", None)
+        status_var = getattr(self, "_user_guide_search_status_var", None)
+        if text_widget is None or search_var is None:
+            return "break"
+
+        query = str(search_var.get()).strip()
+        if not query:
+            self._reset_user_guide_search()
+            if status_var is not None:
+                status_var.set("Enter text to search")
+            return "break"
+
+        if query != getattr(self, "_user_guide_last_query", ""):
+            self._user_guide_search_start = "1.0"
+            self._user_guide_last_query = query
+
+        start = getattr(self, "_user_guide_search_start", "1.0")
+        index = text_widget.search(query, start, stopindex=tk.END, nocase=True)
+        wrapped = False
+        if not index:
+            index = text_widget.search(query, "1.0", stopindex=start, nocase=True)
+            wrapped = bool(index)
+
+        text_widget.tag_remove("search_hit", "1.0", tk.END)
+        if not index:
+            if status_var is not None:
+                status_var.set("No match")
+            return "break"
+
+        end = f"{index}+{len(query)}c"
+        text_widget.tag_add("search_hit", index, end)
+        text_widget.mark_set("insert", end)
+        text_widget.see(index)
+        self._user_guide_search_start = end
+        if status_var is not None:
+            status_var.set("Found (wrapped)" if wrapped else "Found")
+        return "break"
+
+    def _close_user_guide(self):
+        """Close the reusable non-modal guide window and clear references."""
+        window = getattr(self, "_user_guide_window", None)
+        self._user_guide_window = None
+        self._user_guide_text = None
+        self._user_guide_search_var = None
+        self._user_guide_search_status_var = None
+        self._user_guide_last_query = ""
+        self._user_guide_search_start = "1.0"
+        if window is not None:
+            try:
+                window.destroy()
+            except tk.TclError:
+                pass
+
+    def show_user_guide(self):
+        """Open the repository user guide in a searchable offline viewer."""
+        existing = getattr(self, "_user_guide_window", None)
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.deiconify()
+                    existing.lift()
+                    existing.focus_set()
+                    return
+            except tk.TclError:
+                self._user_guide_window = None
+
+        guide_path = self._user_guide_path()
+        try:
+            with open(guide_path, "r", encoding="utf-8-sig") as handle:
+                content = handle.read()
+        except (OSError, UnicodeError) as exc:
+            messagebox.showerror(
+                "User Guide",
+                f"Could not read the offline user guide:\n{guide_path}\n\n{exc}",
+                parent=self.root,
+            )
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"{DEFAULT_APP_TITLE} - User Guide")
+        dialog.geometry("900x700")
+        dialog.minsize(620, 420)
+        dialog.transient(self.root)
+        dialog.protocol("WM_DELETE_WINDOW", self._close_user_guide)
+        self._user_guide_window = dialog
+
+        container = ttk.Frame(dialog, padding=12)
+        container.pack(fill=tk.BOTH, expand=True)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(2, weight=1)
+
+        header = ttk.Frame(container)
+        header.grid(row=0, column=0, sticky=tk.EW, pady=(0, 8))
+        header.columnconfigure(0, weight=1)
+        ttk.Label(
+            header,
+            text="CGYRO Comparison Tool User Guide",
+            style="AppTitle.TLabel",
+        ).grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(
+            header,
+            text=f"v{APP_VERSION}  |  USER_GUIDE.md",
+            style="Muted.TLabel",
+        ).grid(row=0, column=1, sticky=tk.E)
+
+        search_bar = ttk.Frame(container)
+        search_bar.grid(row=1, column=0, sticky=tk.EW, pady=(0, 8))
+        search_bar.columnconfigure(1, weight=1)
+        ttk.Label(search_bar, text="Search:").grid(row=0, column=0, sticky=tk.W, padx=(0, 6))
+        search_var = tk.StringVar(dialog)
+        search_entry = ttk.Entry(search_bar, textvariable=search_var)
+        search_entry.grid(row=0, column=1, sticky=tk.EW)
+        ttk.Button(
+            search_bar,
+            text="Find Next",
+            command=self._find_next_user_guide_match,
+            style="Compact.TButton",
+        ).grid(row=0, column=2, padx=(6, 0))
+        search_status_var = tk.StringVar(dialog, value="F1 opens this guide")
+        ttk.Label(
+            search_bar,
+            textvariable=search_status_var,
+            style="Hint.TLabel",
+        ).grid(row=0, column=3, sticky=tk.E, padx=(8, 0))
+
+        text_frame = ttk.Frame(container)
+        text_frame.grid(row=2, column=0, sticky=tk.NSEW)
+        text_frame.columnconfigure(0, weight=1)
+        text_frame.rowconfigure(0, weight=1)
+        guide_text = tk.Text(
+            text_frame,
+            wrap=tk.WORD,
+            padx=14,
+            pady=12,
+            relief=tk.FLAT,
+            borderwidth=1,
+            highlightthickness=1,
+            highlightcolor="#7aa2d6",
+            cursor="arrow",
+        )
+        guide_text.grid(row=0, column=0, sticky=tk.NSEW)
+        guide_scrollbar = ttk.Scrollbar(
+            text_frame,
+            orient=tk.VERTICAL,
+            command=guide_text.yview,
+        )
+        guide_scrollbar.grid(row=0, column=1, sticky=tk.NS)
+        guide_text.configure(yscrollcommand=guide_scrollbar.set)
+
+        try:
+            base_font = tkfont.nametofont("TkDefaultFont").copy()
+            fixed_font = tkfont.nametofont("TkFixedFont").copy()
+            heading1_font = base_font.copy()
+            heading1_font.configure(size=16, weight="bold")
+            heading2_font = base_font.copy()
+            heading2_font.configure(size=13, weight="bold")
+            heading3_font = base_font.copy()
+            heading3_font.configure(size=11, weight="bold")
+            fixed_font.configure(size=max(9, int(base_font.cget("size"))))
+            dialog._guide_fonts = (
+                base_font,
+                fixed_font,
+                heading1_font,
+                heading2_font,
+                heading3_font,
+            )
+            guide_text.configure(font=base_font)
+            guide_text.tag_configure(
+                "heading1", font=heading1_font, spacing1=8, spacing3=10
+            )
+            guide_text.tag_configure(
+                "heading2", font=heading2_font, spacing1=14, spacing3=6
+            )
+            guide_text.tag_configure(
+                "heading3", font=heading3_font, spacing1=10, spacing3=4
+            )
+            guide_text.tag_configure(
+                "code", font=fixed_font, background="#f2f4f7", lmargin1=18, lmargin2=18
+            )
+        except tk.TclError:
+            guide_text.tag_configure("heading1", spacing1=8, spacing3=10)
+            guide_text.tag_configure("heading2", spacing1=14, spacing3=6)
+            guide_text.tag_configure("heading3", spacing1=10, spacing3=4)
+        guide_text.tag_configure("body", spacing1=1, spacing3=1)
+        guide_text.tag_configure(
+            "search_hit",
+            background="#ffe08a",
+            foreground="#1f2937",
+        )
+
+        self._user_guide_text = guide_text
+        self._user_guide_search_var = search_var
+        self._user_guide_search_status_var = search_status_var
+        self._user_guide_last_query = ""
+        self._user_guide_search_start = "1.0"
+        self._insert_user_guide_content(guide_text, content)
+
+        footer = ttk.Frame(container)
+        footer.grid(row=3, column=0, sticky=tk.EW, pady=(8, 0))
+        footer.columnconfigure(0, weight=1)
+        ttk.Label(
+            footer,
+            text=guide_path,
+            style="Hint.TLabel",
+        ).grid(row=0, column=0, sticky=tk.W)
+        ttk.Button(
+            footer,
+            text="Close",
+            command=self._close_user_guide,
+            style="Compact.TButton",
+        ).grid(row=0, column=1, sticky=tk.E)
+
+        def focus_search(_event=None):
+            search_entry.focus_set()
+            search_entry.selection_range(0, tk.END)
+            return "break"
+
+        def reset_search_on_edit(event):
+            if getattr(event, "keysym", "") not in ("Return", "F3"):
+                self._reset_user_guide_search()
+
+        search_entry.bind("<Return>", self._find_next_user_guide_match)
+        search_entry.bind("<KeyRelease>", reset_search_on_edit)
+        dialog.bind("<Control-f>", focus_search)
+        dialog.bind("<F3>", self._find_next_user_guide_match)
+        dialog.bind("<Escape>", lambda _event: self._close_user_guide())
+        dialog.lift()
+        guide_text.focus_set()
 
     def show_about(self):
         """Show the local version and project page."""
