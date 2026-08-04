@@ -225,8 +225,10 @@ class CgyroUiMixin:
         try:
             style.configure("App.TFrame", padding=0)
             style.configure("AppTitle.TLabel", font=("Segoe UI", 13, "bold"))
+            style.configure("SidebarTitle.TLabel", font=("Segoe UI", 12, "bold"))
             style.configure("SectionLabel.TLabel", font=("Segoe UI", 9, "bold"))
             style.configure("Muted.TLabel", foreground="#667085", font=("Segoe UI", 9))
+            style.configure("Hint.TLabel", foreground="#7a8493", font=("Segoe UI", 8))
             style.configure("Status.TLabel", foreground="#667085", font=("Segoe UI", 9))
             style.configure("Card.TLabelframe", padding=8)
             style.configure("Card.TLabelframe.Label", font=("Segoe UI", 10, "bold"))
@@ -321,45 +323,59 @@ class CgyroUiMixin:
         self.main_pane.bind("<B1-Motion>", self._enforce_pane_minimums, add="+")
         self.main_pane.bind("<ButtonRelease-1>", self._enforce_pane_minimums, add="+")
 
-        # Left panel (scrollable): Controls and Case List
-        left_container = ttk.Frame(self.main_pane, width=390)
+        # Left sidebar uses three independent zones: case selection stays fixed
+        # at the top, only plot options scroll in the middle, and the primary
+        # actions remain available at the bottom.  This avoids losing context
+        # when a plot mode exposes a long set of dynamic controls.
+        left_container = ttk.Frame(self.main_pane, width=400)
         self.main_pane.add(left_container, weight=0)
         left_container.pack_propagate(False)
+        left_container.columnconfigure(0, weight=1)
+        left_container.rowconfigure(2, weight=1)
         self.left_container = left_container
 
-        self.left_scrollbar = ttk.Scrollbar(left_container, orient=tk.VERTICAL)
-        self.left_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        # Fixed sidebar header.
+        header = ttk.Frame(left_container, padding=(12, 10, 12, 6), style="App.TFrame")
+        header.grid(row=0, column=0, sticky=tk.EW)
+        self.sidebar_header = header
+        header.columnconfigure(0, weight=1)
+        title_row = ttk.Frame(header, style="App.TFrame")
+        title_row.grid(row=0, column=0, sticky=tk.EW)
+        title_row.columnconfigure(0, weight=1)
+        ttk.Label(
+            title_row,
+            text=DEFAULT_APP_TITLE,
+            style="SidebarTitle.TLabel",
+        ).grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(
+            title_row,
+            text=f"v{APP_VERSION}",
+            style="Muted.TLabel",
+        ).grid(row=0, column=1, sticky=tk.E)
+        ttk.Label(
+            header,
+            textvariable=self.case_summary_var,
+            style="Muted.TLabel",
+        ).grid(row=1, column=0, sticky=tk.W, pady=(2, 0))
 
-        self.left_canvas = tk.Canvas(left_container, highlightthickness=0, borderwidth=0)
-        self.left_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.left_canvas.configure(yscrollcommand=self.left_scrollbar.set)
-        self.left_scrollbar.configure(command=self.left_canvas.yview)
+        # Fixed case selection card.
+        case_section = ttk.LabelFrame(
+            left_container,
+            text="Cases",
+            padding=8,
+            style="Card.TLabelframe",
+        )
+        case_section.grid(row=1, column=0, sticky=tk.EW, padx=12, pady=(0, 8))
+        self.case_section = case_section
 
-        left_panel = ttk.Frame(self.left_canvas, padding=12, style="App.TFrame")
-        self.left_panel = left_panel
-        self._left_panel_window = self.left_canvas.create_window((0, 0), window=left_panel, anchor=tk.NW)
-        left_panel.bind("<Configure>", self._on_left_panel_configure)
-        self.left_canvas.bind("<Configure>", self._on_left_canvas_configure)
-        self.left_canvas.bind("<Enter>", self._on_left_panel_enter)
-        self.left_canvas.bind("<Leave>", self._on_left_panel_leave)
-        left_panel.bind("<Enter>", self._on_left_panel_enter)
-        left_panel.bind("<Leave>", self._on_left_panel_leave)
-        
-        self.root.after_idle(self._set_initial_pane_position)
-
-        # Header
-        header = ttk.Frame(left_panel, style="App.TFrame")
-        header.pack(fill=tk.X, pady=(0, 8))
-        ttk.Label(header, text=DEFAULT_APP_TITLE, style="AppTitle.TLabel").pack(anchor=tk.W)
-        ttk.Label(header, textvariable=self.case_summary_var, style="Muted.TLabel").pack(anchor=tk.W, pady=(2, 0))
-
-        # Case List
-        case_section = ttk.LabelFrame(left_panel, text="Cases", padding=8, style="Card.TLabelframe")
-        case_section.pack(fill=tk.X, pady=(0, 8))
+        case_list_frame = ttk.Frame(case_section)
+        case_list_frame.pack(fill=tk.X)
+        case_list_frame.columnconfigure(0, weight=1)
+        case_list_frame.rowconfigure(0, weight=1)
         self.case_listbox = tk.Listbox(
-            case_section,
+            case_list_frame,
             selectmode=tk.EXTENDED,
-            height=8,
+            height=6,
             activestyle="none",
             relief=tk.FLAT,
             borderwidth=1,
@@ -369,15 +385,21 @@ class CgyroUiMixin:
             selectforeground="white",
             exportselection=not bool(self.lock_case_selection_var.get()),
         )
-        self.case_listbox.pack(fill=tk.X, pady=(0, 4))
-        
-        # Enable drag and drop reordering
+        self.case_listbox.grid(row=0, column=0, sticky=tk.NSEW)
+        self.case_list_scrollbar = ttk.Scrollbar(
+            case_list_frame,
+            orient=tk.VERTICAL,
+            command=self.case_listbox.yview,
+        )
+        self.case_list_scrollbar.grid(row=0, column=1, sticky=tk.NS, padx=(4, 0))
+        self.case_listbox.configure(yscrollcommand=self.case_list_scrollbar.set)
+
+        # Enable drag and drop reordering.
         self.case_listbox.bind('<Button-1>', self._on_drag_start)
         self.case_listbox.bind('<B1-Motion>', self._on_drag_motion)
         self.case_listbox.bind('<<ListboxSelect>>', self._on_case_listbox_select)
-        # A bind_all wheel handler is used for the outer left panel.  Handle
-        # the case list at widget scope first so its own scrolling does not
-        # bubble up and move the entire control panel as well.
+        # A bind_all wheel handler is used for the outer options panel. Handle
+        # the case list first so it scrolls independently.
         self.case_listbox.bind(
             '<MouseWheel>', self._on_case_listbox_mousewheel, add='+'
         )
@@ -388,45 +410,107 @@ class CgyroUiMixin:
             '<Button-5>', self._on_case_listbox_mousewheel, add='+'
         )
 
+        selection_row = ttk.Frame(case_section)
+        selection_row.pack(fill=tk.X, pady=(5, 5))
         self.lock_case_selection_check = ttk.Checkbutton(
-            case_section,
+            selection_row,
             text="Lock selection",
             variable=self.lock_case_selection_var,
             command=self._on_lock_case_selection_toggle,
         )
-        self.lock_case_selection_check.pack(anchor=tk.W, pady=(0, 6))
-        
-        btn_frame_load = ttk.Frame(case_section)
-        btn_frame_load.pack(fill=tk.X, pady=(0, 2))
-        btn_frame_load.columnconfigure(0, weight=1)
-        btn_frame_load.columnconfigure(1, weight=1)
-        ttk.Button(
-            btn_frame_load, text="Add Case", command=self.add_case_single, style="Compact.TButton"
-        ).grid(row=0, column=0, padx=2, pady=2, sticky=tk.EW)
-        ttk.Button(
-            btn_frame_load, text="Add Multiple", command=self.add_case_multiple, style="Compact.TButton"
-        ).grid(row=0, column=1, padx=2, pady=2, sticky=tk.EW)
-        ttk.Button(btn_frame_load, text="Add Group", command=self.add_group, style="Compact.TButton").grid(
-            row=1, column=0, columnspan=2, padx=2, pady=2, sticky=tk.EW
-        )
+        self.lock_case_selection_check.pack(side=tk.LEFT)
+        ttk.Label(
+            selection_row,
+            text="No selection = all cases",
+            style="Hint.TLabel",
+        ).pack(side=tk.RIGHT, padx=(8, 0))
 
-        btn_frame_manage = ttk.Frame(case_section)
-        btn_frame_manage.pack(fill=tk.X, pady=(2, 0))
-        btn_frame_manage.columnconfigure(0, weight=1)
-        btn_frame_manage.columnconfigure(1, weight=1)
-        ttk.Button(btn_frame_manage, text="Remove", command=self.remove_case, style="Compact.TButton").grid(
-            row=0, column=0, padx=2, pady=2, sticky=tk.EW
-        )
-        ttk.Button(btn_frame_manage, text="Remove All", command=self.remove_all_cases, style="Compact.TButton").grid(
-            row=0, column=1, padx=2, pady=2, sticky=tk.EW
-        )
-        ttk.Button(btn_frame_manage, text="Reload", command=self.reload_cases, style="Compact.TButton").grid(
-            row=1, column=0, columnspan=2, padx=2, pady=2, sticky=tk.EW
-        )
+        case_buttons = ttk.Frame(case_section)
+        case_buttons.pack(fill=tk.X)
+        for column in range(3):
+            case_buttons.columnconfigure(column, weight=1, uniform="case_actions")
+        ttk.Button(
+            case_buttons,
+            text="Add Case",
+            command=self.add_case_single,
+            style="Compact.TButton",
+        ).grid(row=0, column=0, padx=(0, 2), pady=(0, 3), sticky=tk.EW)
+        ttk.Button(
+            case_buttons,
+            text="Add Multiple",
+            command=self.add_case_multiple,
+            style="Compact.TButton",
+        ).grid(row=0, column=1, padx=2, pady=(0, 3), sticky=tk.EW)
+        ttk.Button(
+            case_buttons,
+            text="Add Group",
+            command=self.add_group,
+            style="Compact.TButton",
+        ).grid(row=0, column=2, padx=(2, 0), pady=(0, 3), sticky=tk.EW)
+        ttk.Button(
+            case_buttons,
+            text="Remove",
+            command=self.remove_case,
+            style="Compact.TButton",
+        ).grid(row=1, column=0, padx=(0, 2), sticky=tk.EW)
+        ttk.Button(
+            case_buttons,
+            text="Reload",
+            command=self.reload_cases,
+            style="Compact.TButton",
+        ).grid(row=1, column=1, padx=2, sticky=tk.EW)
+        ttk.Button(
+            case_buttons,
+            text="Remove All",
+            command=self.remove_all_cases,
+            style="Compact.TButton",
+        ).grid(row=1, column=2, padx=(2, 0), sticky=tk.EW)
 
-        # Plot Controls
+        # Scrollable plot-options region.  Cases and actions deliberately live
+        # outside this canvas, so only the potentially long dynamic form moves.
+        scroll_host = ttk.Frame(left_container)
+        scroll_host.grid(row=2, column=0, sticky=tk.NSEW)
+        self.options_scroll_host = scroll_host
+        scroll_host.columnconfigure(0, weight=1)
+        scroll_host.rowconfigure(0, weight=1)
+        self.left_scrollbar = ttk.Scrollbar(scroll_host, orient=tk.VERTICAL)
+        self.left_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.left_canvas = tk.Canvas(
+            scroll_host,
+            height=80,
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        self.left_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.left_canvas.configure(yscrollcommand=self.left_scrollbar.set)
+        self.left_scrollbar.configure(command=self.left_canvas.yview)
+        try:
+            canvas_bg = self._ui_style.lookup("TFrame", "background")
+            if canvas_bg:
+                self.left_canvas.configure(background=canvas_bg)
+        except (AttributeError, tk.TclError):
+            pass
+
+        left_panel = ttk.Frame(
+            self.left_canvas,
+            padding=(12, 0, 8, 10),
+            style="App.TFrame",
+        )
+        self.left_panel = left_panel
+        self._left_panel_window = self.left_canvas.create_window((0, 0), window=left_panel, anchor=tk.NW)
+        left_panel.bind("<Configure>", self._on_left_panel_configure)
+        self.left_canvas.bind("<Configure>", self._on_left_canvas_configure)
+        self.left_canvas.bind("<Enter>", self._on_left_panel_enter)
+        self.left_canvas.bind("<Leave>", self._on_left_panel_leave)
+        left_panel.bind("<Enter>", self._on_left_panel_enter)
+        left_panel.bind("<Leave>", self._on_left_panel_leave)
+
+        self.root.after_idle(self._set_initial_pane_position)
+
+        # Plot controls are the only content in the scrollable middle region.
         plot_section = ttk.LabelFrame(left_panel, text="Plot setup", padding=8, style="Card.TLabelframe")
-        plot_section.pack(fill=tk.X, pady=(0, 8))
+        plot_section.pack(fill=tk.X)
         ttk.Label(plot_section, text="Plot type:", style="SectionLabel.TLabel").pack(anchor=tk.W)
         
         self.plot_type_var = tk.StringVar(value="Frequency")
@@ -450,51 +534,79 @@ class CgyroUiMixin:
         self._init_options()
         self._refresh_case_summary()
 
-        # Action Buttons
-        action_section = ttk.LabelFrame(left_panel, text="Actions", padding=8, style="Card.TLabelframe")
-        action_section.pack(fill=tk.X, pady=(0, 8))
+        # Fixed action footer.  Plot and navigation remain reachable even when
+        # the current option form is much taller than the window.
+        action_footer = ttk.Frame(left_container, padding=(12, 6, 12, 10))
+        action_footer.grid(row=3, column=0, sticky=tk.EW)
+        self.action_footer = action_footer
+        ttk.Separator(action_footer, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(0, 6))
+        action_section = ttk.LabelFrame(
+            action_footer,
+            text="Actions",
+            padding=8,
+            style="Card.TLabelframe",
+        )
+        action_section.pack(fill=tk.X)
+        self.action_section = action_section
         action_section.columnconfigure(0, weight=1)
         action_section.columnconfigure(1, weight=1)
+        action_section.columnconfigure(2, weight=1)
         self.plot_button = ttk.Button(
             action_section,
             text="Plot",
             command=self.plot_comparison,
             style="Accent.TButton",
         )
-        self.plot_button.grid(row=0, column=0, columnspan=2, sticky=tk.EW, pady=(0, 5))
+        self.plot_button.grid(row=0, column=0, columnspan=3, sticky=tk.EW, pady=(0, 5))
         ttk.Button(
             action_section,
             text="Case info",
             command=self.plot_case_info,
             style="Compact.TButton",
-        ).grid(row=1, column=0, padx=(0, 3), sticky=tk.EW)
+        ).grid(row=1, column=0, padx=(0, 2), sticky=tk.EW)
         ttk.Button(
             action_section,
             text="Diff input",
             command=self.plot_input_diff,
             style="Compact.TButton",
-        ).grid(row=1, column=1, padx=(3, 0), sticky=tk.EW)
+        ).grid(row=1, column=1, padx=2, sticky=tk.EW)
         ttk.Button(
             action_section,
             text="Clear plot",
             command=self.clear_plot,
             style="Compact.TButton",
-        ).grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=(5, 0))
+        ).grid(row=1, column=2, padx=(2, 0), sticky=tk.EW)
 
-        # Animation Controls
-        animation_section = ttk.LabelFrame(left_panel, text="Animation", padding=8, style="Card.TLabelframe")
-        animation_section.pack(fill=tk.X, pady=(0, 8))
-        self.anim_controls_frame = ttk.Frame(animation_section)
-        self.anim_controls_frame.pack(fill=tk.X)
-        
+        ttk.Separator(action_section, orient=tk.HORIZONTAL).grid(
+            row=2, column=0, columnspan=3, sticky=tk.EW, pady=(7, 5)
+        )
+        navigation_header = ttk.Frame(action_section)
+        navigation_header.grid(row=3, column=0, columnspan=3, sticky=tk.EW, pady=(0, 4))
+        navigation_header.columnconfigure(0, weight=1)
+        ttk.Label(
+            navigation_header,
+            text="Animation / pages",
+            style="SectionLabel.TLabel",
+        ).grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(
+            navigation_header,
+            text="enabled when available",
+            style="Hint.TLabel",
+        ).grid(row=0, column=1, sticky=tk.E)
+
+        self.anim_controls_frame = ttk.Frame(action_section)
+        self.anim_controls_frame.grid(row=4, column=0, columnspan=3, sticky=tk.EW)
+        for column in range(3):
+            self.anim_controls_frame.columnconfigure(column, weight=1, uniform="animation")
+
         self.btn_prev = ttk.Button(self.anim_controls_frame, text="< Prev", command=self.prev_frame, state="disabled")
-        self.btn_prev.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.btn_prev.grid(row=0, column=0, padx=(0, 2), sticky=tk.EW)
         
         self.btn_pause = ttk.Button(self.anim_controls_frame, text="Pause", command=self.toggle_pause, state="disabled")
-        self.btn_pause.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.btn_pause.grid(row=0, column=1, padx=2, sticky=tk.EW)
         
         self.btn_next = ttk.Button(self.anim_controls_frame, text="Next >", command=self.next_frame, state="disabled")
-        self.btn_next.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.btn_next.grid(row=0, column=2, padx=(2, 0), sticky=tk.EW)
 
         # Right panel: Plot Area
         right_panel = ttk.Frame(self.main_pane, padding=10)
@@ -2409,6 +2521,10 @@ class CgyroUiMixin:
 
     def update_options(self, event=None):
         """Refresh dynamic option layout according to currently selected plot type."""
+        plot_type_changed = (
+            event is not None
+            and getattr(event, "widget", None) is getattr(self, "plot_type_combo", None)
+        )
         self._refresh_case_summary()
         self._hide_dynamic_options()
         plot_type = self.plot_type_var.get()
@@ -2677,6 +2793,11 @@ class CgyroUiMixin:
                 row += 1
                 self._render_pod_formula_math()
                 self.pod_formula_frame.grid(row=row, column=0, columnspan=4, sticky=tk.W + tk.E, pady=(4, 0))
+
+        if plot_type_changed:
+            # A newly selected mode should start at its first option instead of
+            # retaining a deep scroll offset from the previous, longer form.
+            self.root.after_idle(self._scroll_plot_options_to_top)
 
     def _get_case_species(self, data):
         """Extract species (Z, Mass) tuples from a case object."""
@@ -3993,6 +4114,13 @@ class CgyroUiMixin:
         try:
             self.left_canvas.configure(scrollregion=self.left_canvas.bbox("all"))
         except Exception:
+            pass
+
+    def _scroll_plot_options_to_top(self):
+        """Show the beginning of the dynamic options form after mode changes."""
+        try:
+            self.left_canvas.yview_moveto(0.0)
+        except (AttributeError, tk.TclError):
             pass
 
     def _on_left_canvas_configure(self, event):
