@@ -47,6 +47,19 @@ class FluctuationPlotting:
             return profile, False
         return profile / max_value, True
 
+    def _fluc_case_axis_text_for_plot(self, case_label, axis_name):
+        """Resolve a shared or per-case kx/ky selector for plotting."""
+        getter = getattr(self, "_get_fluc_case_axis_text", None)
+        if callable(getter):
+            return getter(case_label, axis_name)
+
+        var_name = "fluc_theta_kx_var" if axis_name == "kx" else "fluc_theta_ky_var"
+        var = getattr(self, var_name, None)
+        try:
+            return str(var.get()).strip() if var is not None else ""
+        except Exception:
+            return ""
+
     def _load_fluctuation_moment_field(self, data, label, moment, main_ion_policy="all"):
         """
         Load fluctuation moment into unified complex shape `[nr, theta, ky, t]`.
@@ -183,10 +196,8 @@ class FluctuationPlotting:
         else:
             ky_axis = ky_axis[:n_ky]
 
-        kx_var = getattr(self, "fluc_theta_kx_var", None)
-        ky_var = getattr(self, "fluc_theta_ky_var", None)
-        kx_text = kx_var.get() if kx_var is not None else ""
-        ky_text = ky_var.get() if ky_var is not None else ""
+        kx_text = self._fluc_case_axis_text_for_plot(label, "kx")
+        ky_text = self._fluc_case_axis_text_for_plot(label, "ky")
         kx_indices, kx_selection = self._resolve_optional_axis_indices(
             kx_axis, kx_text, "kx", label
         )
@@ -315,8 +326,7 @@ class FluctuationPlotting:
             )
             kx_axis = kx_axis[valid_kx]
             radial_idx = radial_idx[valid_kx]
-            kx_var = getattr(self, "fluc_theta_kx_var", None)
-            kx_text = kx_var.get() if kx_var is not None else ""
+            kx_text = self._fluc_case_axis_text_for_plot(label, "kx")
             kx_indices, kx_selection = self._resolve_optional_axis_indices(
                 kx_axis, kx_text, "kx", label
             )
@@ -365,8 +375,7 @@ class FluctuationPlotting:
 
         elif "vs kx" in plot_type:
             # The x-axis is kx; blank fixed-ky input averages over all ky modes.
-            ky_var = getattr(self, "fluc_theta_ky_var", None)
-            ky_text = ky_var.get() if ky_var is not None else ""
+            ky_text = self._fluc_case_axis_text_for_plot(label, "ky")
             ky_indices, ky_selection = self._resolve_optional_axis_indices(
                 ky, ky_text, "ky", label
             )

@@ -7,6 +7,7 @@ fluctuations, FFT views, and zonal ExB diagnostics.
 """
 
 import tkinter as tk
+import sys
 
 try:
     from cgyro_comparison_ui import CgyroUiMixin
@@ -29,6 +30,13 @@ class CGYRO_Comparison(CgyroUiMixin, CgyroDataExportMixin, Plotting):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        try:
+            from cgyro_update import _run_cli
+        except ImportError:
+            from .cgyro_update import _run_cli
+        raise SystemExit(_run_cli(sys.argv[1:]))
+
     root = tk.Tk()
     app = CGYRO_Comparison(root)
     root.mainloop()

@@ -110,6 +110,7 @@ class CgyroUiMixin:
         "fluc_field_var",
         "fluc_xaxis_var",
         "fluc_norm_max_var",
+        "fluc_advanced_var",
         "fluc_theta_kx_var",
         "fluc_theta_ky_var",
         "species_var",
@@ -191,6 +192,10 @@ class CgyroUiMixin:
         self.case_summary_var = tk.StringVar(value="0 cases loaded")
 
         self.cases = {}  # Dictionary to store loaded cases: {name: cgyrodata_object}
+        # Optional per-case selectors used by Fluctuation 1D Advanced mode.
+        # Each blank value means average over that spectral axis.
+        self._fluc_advanced_case_values = {}
+        self._fluc_advanced_seeded = False
         self.ani = None # Animation object
         self.is_paused = False
         self.current_frame = 0
@@ -941,6 +946,18 @@ class CgyroUiMixin:
             textvariable=self.fluc_theta_ky_var,
             width=12,
         )
+        self.fluc_advanced_var = tk.BooleanVar(value=False)
+        self.fluc_advanced_check = ttk.Checkbutton(
+            self.options_frame,
+            text="Advanced: per-case kx/ky",
+            variable=self.fluc_advanced_var,
+            command=self._on_fluc_advanced_toggle,
+        )
+        self.fluc_advanced_button = ttk.Button(
+            self.options_frame,
+            text="Edit per-case kx/ky...",
+            command=self._open_advanced_fluc_selector,
+        )
         (
             self.fluc_formula_frame,
             self.fluc_formula_fig,
@@ -1441,6 +1458,194 @@ class CgyroUiMixin:
         if path:
             self.linear_gamma_file_var.set(path)
 
+    def _fluc_advanced_enabled(self):
+        """Return whether Fluctuation 1D uses per-case kx/ky selections."""
+        var = getattr(self, "fluc_advanced_var", None)
+        try:
+            return bool(var.get()) if var is not None else False
+        except Exception:
+            return False
+
+    def _ensure_fluc_advanced_case_values(self):
+        """Keep the Advanced kx/ky table synchronized with loaded case names."""
+        values = getattr(self, "_fluc_advanced_case_values", None)
+        if not isinstance(values, dict):
+            values = {}
+            self._fluc_advanced_case_values = values
+
+        case_names = []
+        try:
+            case_names = [
+                str(self.case_listbox.get(index))
+                for index in range(self.case_listbox.size())
+            ]
+        except (AttributeError, tk.TclError):
+            pass
+
+        for case_name in case_names:
+            current = values.get(case_name)
+            if not isinstance(current, dict):
+                current = {}
+            values[case_name] = {
+                "kx": str(current.get("kx", "")),
+                "ky": str(current.get("ky", "")),
+            }
+
+        for case_name in list(values):
+            if case_name not in case_names:
+                values.pop(case_name, None)
+        return values
+
+    def _seed_fluc_advanced_case_values(self):
+        """Initialize new per-case entries from the shared selector values."""
+        values = self._ensure_fluc_advanced_case_values()
+        try:
+            default_kx = str(self.fluc_theta_kx_var.get()).strip()
+        except Exception:
+            default_kx = ""
+        try:
+            default_ky = str(self.fluc_theta_ky_var.get()).strip()
+        except Exception:
+            default_ky = ""
+
+        for entry in values.values():
+            if not str(entry.get("kx", "")).strip():
+                entry["kx"] = default_kx
+            if not str(entry.get("ky", "")).strip():
+                entry["ky"] = default_ky
+
+    def _on_fluc_advanced_toggle(self):
+        """Switch between shared and per-case Fluctuation 1D selectors."""
+        if self._fluc_advanced_enabled() and not getattr(self, "_fluc_advanced_seeded", False):
+            self._seed_fluc_advanced_case_values()
+            self._fluc_advanced_seeded = True
+        self.update_options()
+
+    def _get_fluc_case_axis_text(self, case_label, axis_name):
+        """Return the effective kx/ky text for one case."""
+        if not self._fluc_advanced_enabled():
+            var_name = "fluc_theta_kx_var" if axis_name == "kx" else "fluc_theta_ky_var"
+            var = getattr(self, var_name, None)
+            try:
+                return str(var.get()).strip() if var is not None else ""
+            except Exception:
+                return ""
+
+        values = self._ensure_fluc_advanced_case_values()
+        entry = values.get(str(case_label), {})
+        if not isinstance(entry, dict):
+            return ""
+        return str(entry.get(axis_name, "")).strip()
+
+    def _open_advanced_fluc_selector(self):
+        """Open the per-case kx/ky editor used by Fluctuation 1D Advanced mode."""
+        try:
+            case_names = [
+                str(self.case_listbox.get(index))
+                for index in range(self.case_listbox.size())
+            ]
+        except (AttributeError, tk.TclError):
+            case_names = []
+        if not case_names:
+            messagebox.showwarning(
+                "Advanced kx/ky",
+                "Load at least one case before editing per-case selections.",
+                parent=self.root,
+            )
+            return
+
+        values = self._ensure_fluc_advanced_case_values()
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Advanced kx/ky selection")
+        dialog.transient(self.root)
+        dialog.geometry("680x460")
+        dialog.minsize(520, 300)
+
+        content = ttk.Frame(dialog, padding=10)
+        content.pack(fill=tk.BOTH, expand=True)
+        content.columnconfigure(0, weight=1)
+        content.rowconfigure(1, weight=1)
+
+        ttk.Label(
+            content,
+            text=(
+                "Choose a value for each case. Leave a cell blank to average "
+                "over that axis; use idx:n or val:x when needed."
+            ),
+            wraplength=640,
+            justify=tk.LEFT,
+        ).grid(row=0, column=0, sticky=tk.W, pady=(0, 8))
+
+        table_frame = ttk.Frame(content)
+        table_frame.grid(row=1, column=0, sticky=tk.NSEW)
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+
+        canvas = tk.Canvas(table_frame, highlightthickness=0, borderwidth=0)
+        scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=canvas.yview)
+        inner = ttk.Frame(canvas)
+        window_id = canvas.create_window((0, 0), window=inner, anchor=tk.NW)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.grid(row=0, column=0, sticky=tk.NSEW)
+        scrollbar.grid(row=0, column=1, sticky=tk.NS)
+
+        inner.columnconfigure(0, weight=1)
+        inner.bind(
+            "<Configure>",
+            lambda _event: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+        canvas.bind(
+            "<Configure>",
+            lambda event: canvas.itemconfigure(window_id, width=event.width),
+        )
+
+        ttk.Label(inner, text="Case").grid(row=0, column=0, sticky=tk.W, padx=(2, 12), pady=(0, 4))
+        ttk.Label(inner, text="kx (blank=avg)").grid(row=0, column=1, sticky=tk.W, padx=4, pady=(0, 4))
+        ttk.Label(inner, text="ky (blank=avg)").grid(row=0, column=2, sticky=tk.W, padx=4, pady=(0, 4))
+
+        editors = []
+        for row, case_name in enumerate(case_names, start=1):
+            entry = values.get(case_name, {})
+            kx_var = tk.StringVar(value=str(entry.get("kx", "")))
+            ky_var = tk.StringVar(value=str(entry.get("ky", "")))
+            ttk.Label(inner, text=case_name).grid(
+                row=row, column=0, sticky=tk.W, padx=(2, 12), pady=3
+            )
+            ttk.Entry(inner, textvariable=kx_var, width=18).grid(
+                row=row, column=1, sticky=tk.EW, padx=4, pady=3
+            )
+            ttk.Entry(inner, textvariable=ky_var, width=18).grid(
+                row=row, column=2, sticky=tk.EW, padx=4, pady=3
+            )
+            editors.append((case_name, kx_var, ky_var))
+        inner.columnconfigure(1, weight=1)
+        inner.columnconfigure(2, weight=1)
+
+        buttons = ttk.Frame(content)
+        buttons.grid(row=2, column=0, sticky=tk.EW, pady=(10, 0))
+
+        def on_apply(event=None):
+            for case_name, kx_var, ky_var in editors:
+                values[case_name] = {
+                    "kx": kx_var.get().strip(),
+                    "ky": ky_var.get().strip(),
+                }
+            dialog.destroy()
+            self.update_options()
+
+        def on_cancel(event=None):
+            dialog.destroy()
+
+        ttk.Button(buttons, text="Cancel", command=on_cancel).pack(side=tk.RIGHT)
+        ttk.Button(buttons, text="Apply", command=on_apply).pack(
+            side=tk.RIGHT, padx=(0, 8)
+        )
+        dialog.bind("<Return>", on_apply)
+        dialog.bind("<Escape>", on_cancel)
+        dialog.grab_set()
+        dialog.focus_set()
+        dialog.wait_window()
+
     def _hide_dynamic_options(self):
         """Hide all dynamic option widgets before re-laying out current mode controls."""
         widgets = [
@@ -1451,6 +1656,7 @@ class CgyroUiMixin:
             self.flux_formula_frame,
             self.fluc_field_combo, self.fluc_xaxis_combo,
             self.fluc_norm_max_check,
+            self.fluc_advanced_check, self.fluc_advanced_button,
             self.fluc_theta_kx_label, self.fluc_theta_kx_entry,
             self.fluc_theta_ky_label, self.fluc_theta_ky_entry,
             self.fluc_formula_frame,
@@ -2103,24 +2309,35 @@ class CgyroUiMixin:
             row += 1
 
             fluc_xaxis = self.fluc_xaxis_var.get()
-            if fluc_xaxis == "v.s ky":
-                self.fluc_theta_kx_label.configure(text="fixed kx (blank=avg):")
-                self.fluc_theta_kx_label.grid(row=row, column=0, sticky=tk.W)
-                self.fluc_theta_kx_entry.grid(row=row, column=1, sticky=tk.W)
+            self.fluc_advanced_check.grid(row=row, column=0, columnspan=2, sticky=tk.W)
+            row += 1
+
+            advanced = self._fluc_advanced_enabled()
+            if advanced and fluc_xaxis in ("v.s ky", "v.s kx", "v.s theta"):
+                self._ensure_fluc_advanced_case_values()
+                self.fluc_advanced_button.grid(
+                    row=row, column=0, columnspan=2, sticky=tk.W
+                )
                 row += 1
-            elif fluc_xaxis == "v.s kx":
-                self.fluc_theta_ky_label.configure(text="fixed ky (blank=avg):")
-                self.fluc_theta_ky_label.grid(row=row, column=0, sticky=tk.W)
-                self.fluc_theta_ky_entry.grid(row=row, column=1, sticky=tk.W)
-                row += 1
-            elif fluc_xaxis == "v.s theta":
-                self.fluc_theta_kx_label.configure(text="kx (blank=avg):")
-                self.fluc_theta_ky_label.configure(text="ky (blank=avg):")
-                self.fluc_theta_kx_label.grid(row=row, column=0, sticky=tk.W)
-                self.fluc_theta_kx_entry.grid(row=row, column=1, sticky=tk.W)
-                self.fluc_theta_ky_label.grid(row=row, column=2, sticky=tk.W, padx=(8, 0))
-                self.fluc_theta_ky_entry.grid(row=row, column=3, sticky=tk.W)
-                row += 1
+            else:
+                if fluc_xaxis == "v.s ky":
+                    self.fluc_theta_kx_label.configure(text="fixed kx (blank=avg):")
+                    self.fluc_theta_kx_label.grid(row=row, column=0, sticky=tk.W)
+                    self.fluc_theta_kx_entry.grid(row=row, column=1, sticky=tk.W)
+                    row += 1
+                elif fluc_xaxis == "v.s kx":
+                    self.fluc_theta_ky_label.configure(text="fixed ky (blank=avg):")
+                    self.fluc_theta_ky_label.grid(row=row, column=0, sticky=tk.W)
+                    self.fluc_theta_ky_entry.grid(row=row, column=1, sticky=tk.W)
+                    row += 1
+                elif fluc_xaxis == "v.s theta":
+                    self.fluc_theta_kx_label.configure(text="kx (blank=avg):")
+                    self.fluc_theta_ky_label.configure(text="ky (blank=avg):")
+                    self.fluc_theta_kx_label.grid(row=row, column=0, sticky=tk.W)
+                    self.fluc_theta_kx_entry.grid(row=row, column=1, sticky=tk.W)
+                    self.fluc_theta_ky_label.grid(row=row, column=2, sticky=tk.W, padx=(8, 0))
+                    self.fluc_theta_ky_entry.grid(row=row, column=3, sticky=tk.W)
+                    row += 1
 
             if fluc_xaxis in ("v.s ky", "v.s kx", "v.s theta"):
                 self.fluc_norm_max_check.grid(row=row, column=0, columnspan=2, sticky=tk.W)
@@ -2661,14 +2878,22 @@ class CgyroUiMixin:
                 xaxis_str = xaxis.replace("v.s", "vs")
                 plot_type = f"{field} {xaxis_str}"
                 if xaxis in ("v.s ky", "v.s kx", "v.s theta"):
-                    kx_text = self.fluc_theta_kx_var.get().strip() or "average"
-                    ky_text = self.fluc_theta_ky_var.get().strip() or "average"
-                    if xaxis == "v.s ky":
-                        display_plot_type = f"{field} vs ky (kx={kx_text})"
-                    elif xaxis == "v.s kx":
-                        display_plot_type = f"{field} vs kx (ky={ky_text})"
+                    if self._fluc_advanced_enabled():
+                        if xaxis == "v.s ky":
+                            display_plot_type = f"{field} vs ky (per-case kx)"
+                        elif xaxis == "v.s kx":
+                            display_plot_type = f"{field} vs kx (per-case ky)"
+                        else:
+                            display_plot_type = f"{field} vs theta (per-case kx/ky)"
                     else:
-                        display_plot_type = f"{field} vs theta (kx={kx_text}, ky={ky_text})"
+                        kx_text = self.fluc_theta_kx_var.get().strip() or "average"
+                        ky_text = self.fluc_theta_ky_var.get().strip() or "average"
+                        if xaxis == "v.s ky":
+                            display_plot_type = f"{field} vs ky (kx={kx_text})"
+                        elif xaxis == "v.s kx":
+                            display_plot_type = f"{field} vs kx (ky={ky_text})"
+                        else:
+                            display_plot_type = f"{field} vs theta (kx={kx_text}, ky={ky_text})"
         elif plot_type_selection == "Fluctuation 2D":
             view = self.fluc2d_view_var.get().strip().lower()
             # Use the exact mapping above instead of composing strings here;
@@ -2784,6 +3009,14 @@ class CgyroUiMixin:
                 state[attr] = var.get()
             except Exception:
                 pass
+        state["fluc_advanced_case_values"] = {
+            str(case_name): {
+                "kx": str(values.get("kx", "")),
+                "ky": str(values.get("ky", "")),
+            }
+            for case_name, values in getattr(self, "_fluc_advanced_case_values", {}).items()
+            if isinstance(values, dict)
+        }
         return state
 
     def _restore_workspace_state(self, state):
@@ -2802,6 +3035,18 @@ class CgyroUiMixin:
                 var.set(state[attr])
             except Exception:
                 pass
+        raw_advanced = state.get("fluc_advanced_case_values", {})
+        if isinstance(raw_advanced, dict):
+            self._fluc_advanced_case_values = {
+                str(case_name): {
+                    "kx": str(values.get("kx", "")),
+                    "ky": str(values.get("ky", "")),
+                }
+                for case_name, values in raw_advanced.items()
+                if isinstance(values, dict)
+            }
+        self._fluc_advanced_seeded = bool(state.get("fluc_advanced_var", False))
+        self._ensure_fluc_advanced_case_values()
         if (
             "energy_balance_single_norm_var" not in state
             and bool(state.get("energy_balance_single_norm_entropy_var", False))
@@ -2949,6 +3194,8 @@ class CgyroUiMixin:
             return None
 
         self.cases.clear()
+        self._fluc_advanced_case_values.clear()
+        self._fluc_advanced_seeded = False
         self.case_listbox.delete(0, tk.END)
 
         loaded_count = 0
@@ -3185,6 +3432,7 @@ class CgyroUiMixin:
             
             self.cases[case_name] = data
             self.case_listbox.insert(tk.END, case_name)
+            self._ensure_fluc_advanced_case_values()
             self._refresh_case_summary("Loaded")
             if not silent:
                 print(f"Loaded case: {case_name} from {dir_path}")
@@ -3360,6 +3608,7 @@ class CgyroUiMixin:
         for index in reversed(selected_indices):
             case_name = self.case_listbox.get(index)
             del self.cases[case_name]
+            self._fluc_advanced_case_values.pop(str(case_name), None)
             self.case_listbox.delete(index)
         self._update_species_list()
         self._refresh_case_summary("Removed")
@@ -3370,6 +3619,7 @@ class CgyroUiMixin:
         """Clear all loaded cases after user confirmation."""
         if messagebox.askyesno("Confirm", "Are you sure you want to remove all loaded cases?"):
             self.cases.clear()
+            self._fluc_advanced_case_values.clear()
             self.case_listbox.delete(0, tk.END)
             self._update_species_list()
             self._refresh_case_summary("Removed all")

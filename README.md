@@ -7,6 +7,8 @@
 ### 最新更新
 - **更新后自动恢复**: 通过 Git 更新后自动重启程序，并恢复已加载算例、选中状态、绘图选项、窗口布局；若更新前已有图像则自动重绘。
 - **File -> Save workspace / Load workspace**: 可将当前加载的案例列表、选中案例和主要绘图选项保存为 JSON workspace，并在之后恢复同一绘图环境。默认保存/加载目录优先使用 `/data/share/$USER`。
+- **Fluctuation 1D Advanced 模式**: 可为每个 case 单独设置绘图使用的 `kx` 和 `ky`；留空表示对该方向取平均，配置会随 workspace 保存和恢复。
+- **命令行更新**: 可使用 `python cgyro_comparison.py --check-update` 检查版本，或使用 `python cgyro_comparison.py --update` 通过 `git pull --ff-only` 更新；也可直接运行 `python cgyro_update.py --update`。
 - **Data -> Save current plot data**: 可将当前图中的曲线或二维图数据导出为 Origin 友好的竖排文本表。单数据集格式为 `X  Y  Z`，多数据集格式为 `X  Y  Z  Dataset`。
 - **统一导出目录**: readable bin export、plot data export 和 workspace 文件默认从 `/data/share/$USER` 开始选择，若该目录不存在则回退到 `/data/share` 或当前工作目录。
 - **时间窗模式**: 支持 Manual Start/End、Full range、Last percent 和 Last duration，便于快速切换全时段、后半段统计或固定长度平均窗口。
