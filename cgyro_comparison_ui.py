@@ -87,6 +87,7 @@ class CgyroUiMixin:
     # stored separately as paths so a workspace remains portable between GUI
     # sessions and does not attempt to pickle pygacode data objects.
     _WORKSPACE_STATE_VARS = [
+        "lock_case_selection_var",
         "fluc_average_var",
         "time_mode_var",
         "time_percent_var",
@@ -190,8 +191,11 @@ class CgyroUiMixin:
         self.axis_ky_max_var = tk.StringVar()
         self.status_var = tk.StringVar(value="Ready")
         self.case_summary_var = tk.StringVar(value="0 cases loaded")
+        self.lock_case_selection_var = tk.BooleanVar(value=False)
 
         self.cases = {}  # Dictionary to store loaded cases: {name: cgyrodata_object}
+        self._locked_case_names = []
+        self._restoring_case_selection = False
         # Optional per-case selectors used by Fluctuation 1D Advanced mode.
         # Each blank value means average over that spectral axis.
         self._fluc_advanced_case_values = {}
@@ -363,13 +367,34 @@ class CgyroUiMixin:
             highlightcolor="#7aa2d6",
             selectbackground="#2f6fad",
             selectforeground="white",
+            exportselection=not bool(self.lock_case_selection_var.get()),
         )
-        self.case_listbox.pack(fill=tk.X, pady=(0, 6))
+        self.case_listbox.pack(fill=tk.X, pady=(0, 4))
         
         # Enable drag and drop reordering
         self.case_listbox.bind('<Button-1>', self._on_drag_start)
         self.case_listbox.bind('<B1-Motion>', self._on_drag_motion)
-        self.case_listbox.bind('<<ListboxSelect>>', self.update_options)
+        self.case_listbox.bind('<<ListboxSelect>>', self._on_case_listbox_select)
+        # A bind_all wheel handler is used for the outer left panel.  Handle
+        # the case list at widget scope first so its own scrolling does not
+        # bubble up and move the entire control panel as well.
+        self.case_listbox.bind(
+            '<MouseWheel>', self._on_case_listbox_mousewheel, add='+'
+        )
+        self.case_listbox.bind(
+            '<Button-4>', self._on_case_listbox_mousewheel, add='+'
+        )
+        self.case_listbox.bind(
+            '<Button-5>', self._on_case_listbox_mousewheel, add='+'
+        )
+
+        self.lock_case_selection_check = ttk.Checkbutton(
+            case_section,
+            text="Lock selection",
+            variable=self.lock_case_selection_var,
+            command=self._on_lock_case_selection_toggle,
+        )
+        self.lock_case_selection_check.pack(anchor=tk.W, pady=(0, 6))
         
         btn_frame_load = ttk.Frame(case_section)
         btn_frame_load.pack(fill=tk.X, pady=(0, 2))
@@ -491,63 +516,161 @@ class CgyroUiMixin:
         self.toolbar.update()
         self.toolbar.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
+    def _bind_menu_shortcut(self, sequence, command, widget=None):
+        """Bind one menu shortcut and stop duplicate widget processing."""
+        target = widget if widget is not None else self.root
+
+        def invoke(_event=None):
+            command()
+            return "break"
+
+        target.bind(sequence, invoke, add="+")
+
+    def _add_menu_command(
+        self,
+        menu,
+        label,
+        command,
+        accelerator=None,
+        shortcut=None,
+        shortcut_widget=None,
+    ):
+        """Add a consistently labelled menu command and optional shortcut."""
+        options = {"label": label, "command": command}
+        if accelerator:
+            options["accelerator"] = accelerator
+        menu.add_command(**options)
+        if shortcut:
+            self._bind_menu_shortcut(shortcut, command, widget=shortcut_widget)
+
     def _create_menu(self):
-        """Create application menu bar and file actions."""
+        """Create a compact menu bar grouped by user workflow."""
         menubar = tk.Menu(self.root)
         self.root.config(menu=menubar)
-        
+        self.menubar = menubar
+
+        # File contains workspace-level operations only.
         file_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="File", menu=file_menu)
-        file_menu.add_command(label="Add Case (Single)", command=self.add_case_single)
-        file_menu.add_command(label="Add Case (Multiple)", command=self.add_case_multiple)
-        file_menu.add_command(label="Add Group", command=self.add_group)
+        menubar.add_cascade(label="File", menu=file_menu, underline=0)
+        self._add_menu_command(
+            file_menu,
+            "Open Workspace...",
+            self.load_workspace,
+            accelerator="Ctrl+O",
+            shortcut="<Control-o>",
+        )
+        self._add_menu_command(
+            file_menu,
+            "Save Workspace...",
+            self.save_workspace,
+            accelerator="Ctrl+S",
+            shortcut="<Control-s>",
+        )
         file_menu.add_separator()
-        file_menu.add_command(label="Save workspace", command=self.save_workspace)
-        file_menu.add_command(label="Load workspace", command=self.load_workspace)
-        file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self.root.quit)
+        self._add_menu_command(
+            file_menu,
+            "Exit",
+            self.root.quit,
+            accelerator="Ctrl+Q",
+            shortcut="<Control-q>",
+        )
+        self.file_menu = file_menu
+
+        # Case management is kept separate from workspace file operations.
+        cases_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Cases", menu=cases_menu, underline=0)
+        self._add_menu_command(
+            cases_menu,
+            "Add Case...",
+            self.add_case_single,
+            accelerator="Ctrl+N",
+            shortcut="<Control-n>",
+        )
+        self._add_menu_command(
+            cases_menu,
+            "Add Multiple Cases...",
+            self.add_case_multiple,
+            accelerator="Ctrl+Shift+N",
+            shortcut="<Control-Shift-N>",
+        )
+        self._add_menu_command(cases_menu, "Add Case Group...", self.add_group)
+        cases_menu.add_separator()
+        self._add_menu_command(
+            cases_menu,
+            "Remove Selected",
+            self.remove_case,
+            accelerator="Delete",
+            shortcut="<Delete>",
+            shortcut_widget=self.case_listbox,
+        )
+        self._add_menu_command(cases_menu, "Remove All...", self.remove_all_cases)
+        self._add_menu_command(
+            cases_menu,
+            "Reload Cases",
+            self.reload_cases,
+            accelerator="F5",
+            shortcut="<F5>",
+        )
+        self.cases_menu = cases_menu
 
         data_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Data", menu=data_menu)
-        data_menu.add_command(
-            label="transfer bin to readable",
-            command=self.transfer_bin_to_readable,
+        menubar.add_cascade(label="Data", menu=data_menu, underline=0)
+        self._add_menu_command(
+            data_menu,
+            "Convert Binary to Readable...",
+            self.transfer_bin_to_readable,
         )
-        data_menu.add_command(
-            label="Save current plot data",
-            command=self.save_current_plot_data,
+        self._add_menu_command(
+            data_menu,
+            "Export Current Plot Data...",
+            self.save_current_plot_data,
+            accelerator="Ctrl+Shift+E",
+            shortcut="<Control-Shift-E>",
         )
+        self.data_menu = data_menu
 
-        time_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Time", menu=time_menu)
+        plot_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Plot", menu=plot_menu, underline=0)
+        self._add_menu_command(
+            plot_menu,
+            "Plot Now",
+            self.plot_comparison,
+            accelerator="Ctrl+Enter",
+            shortcut="<Control-Return>",
+        )
+        self._add_menu_command(plot_menu, "Clear Plot", self.clear_plot)
+        plot_menu.add_separator()
+
+        time_menu = tk.Menu(plot_menu, tearoff=0)
+        plot_menu.add_cascade(label="Time Window", menu=time_menu)
         time_menu.add_radiobutton(
-            label="Manual Start/End",
+            label="Manual Start / End",
             variable=self.time_mode_var,
             value="Manual Start/End",
         )
         time_menu.add_radiobutton(
-            label="Last percent...",
+            label="Last Percentage...",
             variable=self.time_mode_var,
             value="Last percent",
             command=self._set_time_last_percent,
         )
         time_menu.add_radiobutton(
-            label="Last duration...",
+            label="Last Duration...",
             variable=self.time_mode_var,
             value="Last duration",
             command=self._set_time_last_duration,
         )
         time_menu.add_radiobutton(
-            label="Full range",
+            label="Full Range",
             variable=self.time_mode_var,
             value="Full range",
             command=self._clear_simple_time_entries,
         )
         time_menu.add_separator()
-        time_menu.add_command(label="Reset", command=self.clear_time_range)
+        time_menu.add_command(label="Reset Time Window", command=self.clear_time_range)
 
-        average_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Average", menu=average_menu)
+        average_menu = tk.Menu(plot_menu, tearoff=0)
+        plot_menu.add_cascade(label="Averaging", menu=average_menu)
         average_menu.add_radiobutton(
             label="Mean Absolute",
             variable=self.fluc_average_var,
@@ -561,15 +684,24 @@ class CgyroUiMixin:
             command=self.update_options,
         )
 
-        axis_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Axis", menu=axis_menu)
-        axis_menu.add_command(label="Set limits...", command=self.open_axis_limits_dialog)
-        axis_menu.add_command(label="Clear limits", command=self.clear_axis_limits)
+        axis_menu = tk.Menu(plot_menu, tearoff=0)
+        plot_menu.add_cascade(label="Axis", menu=axis_menu)
+        axis_menu.add_command(
+            label="Set Axis Limits...",
+            command=self.open_axis_limits_dialog,
+        )
+        axis_menu.add_command(label="Clear Axis Limits", command=self.clear_axis_limits)
+        self.plot_menu = plot_menu
+        self.time_menu = time_menu
+        self.average_menu = average_menu
+        self.axis_menu = axis_menu
 
         help_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Help", menu=help_menu)
+        menubar.add_cascade(label="Help", menu=help_menu, underline=0)
         help_menu.add_command(label="Check for Updates...", command=self.check_for_updates)
+        help_menu.add_separator()
         help_menu.add_command(label="About", command=self.show_about)
+        self.help_menu = help_menu
         self._update_check_menu = help_menu
 
     def _check_for_updates_silently(self):
@@ -2975,12 +3107,111 @@ class CgyroUiMixin:
 
         return plot_type_selection, plot_type, display_plot_type
 
+    def _case_selection_lock_enabled(self):
+        """Return whether explicit case selection should survive focus changes."""
+        var = getattr(self, "lock_case_selection_var", None)
+        try:
+            return bool(var.get()) if var is not None else False
+        except Exception:
+            return False
+
+    def _case_listbox_selected_names(self):
+        """Return only the selection currently reported by the Tk listbox."""
+        try:
+            return [
+                str(self.case_listbox.get(index))
+                for index in self.case_listbox.curselection()
+            ]
+        except (AttributeError, tk.TclError):
+            return []
+
+    def _valid_locked_case_names(self):
+        """Return cached locked cases that are still present, in listbox order."""
+        locked = {str(name) for name in getattr(self, "_locked_case_names", [])}
+        if not locked:
+            return []
+        try:
+            return [
+                str(self.case_listbox.get(index))
+                for index in range(self.case_listbox.size())
+                if str(self.case_listbox.get(index)) in locked
+            ]
+        except (AttributeError, tk.TclError):
+            return []
+
+    def _restore_locked_case_selection(self):
+        """Restore the cached locked selection in the visible case list."""
+        if not self._case_selection_lock_enabled():
+            return
+        names = self._valid_locked_case_names()
+        if not names:
+            return
+
+        selected = set(self._case_listbox_selected_names())
+        if selected == set(names):
+            return
+
+        self._restoring_case_selection = True
+        try:
+            self.case_listbox.selection_clear(0, tk.END)
+            names_set = set(names)
+            for index in range(self.case_listbox.size()):
+                if str(self.case_listbox.get(index)) in names_set:
+                    self.case_listbox.selection_set(index)
+        except (AttributeError, tk.TclError):
+            pass
+        finally:
+            self._restoring_case_selection = False
+
+    def _apply_case_selection_lock_state(self, capture=True):
+        """Apply the lock option to Tk and optionally capture current cases."""
+        enabled = self._case_selection_lock_enabled()
+        try:
+            self.case_listbox.configure(exportselection=not enabled)
+        except (AttributeError, tk.TclError):
+            pass
+
+        if enabled:
+            selected = self._case_listbox_selected_names()
+            if capture and selected:
+                self._locked_case_names = selected
+            elif self._valid_locked_case_names():
+                self._restore_locked_case_selection()
+        elif capture:
+            self._locked_case_names = []
+        return enabled
+
+    def _on_lock_case_selection_toggle(self):
+        """Enable or disable persistent explicit case selection."""
+        enabled = self._apply_case_selection_lock_state(capture=True)
+        status = "Selection locked" if enabled else "Selection unlocked"
+        self._refresh_case_summary(status)
+
+    def _on_case_listbox_select(self, event=None):
+        """Track an explicit case selection while the lock option is enabled."""
+        if not getattr(self, "_restoring_case_selection", False):
+            selected = self._case_listbox_selected_names()
+            if self._case_selection_lock_enabled():
+                if selected:
+                    self._locked_case_names = selected
+                elif self._valid_locked_case_names():
+                    self._restore_locked_case_selection()
+        self.update_options(event)
+
     def _get_selected_case_names(self):
-        """Return selected case names, or all loaded cases when nothing is selected."""
-        selected_indices = self.case_listbox.curselection()
-        if not selected_indices:
-            return [self.case_listbox.get(i) for i in range(self.case_listbox.size())]
-        return [self.case_listbox.get(i) for i in selected_indices]
+        """Return explicit/locked cases, or all cases when no choice exists."""
+        selected = self._case_listbox_selected_names()
+        if selected:
+            if self._case_selection_lock_enabled():
+                self._locked_case_names = list(selected)
+            return selected
+
+        if self._case_selection_lock_enabled():
+            locked = self._valid_locked_case_names()
+            if locked:
+                return locked
+
+        return [self.case_listbox.get(i) for i in range(self.case_listbox.size())]
 
     def _get_workspace_case_entries(self):
         """Return loaded case entries in current listbox order."""
@@ -3045,6 +3276,7 @@ class CgyroUiMixin:
                 var.set(state[attr])
             except Exception:
                 pass
+        self._apply_case_selection_lock_state(capture=False)
         raw_advanced = state.get("fluc_advanced_case_values", {})
         if isinstance(raw_advanced, dict):
             self._fluc_advanced_case_values = {
@@ -3088,10 +3320,9 @@ class CgyroUiMixin:
 
     def _build_workspace_payload(self):
         """Build a serializable snapshot of the current GUI workspace."""
-        selected_names = [
-            self.case_listbox.get(i)
-            for i in self.case_listbox.curselection()
-        ]
+        selected_names = self._case_listbox_selected_names()
+        if not selected_names and self._case_selection_lock_enabled():
+            selected_names = self._valid_locked_case_names()
         workspace = {
             "version": 1,
             "tool": "cgyro_comparison_tool",
@@ -3204,6 +3435,7 @@ class CgyroUiMixin:
             return None
 
         self.cases.clear()
+        self._locked_case_names = []
         self._fluc_advanced_case_values.clear()
         self._fluc_advanced_seeded = False
         self.case_listbox.delete(0, tk.END)
@@ -3239,6 +3471,9 @@ class CgyroUiMixin:
             for i in range(self.case_listbox.size()):
                 if self.case_listbox.get(i) in selected:
                     self.case_listbox.selection_set(i)
+        if self._case_selection_lock_enabled():
+            self._locked_case_names = self._case_listbox_selected_names()
+            self._restore_locked_case_selection()
 
         geometry = workspace.get("window_geometry")
         if geometry:
@@ -3615,11 +3850,19 @@ class CgyroUiMixin:
     def remove_case(self):
         """Remove currently selected cases from list and internal cache."""
         selected_indices = self.case_listbox.curselection()
-        for index in reversed(selected_indices):
-            case_name = self.case_listbox.get(index)
-            del self.cases[case_name]
-            self._fluc_advanced_case_values.pop(str(case_name), None)
-            self.case_listbox.delete(index)
+        self._restoring_case_selection = True
+        try:
+            for index in reversed(selected_indices):
+                case_name = self.case_listbox.get(index)
+                del self.cases[case_name]
+                self._fluc_advanced_case_values.pop(str(case_name), None)
+                self.case_listbox.delete(index)
+        finally:
+            self._restoring_case_selection = False
+        self._locked_case_names = [
+            name for name in self._locked_case_names if name in self.cases
+        ]
+        self._restore_locked_case_selection()
         self._update_species_list()
         self._refresh_case_summary("Removed")
         if hasattr(self, "_clear_current_plot_data"):
@@ -3629,6 +3872,7 @@ class CgyroUiMixin:
         """Clear all loaded cases after user confirmation."""
         if messagebox.askyesno("Confirm", "Are you sure you want to remove all loaded cases?"):
             self.cases.clear()
+            self._locked_case_names = []
             self._fluc_advanced_case_values.clear()
             self.case_listbox.delete(0, tk.END)
             self._update_species_list()
@@ -3695,6 +3939,25 @@ class CgyroUiMixin:
                     self.case_listbox.selection_set(new_index)
                 
                 self._drag_start_index = new_index
+        return "break"
+
+    def _on_case_listbox_mousewheel(self, event):
+        """Scroll only the case list and stop the outer-panel wheel binding."""
+        try:
+            delta = int(getattr(event, "delta", 0))
+        except Exception:
+            delta = 0
+
+        if delta != 0:
+            step = -1 * int(delta / 120) if abs(delta) >= 120 else (-1 if delta > 0 else 1)
+            self.case_listbox.yview_scroll(step, "units")
+            return "break"
+
+        num = int(getattr(event, "num", 0))
+        if num == 4:
+            self.case_listbox.yview_scroll(-1, "units")
+        elif num == 5:
+            self.case_listbox.yview_scroll(1, "units")
         return "break"
 
     def _stop_animation(self):

@@ -5,6 +5,9 @@
 ## 功能特性
 
 ### 最新更新
+- **菜单栏重构**: 顶部菜单按 `File / Cases / Data / Plot / Help` 重新分组，时间窗、平均方式和坐标轴设置集中到 `Plot`，并增加工作区、case、导出、绘图等常用快捷键。
+- **Lock selection**: 在 case 列表下方锁定当前选择，切换绘图类型或其他 Plot Options 时不再退回默认的全部 case；状态会随 workspace 保存和恢复。
+- **独立滚动区域**: case 列表滚动时不再同步带动外层左侧控制面板。
 - **更新后自动恢复**: 通过 Git 更新后自动重启程序，并恢复已加载算例、选中状态、绘图选项、窗口布局；若更新前已有图像则自动重绘。
 - **File -> Save workspace / Load workspace**: 可将当前加载的案例列表、选中案例和主要绘图选项保存为 JSON workspace，并在之后恢复同一绘图环境。默认保存/加载目录优先使用 `/data/share/$USER`。
 - **Fluctuation 1D Advanced 模式**: 可为每个 case 单独设置绘图使用的 `kx` 和 `ky`；留空表示对该方向取平均，配置会随 workspace 保存和恢复。
