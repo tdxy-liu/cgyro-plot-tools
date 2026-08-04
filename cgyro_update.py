@@ -21,7 +21,7 @@ from urllib.request import Request, urlopen
 REPOSITORY_URL = "https://github.com/tdxy-liu/cgyro-plot-tools"
 RELEASE_API_URL = f"https://api.github.com/repos/tdxy-liu/cgyro-plot-tools/releases/latest"
 VERSION_URL = "https://raw.githubusercontent.com/tdxy-liu/cgyro-plot-tools/main/VERSION"
-DEFAULT_VERSION = "0.2.6"
+DEFAULT_VERSION = "0.2.7"
 DEFAULT_TIMEOUT = 5.0
 
 _VERSION_PATTERN = re.compile(
@@ -200,10 +200,14 @@ def check_for_updates(current_version=APP_VERSION, timeout=DEFAULT_TIMEOUT):
 
 def _run_git(repo_dir, args, timeout):
     """Run one Git command and return its completed process safely."""
-    command = ["git", "-C", str(repo_dir), *[str(arg) for arg in args]]
+    # Use subprocess' working-directory support instead of ``git -C``.
+    # Some OMFIT installations ship an older Git that does not understand
+    # the global ``-C`` option.
+    command = ["git", *[str(arg) for arg in args]]
     try:
         return subprocess.run(
             command,
+            cwd=str(repo_dir),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

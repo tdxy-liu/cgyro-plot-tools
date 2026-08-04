@@ -654,7 +654,8 @@ class CgyroUiMixin:
         app_dir = os.path.dirname(os.path.abspath(__file__))
         try:
             repo_check = subprocess.run(
-                ["git", "-C", app_dir, "rev-parse", "--show-toplevel"],
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=app_dir,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -675,7 +676,8 @@ class CgyroUiMixin:
 
         repo_root = repo_check.stdout.strip() or app_dir
         branch_check = subprocess.run(
-            ["git", "-C", repo_root, "branch", "--show-current"],
+            ["git", "branch", "--show-current"],
+            cwd=repo_root,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -692,7 +694,8 @@ class CgyroUiMixin:
             return
 
         status_check = subprocess.run(
-            ["git", "-C", repo_root, "status", "--porcelain"],
+            ["git", "status", "--porcelain"],
+            cwd=repo_root,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -718,7 +721,8 @@ class CgyroUiMixin:
 
         try:
             pull_result = subprocess.run(
-                ["git", "-C", repo_root, "pull", "--ff-only", "origin", "main"],
+                ["git", "pull", "--ff-only", "origin", "main"],
+                cwd=repo_root,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -802,7 +806,7 @@ class CgyroUiMixin:
 
     def _show_manual_git_update(self, repo_dir, reason):
         """Show a copyable command when an automatic fast-forward is unsafe."""
-        command = f'git -C "{repo_dir}" pull --ff-only origin main'
+        command = f'cd "{repo_dir}"\ngit pull --ff-only origin main'
         messagebox.showwarning(
             "Update Not Applied",
             f"{reason}\n\nRun this command manually after checking the repository:\n\n{command}",
