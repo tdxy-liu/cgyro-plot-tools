@@ -1842,7 +1842,7 @@ class CgyroUiMixin:
         # does not leave the menu in an unusable half-selected state.
         self._fluc_normalization_current_mode = "None"
         self.fluc_theta_kx_label = ttk.Label(
-            self.options_frame, text="kx (physical, blank=avg):"
+            self.options_frame, text="kx:"
         )
         self.fluc_theta_kx_var = tk.StringVar(value="")
         self.fluc_theta_kx_entry = ttk.Entry(
@@ -1852,7 +1852,7 @@ class CgyroUiMixin:
         )
         self._install_entry_placeholder(self.fluc_theta_kx_entry, self.fluc_theta_kx_var, "Avg")
         self.fluc_theta_ky_label = ttk.Label(
-            self.options_frame, text="ky (physical, blank=avg):"
+            self.options_frame, text="ky:"
         )
         self.fluc_theta_ky_var = tk.StringVar(value="")
         self.fluc_theta_ky_entry = ttk.Entry(
