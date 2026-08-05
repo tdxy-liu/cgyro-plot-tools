@@ -645,8 +645,8 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
             t_min = float(np.min(t_arr))
             t_max = float(np.max(t_arr))
             default_start = t_min + 0.5 * (t_max - t_min)
-            t_start_str = self.t_start_var.get().strip()
-            t_end_str = self.t_end_var.get().strip()
+            t_start_str = self._get_entry_value("t_start_var")
+            t_end_str = self._get_entry_value("t_end_var")
             mode = "last percent"
             try:
                 mode = str(self.time_mode_var.get()).strip().lower()

@@ -25,27 +25,92 @@ class FluctuationPlotting:
             color_map[case_label] = palette[len(color_map) % len(palette)]
         return color_map[case_label]
 
-    def _fluctuation_max_normalization_enabled(self):
-        """Return whether 1D fluctuation profiles should be scaled by max(abs(y))."""
-        var = getattr(self, "fluc_norm_max_var", None)
+    def _fluctuation_normalization_mode(self):
+        """Return the selected Plot -> Normalization mode."""
+        var = getattr(self, "fluc_normalization_var", None)
         try:
-            return bool(var.get()) if var is not None else False
+            mode = str(var.get()).strip() if var is not None else "None"
         except Exception:
-            return False
+            mode = "None"
+
+        valid_modes = {
+            "None",
+            "Max value",
+            "Min value",
+            "Max absolute value",
+            "Min-Max [0, 1]",
+            "Custom value",
+        }
+        if mode in valid_modes:
+            return mode
+
+        # Compatibility fallback for callers that still expose the old
+        # checkbox variable from a pre-menu UI.
+        legacy_var = getattr(self, "fluc_norm_max_var", None)
+        try:
+            if legacy_var is not None and bool(legacy_var.get()):
+                return "Max absolute value"
+        except Exception:
+            pass
+        return "None"
+
+    def _fluctuation_custom_normalization_value(self):
+        """Return the custom normalization denominator, or None if invalid."""
+        var = getattr(self, "fluc_normalization_custom_value_var", None)
+        try:
+            value = float(var.get()) if var is not None else np.nan
+        except (TypeError, ValueError, AttributeError):
+            return None
+        if not np.isfinite(value) or abs(value) <= 1.0e-15:
+            return None
+        return value
 
     def _normalize_fluctuation_profile(self, values):
-        """Normalize a plotted 1D profile by its finite maximum when requested."""
+        """Apply the selected normalization to a plotted 1D profile.
+
+        Returns the transformed profile and a short label for plot annotations.
+        Normalization is intentionally applied after the existing fluctuation
+        averaging, preserving the previous max-normalization behavior.
+        """
         profile = np.asarray(values, dtype=float)
-        if not self._fluctuation_max_normalization_enabled():
-            return profile, False
+        mode = self._fluctuation_normalization_mode()
+        if mode == "None":
+            return profile, ""
 
         finite = np.isfinite(profile)
         if not np.any(finite):
-            return profile, False
-        max_value = float(np.max(np.abs(profile[finite])))
-        if not np.isfinite(max_value) or max_value <= 1.0e-15:
-            return profile, False
-        return profile / max_value, True
+            return profile, ""
+        finite_values = profile[finite]
+
+        if mode == "Max value":
+            denominator = float(np.max(finite_values))
+            label = "max=1"
+        elif mode == "Min value":
+            denominator = float(np.min(finite_values))
+            label = "min=1"
+        elif mode == "Max absolute value":
+            denominator = float(np.max(np.abs(finite_values)))
+            label = "max|y|=1"
+        elif mode == "Min-Max [0, 1]":
+            minimum = float(np.min(finite_values))
+            maximum = float(np.max(finite_values))
+            span = maximum - minimum
+            if not np.isfinite(span) or abs(span) <= 1.0e-15:
+                return profile, ""
+            normalized = profile.copy()
+            normalized[finite] = (profile[finite] - minimum) / span
+            return normalized, "min-max=[0,1]"
+        elif mode == "Custom value":
+            denominator = self._fluctuation_custom_normalization_value()
+            if denominator is None:
+                return profile, ""
+            label = f"custom/{denominator:.6g}"
+        else:
+            return profile, ""
+
+        if not np.isfinite(denominator) or abs(denominator) <= 1.0e-15:
+            return profile, ""
+        return profile / denominator, label
 
     def _fluc_case_axis_text_for_plot(self, case_label, axis_name):
         """Resolve a shared or per-case kx/ky selector for plotting."""
@@ -54,6 +119,9 @@ class FluctuationPlotting:
             return getter(case_label, axis_name)
 
         var_name = "fluc_theta_kx_var" if axis_name == "kx" else "fluc_theta_ky_var"
+        value_getter = getattr(self, "_get_entry_value", None)
+        if callable(value_getter):
+            return value_getter(var_name)
         var = getattr(self, var_name, None)
         try:
             return str(var.get()).strip() if var is not None else ""
@@ -237,16 +305,16 @@ class FluctuationPlotting:
             profile = np.sqrt(np.mean(amplitude ** 2, axis=average_axes))
             y_label = rf"$\sqrt{{\langle |{field_name}/\rho_s|^2 \rangle_{{k_x,k_y,t}}}}$"
 
-        profile, max_normalized = self._normalize_fluctuation_profile(profile)
-        if max_normalized:
-            y_label = f"{y_label} (max=1)"
+        profile, normalization_label = self._normalize_fluctuation_profile(profile)
+        if normalization_label:
+            y_label = f"{y_label} ({normalization_label})"
 
         theta_axis = self._build_theta_over_pi_axis(data, n_theta)
         theta_axis = np.asarray(theta_axis, dtype=float).reshape(-1)
         if theta_axis.size != n_theta:
             theta_axis = np.linspace(-1.0, 1.0, n_theta)
 
-        normalization_suffix = ", max-normalized" if max_normalized else ""
+        normalization_suffix = f", {normalization_label}" if normalization_label else ""
         plot_label = (
             f"{label} (kx={kx_selection}, ky={ky_selection}"
             f"{time_suffix}, {self._average_mode_name()}{normalization_suffix})"
@@ -363,10 +431,10 @@ class FluctuationPlotting:
                 else:
                     y_vals = np.sqrt(np.maximum(field_ky_t[:, -1], 0.0))
 
-            y, max_normalized = self._normalize_fluctuation_profile(y_vals)
-            if max_normalized:
-                y_label = f"{y_label} (max=1)"
-                plot_label += " [max-normalized]"
+            y, normalization_label = self._normalize_fluctuation_profile(y_vals)
+            if normalization_label:
+                y_label = f"{y_label} ({normalization_label})"
+                plot_label += f" [{normalization_label}]"
             x = ky
             n = min(x.size, y.size)
             self._plot_1d(x[:n], y[:n], plot_label, plot_type)
@@ -426,10 +494,10 @@ class FluctuationPlotting:
                 else:
                     y_vals = np.sqrt(np.maximum(field_kx_t[:, -1], 0.0))
 
-            y, max_normalized = self._normalize_fluctuation_profile(y_vals)
-            if max_normalized:
-                y_label = f"{y_label} (max=1)"
-                plot_label += " [max-normalized]"
+            y, normalization_label = self._normalize_fluctuation_profile(y_vals)
+            if normalization_label:
+                y_label = f"{y_label} ({normalization_label})"
+                plot_label += f" [{normalization_label}]"
 
             x = kx_axis
             n = min(x.size, y.size)
@@ -797,7 +865,7 @@ class FluctuationPlotting:
 
         # Determine if animation is needed
         # Only animate if user explicitly provided a time range (start or end)
-        user_specified_time = self.t_start_var.get().strip() or self.t_end_var.get().strip()
+        user_specified_time = self._get_entry_value("t_start_var") or self._get_entry_value("t_end_var")
         should_animate = user_specified_time and len(t_indices) > 1
 
         if should_animate:
@@ -947,7 +1015,10 @@ class FluctuationPlotting:
         c_kx_t = c_kx_t[:, :n_t]
         t_axis = t_axis[:n_t]
 
-        user_specified_time = bool(self.t_start_var.get().strip() or self.t_end_var.get().strip())
+        user_specified_time = bool(
+            self._get_entry_value("t_start_var")
+            or self._get_entry_value("t_end_var")
+        )
         if user_specified_time:
             valid_t = np.asarray(t_indices, dtype=int)
             valid_t = valid_t[(valid_t >= 0) & (valid_t < n_t)]

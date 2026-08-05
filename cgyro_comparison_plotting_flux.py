@@ -146,7 +146,10 @@ class FluxPlotting:
             flux_use = flux_sel[:, :, :n_ky, :n_t]
 
             # For ky-time evolution, default to full time unless user explicitly sets time window.
-            user_specified_time = bool(self.t_start_var.get().strip() or self.t_end_var.get().strip())
+            user_specified_time = bool(
+                self._get_entry_value("t_start_var")
+                or self._get_entry_value("t_end_var")
+            )
             if user_specified_time and t_valid.size > 0:
                 t_use = t_valid[t_valid < n_t]
                 if t_use.size > 0:

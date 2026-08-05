@@ -125,6 +125,7 @@ case 列表拥有独立滚动条。鼠标在列表上滚动时，不会带动 Pl
 
 - `Log X` / `Log Y`：使用对数坐标。
 - `Plot -> Averaging`：为涨落量选择 Mean Absolute 或 Root Mean Square。
+- `Plot -> Normalization`：设置 Fluctuation 1D 曲线的额外归一化方式。
 - `Plot -> Axis -> Set Axis Limits...`：设置 kx、ky 等坐标范围。
 - `Clear Axis Limits`：恢复自动范围。
 
@@ -167,7 +168,13 @@ case 列表拥有独立滚动条。鼠标在列表上滚动时，不会带动 Pl
 - 普通数字按物理量处理，并自动匹配最接近的 kx/ky 网格点，例如输入 `0` 会选择最接近物理值 0 的模式。
 - `idx:n` 仅用于明确按数组索引选择，例如 `idx:0`。
 - `val:x` 仍可用于明确表示按最接近物理值选择，例如 `val:0.24`。
-- `Normalize by max value` 将最终有限数据按最大值归一化。
+- `Plot -> Normalization` 可对最终 Fluctuation 1D 曲线选择归一化方式：
+  - `None`：不做额外归一化。
+  - `Max value`：除以有限数据的最大值。
+  - `Min value`：除以有限数据的最小值。
+  - `Max absolute value`：除以最大绝对值（兼容旧版 `Normalize by max value` 的行为）。
+  - `Min-Max [0, 1]`：将有限数据线性缩放到 `[0, 1]`。
+  - `Custom value`：除以用户输入的非零有限值。
 
 #### Advanced：每个 case 单独设置 kx / ky
 

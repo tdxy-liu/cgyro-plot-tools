@@ -75,6 +75,14 @@ class CgyroUiMixin:
     _FLUX_XAXIS_OPTIONS = ("v.s ky", "v.s kx (estimated)", "v.s Time", "v.s ky_time", "v.s 2D")
     _FLUC_FIELD_OPTIONS = ("Phi", "Apar", "Bpar")
     _FLUC_XAXIS_OPTIONS = ("v.s ky", "v.s kx", "v.s Time", "v.s theta", "fft")
+    _FLUC_NORMALIZATION_OPTIONS = (
+        "None",
+        "Max value",
+        "Min value",
+        "Max absolute value",
+        "Min-Max [0, 1]",
+        "Custom value",
+    )
     _FLUC_MOMENT_OPTIONS = ("Phi", "Density", "Energy", "Temperature", "Apar", "Bpar")
     _FLUC2D_VIEW_OPTIONS = ("vs xy", "vs xt", "vs kxky")
     # User-facing Fluctuation-2D views are translated into exact internal
@@ -107,6 +115,14 @@ class CgyroUiMixin:
     _OTHERS_PLOT_OPTIONS = ("Error", "rcorr_phi", "POD_parity")
     _OTHERS_FIELD_OPTIONS = ("Phi", "Apar", "Bpar")
     _OTHERS_POD_FIELD_OPTIONS = ("Apar", "Phi")
+    # Entry placeholders are kept in the Tk variable for reliable display,
+    # while ``_get_entry_value`` hides them from plotting and workspace data.
+    _PLACEHOLDER_ENTRY_FIELDS = {
+        "t_start_var": ("t_start_entry", "50% End"),
+        "t_end_var": ("t_end_entry", "End"),
+        "fluc_theta_kx_var": ("fluc_theta_kx_entry", "Avg"),
+        "fluc_theta_ky_var": ("fluc_theta_ky_entry", "Avg"),
+    }
     # Workspace files persist Tk variables, not widget objects.  Cases are
     # stored separately as paths so a workspace remains portable between GUI
     # sessions and does not attempt to pickle pygacode data objects.
@@ -134,7 +150,8 @@ class CgyroUiMixin:
         "flux_norm_real_ion_var",
         "fluc_field_var",
         "fluc_xaxis_var",
-        "fluc_norm_max_var",
+        "fluc_normalization_var",
+        "fluc_normalization_custom_value_var",
         "fluc_advanced_var",
         "fluc_theta_kx_var",
         "fluc_theta_ky_var",
@@ -260,6 +277,7 @@ class CgyroUiMixin:
             style.configure("Muted.TLabel", foreground="#667085", font=("Segoe UI", 9))
             style.configure("Hint.TLabel", foreground="#7a8493", font=("Segoe UI", 8))
             style.configure("Status.TLabel", foreground="#667085", font=("Segoe UI", 9))
+            style.configure("Placeholder.TEntry", foreground="#98A2B3")
             style.configure("Card.TLabelframe", padding=8)
             style.configure("Card.TLabelframe.Label", font=("Segoe UI", 10, "bold"))
             style.configure("Inner.TLabelframe", padding=6)
@@ -270,6 +288,117 @@ class CgyroUiMixin:
             # Some platform themes expose fewer style options.  The default
             # ttk theme is still fully usable when a custom option is rejected.
             pass
+
+    def _set_entry_style(self, entry, style_name):
+        """Apply an entry style, tolerating Tk themes with limited options."""
+        try:
+            entry.configure(style=style_name)
+        except tk.TclError:
+            pass
+
+    def _install_entry_placeholder(self, entry, variable, placeholder):
+        """Install a grey placeholder without exposing it as an input value."""
+        state = {
+            "variable": variable,
+            "placeholder": str(placeholder),
+            "normal_style": entry.cget("style") or "TEntry",
+            "active": False,
+        }
+        entry._cgyro_placeholder_state = state
+        entry.bind(
+            "<FocusIn>",
+            lambda _event, widget=entry: self._clear_entry_placeholder(widget),
+            add="+",
+        )
+        entry.bind(
+            "<FocusOut>",
+            lambda _event, widget=entry: self._restore_entry_placeholder(widget),
+            add="+",
+        )
+        self._restore_entry_placeholder(entry)
+
+    def _clear_entry_placeholder(self, entry):
+        """Clear a placeholder when the user starts editing an entry."""
+        state = getattr(entry, "_cgyro_placeholder_state", None)
+        if not state:
+            return
+        variable = state["variable"]
+        try:
+            value = str(variable.get())
+        except Exception:
+            value = ""
+        state["active"] = False
+        if value == state["placeholder"]:
+            try:
+                variable.set("")
+            except Exception:
+                pass
+        self._set_entry_style(entry, state["normal_style"])
+
+    def _restore_entry_placeholder(self, entry):
+        """Show a placeholder after an empty entry loses focus."""
+        state = getattr(entry, "_cgyro_placeholder_state", None)
+        if not state:
+            return
+        variable = state["variable"]
+        try:
+            value = str(variable.get())
+        except Exception:
+            value = ""
+
+        if value and value != state["placeholder"]:
+            state["active"] = False
+            self._set_entry_style(entry, state["normal_style"])
+            return
+        if value == state["placeholder"]:
+            state["active"] = True
+            self._set_entry_style(entry, "Placeholder.TEntry")
+            return
+
+        # Do not insert a hint while the user is still editing the field.
+        try:
+            focused = self.root.focus_get() == entry
+        except Exception:
+            focused = False
+        if focused:
+            state["active"] = False
+            self._set_entry_style(entry, state["normal_style"])
+            return
+
+        state["active"] = True
+        try:
+            variable.set(state["placeholder"])
+        except Exception:
+            pass
+        self._set_entry_style(entry, "Placeholder.TEntry")
+
+    def _refresh_entry_placeholders(self):
+        """Synchronize placeholder styling after programmatic variable changes."""
+        for _var_name, (entry_name, _placeholder) in self._PLACEHOLDER_ENTRY_FIELDS.items():
+            entry = getattr(self, entry_name, None)
+            if entry is not None:
+                self._restore_entry_placeholder(entry)
+
+    def _get_entry_value(self, var_name, default=""):
+        """Return an entry value while treating its placeholder as empty."""
+        variable = getattr(self, var_name, None)
+        if variable is None or not hasattr(variable, "get"):
+            return default
+        try:
+            value = str(variable.get()).strip()
+        except Exception:
+            return default
+
+        entry_info = self._PLACEHOLDER_ENTRY_FIELDS.get(var_name)
+        if entry_info:
+            entry = getattr(self, entry_info[0], None)
+            state = getattr(entry, "_cgyro_placeholder_state", None)
+            if value == entry_info[1]:
+                return default
+            if state and state.get("active"):
+                state["active"] = False
+                self._set_entry_style(entry, state["normal_style"])
+        return value if value else default
 
     def _set_initial_pane_position(self):
         """Set a comfortable initial control-panel width after geometry settles."""
@@ -685,6 +814,56 @@ class CgyroUiMixin:
         if shortcut:
             self._bind_menu_shortcut(shortcut, command, widget=shortcut_widget)
 
+    def _set_fluc_normalization_mode(self, mode):
+        """Set the Plot -> Normalization mode used by Fluctuation 1D cuts."""
+        mode = str(mode).strip()
+        if mode not in self._FLUC_NORMALIZATION_OPTIONS:
+            mode = "None"
+        if mode == "Custom value":
+            self._choose_fluc_custom_normalization()
+            return
+
+        self.fluc_normalization_var.set(mode)
+        self._fluc_normalization_current_mode = mode
+        self.update_options()
+
+    def _choose_fluc_custom_normalization(self):
+        """Ask for and activate the custom Fluctuation 1D normalization denominator."""
+        previous_mode = getattr(
+            self, "_fluc_normalization_current_mode", "None"
+        )
+        try:
+            initial_value = float(self.fluc_normalization_custom_value_var.get())
+        except (AttributeError, TypeError, ValueError):
+            initial_value = 1.0
+        if not np.isfinite(initial_value) or abs(initial_value) <= 1.0e-15:
+            initial_value = 1.0
+
+        value = simpledialog.askfloat(
+            "Custom normalization",
+            "Divide the final Fluctuation 1D profile by:",
+            initialvalue=initial_value,
+            parent=self.root,
+        )
+        if value is None:
+            self.fluc_normalization_var.set(previous_mode)
+            self.update_options()
+            return
+        if not np.isfinite(value) or abs(value) <= 1.0e-15:
+            messagebox.showerror(
+                "Custom normalization",
+                "The custom value must be finite and non-zero.",
+                parent=self.root,
+            )
+            self.fluc_normalization_var.set(previous_mode)
+            self.update_options()
+            return
+
+        self.fluc_normalization_custom_value_var.set(f"{value:.12g}")
+        self.fluc_normalization_var.set("Custom value")
+        self._fluc_normalization_current_mode = "Custom value"
+        self.update_options()
+
     def _create_menu(self):
         """Create a compact menu bar grouped by user workflow."""
         menubar = tk.Menu(self.root)
@@ -826,6 +1005,29 @@ class CgyroUiMixin:
             command=self.update_options,
         )
 
+        normalization_menu = tk.Menu(plot_menu, tearoff=0)
+        plot_menu.add_cascade(label="Normalization", menu=normalization_menu)
+        for normalization_mode in self._FLUC_NORMALIZATION_OPTIONS:
+            if normalization_mode == "Custom value":
+                normalization_menu.add_radiobutton(
+                    label="Custom value...",
+                    variable=self.fluc_normalization_var,
+                    value=normalization_mode,
+                    command=self._choose_fluc_custom_normalization,
+                )
+            else:
+                normalization_menu.add_radiobutton(
+                    label=normalization_mode,
+                    variable=self.fluc_normalization_var,
+                    value=normalization_mode,
+                    command=lambda mode=normalization_mode: self._set_fluc_normalization_mode(mode),
+                )
+        normalization_menu.add_separator()
+        normalization_menu.add_command(
+            label="Set Custom Value...",
+            command=self._choose_fluc_custom_normalization,
+        )
+
         axis_menu = tk.Menu(plot_menu, tearoff=0)
         plot_menu.add_cascade(label="Axis", menu=axis_menu)
         axis_menu.add_command(
@@ -836,6 +1038,7 @@ class CgyroUiMixin:
         self.plot_menu = plot_menu
         self.time_menu = time_menu
         self.average_menu = average_menu
+        self.normalization_menu = normalization_menu
         self.axis_menu = axis_menu
 
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -1522,11 +1725,23 @@ class CgyroUiMixin:
         # --- Persistent Options (Time Range) ---
         ttk.Label(self.options_frame, text="Time Start:").grid(row=0, column=0, sticky=tk.W)
         self.t_start_var = tk.StringVar()
-        ttk.Entry(self.options_frame, textvariable=self.t_start_var, width=9).grid(row=0, column=1, sticky=tk.W)
+        self.t_start_entry = ttk.Entry(
+            self.options_frame,
+            textvariable=self.t_start_var,
+            width=9,
+        )
+        self.t_start_entry.grid(row=0, column=1, sticky=tk.W)
+        self._install_entry_placeholder(self.t_start_entry, self.t_start_var, "50% End")
 
         ttk.Label(self.options_frame, text="Time End:").grid(row=1, column=0, sticky=tk.W)
         self.t_end_var = tk.StringVar()
-        ttk.Entry(self.options_frame, textvariable=self.t_end_var, width=9).grid(row=1, column=1, sticky=tk.W)
+        self.t_end_entry = ttk.Entry(
+            self.options_frame,
+            textvariable=self.t_end_var,
+            width=9,
+        )
+        self.t_end_entry.grid(row=1, column=1, sticky=tk.W)
+        self._install_entry_placeholder(self.t_end_entry, self.t_end_var, "End")
 
         # --- Global Log Scale Options ---
         self.log_x_var = tk.BooleanVar(value=False)
@@ -1621,12 +1836,11 @@ class CgyroUiMixin:
             state="readonly",
             width=15,
         )
-        self.fluc_norm_max_var = tk.BooleanVar(value=False)
-        self.fluc_norm_max_check = ttk.Checkbutton(
-            self.options_frame,
-            text="Normalize by max value",
-            variable=self.fluc_norm_max_var,
-        )
+        self.fluc_normalization_var = tk.StringVar(value="None")
+        self.fluc_normalization_custom_value_var = tk.StringVar(value="1.0")
+        # Keep the last confirmed mode so cancelling the custom-value dialog
+        # does not leave the menu in an unusable half-selected state.
+        self._fluc_normalization_current_mode = "None"
         self.fluc_theta_kx_label = ttk.Label(
             self.options_frame, text="kx (physical, blank=avg):"
         )
@@ -1636,6 +1850,7 @@ class CgyroUiMixin:
             textvariable=self.fluc_theta_kx_var,
             width=12,
         )
+        self._install_entry_placeholder(self.fluc_theta_kx_entry, self.fluc_theta_kx_var, "Avg")
         self.fluc_theta_ky_label = ttk.Label(
             self.options_frame, text="ky (physical, blank=avg):"
         )
@@ -1645,6 +1860,7 @@ class CgyroUiMixin:
             textvariable=self.fluc_theta_ky_var,
             width=12,
         )
+        self._install_entry_placeholder(self.fluc_theta_ky_entry, self.fluc_theta_ky_var, "Avg")
         self.fluc_advanced_var = tk.BooleanVar(value=False)
         self.fluc_advanced_check = ttk.Checkbutton(
             self.options_frame,
@@ -2020,6 +2236,7 @@ class CgyroUiMixin:
         self.time_duration_var.set("")
         self.t_start_var.set("")
         self.t_end_var.set("")
+        self._refresh_entry_placeholders()
 
     def clear_axis_limits(self):
         """Clear manual plot-axis limit entries."""
@@ -2096,6 +2313,7 @@ class CgyroUiMixin:
         """Clear left-panel time entries so the top Time menu controls averaging."""
         self.t_start_var.set("")
         self.t_end_var.set("")
+        self._refresh_entry_placeholders()
 
     def _set_time_last_percent(self):
         """Prompt for the final time percentage used by the top Time menu."""
@@ -2198,14 +2416,8 @@ class CgyroUiMixin:
     def _seed_fluc_advanced_case_values(self):
         """Initialize new per-case entries from the shared selector values."""
         values = self._ensure_fluc_advanced_case_values()
-        try:
-            default_kx = str(self.fluc_theta_kx_var.get()).strip()
-        except Exception:
-            default_kx = ""
-        try:
-            default_ky = str(self.fluc_theta_ky_var.get()).strip()
-        except Exception:
-            default_ky = ""
+        default_kx = self._get_entry_value("fluc_theta_kx_var")
+        default_ky = self._get_entry_value("fluc_theta_ky_var")
 
         for entry in values.values():
             if not str(entry.get("kx", "")).strip():
@@ -2224,11 +2436,7 @@ class CgyroUiMixin:
         """Return the effective kx/ky text for one case."""
         if not self._fluc_advanced_enabled():
             var_name = "fluc_theta_kx_var" if axis_name == "kx" else "fluc_theta_ky_var"
-            var = getattr(self, var_name, None)
-            try:
-                return str(var.get()).strip() if var is not None else ""
-            except Exception:
-                return ""
+            return self._get_entry_value(var_name)
 
         values = self._ensure_fluc_advanced_case_values()
         entry = values.get(str(case_label), {})
@@ -2359,7 +2567,6 @@ class CgyroUiMixin:
             self.flux_scan_xparam_label, self.flux_scan_xparam_combo,
             self.flux_formula_frame,
             self.fluc_field_combo, self.fluc_xaxis_combo,
-            self.fluc_norm_max_check,
             self.fluc_advanced_check, self.fluc_advanced_button,
             self.fluc_theta_kx_label, self.fluc_theta_kx_entry,
             self.fluc_theta_ky_label, self.fluc_theta_ky_entry,
@@ -2589,7 +2796,7 @@ class CgyroUiMixin:
                     r"Field slice: $F(k_x,\theta,k_y,t)=\phi/\rho_s$.",
                     r"Blank kx or ky selection averages over that spectral axis.",
                     r"Plain numeric kx/ky input matches the nearest physical value; use $idx:n$ for an index.",
-                    r"Optional max normalization divides the final profile by its finite maximum.",
+                    r"Optional normalization is selected from Plot -> Normalization and applies to the final profile.",
                     r"$A(\theta)=\left\langle\mathrm{mean}_{k_x,k_y}|F(k_x,\theta,k_y,t)|\right\rangle_t$.",
                     r"The time window follows the shared Time controls.",
                 ]
@@ -2599,7 +2806,7 @@ class CgyroUiMixin:
                     r"Field slice: $F(k_x,\theta,k_y,t)=\phi/\rho_s$.",
                     r"Blank kx or ky selection averages over that spectral axis.",
                     r"Plain numeric kx/ky input matches the nearest physical value; use $idx:n$ for an index.",
-                    r"Optional max normalization divides the final profile by its finite maximum.",
+                    r"Optional normalization is selected from Plot -> Normalization and applies to the final profile.",
                     r"$A(\theta)=\sqrt{\left\langle\mathrm{mean}_{k_x,k_y}|F(k_x,\theta,k_y,t)|^2\right\rangle_t}$.",
                     r"The time window follows the shared Time controls.",
                 ]
@@ -2609,7 +2816,7 @@ class CgyroUiMixin:
                 r"Field slice used in code: $F(k_x,k_y,t)$ from midplane $\theta$ and radial index $[1:]$.",
                 r"Normalization in code: $F\leftarrow F/\rho_s$ (uses case `rho`; if invalid, fallback $1$).",
                 r"Blank fixed-axis selection averages; plain numeric input matches the nearest physical mode, while $idx:n$ selects an index.",
-                r"Optional max normalization divides the final profile by its finite maximum.",
+                r"Optional normalization is selected from Plot -> Normalization and applies to the final profile.",
                 r"vs $k_y$: $A(k_y)=\left\langle\mathrm{mean}_{k_x}|F(k_x,k_y,t)|\right\rangle_{t\in[t_0,t_1]}$; fixed kx selects one mode.",
                 r"vs $k_x$: $A(k_x)=\left\langle\mathrm{mean}_{k_y}|F(k_x,k_y,t)|\right\rangle_{t\in[t_0,t_1]}$; fixed ky selects one mode.",
                 r"vs Time: $n=0$ and $n>0$ channels are split, each sums over $k_x$ (and $k_y\neq0$ for $n>0$).",
@@ -2621,7 +2828,7 @@ class CgyroUiMixin:
                 r"Field slice used in code: $F(k_x,k_y,t)$ from midplane $\theta$ and radial index $[1:]$.",
                 r"Normalization in code: $F\leftarrow F/\rho_s$ (uses case `rho`; if invalid, fallback $1$).",
                 r"Blank fixed-axis selection averages; plain numeric input matches the nearest physical mode, while $idx:n$ selects an index.",
-                r"Optional max normalization divides the final profile by its finite maximum.",
+                r"Optional normalization is selected from Plot -> Normalization and applies to the final profile.",
                 r"vs $k_y$: $A(k_y)=\sqrt{\left\langle\mathrm{mean}_{k_x}|F(k_x,k_y,t)|^2\right\rangle_{t\in[t_0,t_1]}}$; fixed kx selects one mode.",
                 r"vs $k_x$: $A(k_x)=\sqrt{\left\langle\mathrm{mean}_{k_y}|F(k_x,k_y,t)|^2\right\rangle_{t\in[t_0,t_1]}}$; fixed ky selects one mode.",
                 r"vs Time: $A_{n=0}(t)=\sqrt{\sum_{k_x}|F(k_x,k_y=0,t)|^2}$,",
@@ -3055,10 +3262,6 @@ class CgyroUiMixin:
                     self.fluc_theta_ky_entry.grid(row=row, column=3, sticky=tk.W)
                     row += 1
 
-            if fluc_xaxis in ("v.s ky", "v.s kx", "v.s theta"):
-                self.fluc_norm_max_check.grid(row=row, column=0, columnspan=2, sticky=tk.W)
-                row += 1
-            
             # Check if FFT is selected in the sub-option
             if self.fluc_xaxis_var.get() == "fft":
                  self.fft_options_frame.grid(row=row, column=0, columnspan=2, sticky=tk.W+tk.E, pady=5)
@@ -3607,8 +3810,8 @@ class CgyroUiMixin:
                         else:
                             display_plot_type = f"{field} vs theta (per-case kx/ky)"
                     else:
-                        kx_text = self.fluc_theta_kx_var.get().strip() or "average"
-                        ky_text = self.fluc_theta_ky_var.get().strip() or "average"
+                        kx_text = self._get_entry_value("fluc_theta_kx_var") or "average"
+                        ky_text = self._get_entry_value("fluc_theta_ky_var") or "average"
                         if xaxis == "v.s ky":
                             display_plot_type = f"{field} vs ky (kx={kx_text})"
                         elif xaxis == "v.s kx":
@@ -3826,7 +4029,10 @@ class CgyroUiMixin:
             if var is None or not hasattr(var, "get"):
                 continue
             try:
-                state[attr] = var.get()
+                if attr in self._PLACEHOLDER_ENTRY_FIELDS:
+                    state[attr] = self._get_entry_value(attr)
+                else:
+                    state[attr] = var.get()
             except Exception:
                 pass
         state["fluc_advanced_case_values"] = {
@@ -3855,6 +4061,25 @@ class CgyroUiMixin:
                 var.set(state[attr])
             except Exception:
                 pass
+
+        self._refresh_entry_placeholders()
+
+        # Migrate workspaces written before Plot -> Normalization was added.
+        # The old checkbox implemented the current "Max absolute value"
+        # behavior, so preserve that choice when no new mode was saved.
+        saved_normalization = state.get("fluc_normalization_var", None)
+        if saved_normalization is None:
+            saved_normalization = (
+                "Max absolute value"
+                if bool(state.get("fluc_norm_max_var", False))
+                else "None"
+            )
+        saved_normalization = str(saved_normalization).strip()
+        if saved_normalization not in self._FLUC_NORMALIZATION_OPTIONS:
+            saved_normalization = "None"
+        self.fluc_normalization_var.set(saved_normalization)
+        self._fluc_normalization_current_mode = saved_normalization
+
         self._apply_case_selection_lock_state(capture=False)
         raw_advanced = state.get("fluc_advanced_case_values", {})
         if isinstance(raw_advanced, dict):

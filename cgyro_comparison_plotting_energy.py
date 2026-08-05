@@ -2049,8 +2049,8 @@ class EnergyPlotting:
         t_start_txt = ""
         t_end_txt = ""
         try:
-            t_start_txt = str(self.t_start_var.get()).strip()
-            t_end_txt = str(self.t_end_var.get()).strip()
+            t_start_txt = self._get_entry_value("t_start_var")
+            t_end_txt = self._get_entry_value("t_end_var")
         except Exception:
             t_start_txt = ""
             t_end_txt = ""
