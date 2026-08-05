@@ -38,9 +38,33 @@ except ImportError:
     )
 
 try:
-    from cgyro_update import APP_VERSION, REPOSITORY_URL, UpdateCheckError, check_for_updates
+    from cgyro_update import (
+        APP_VERSION,
+        DEFAULT_SSH_PORT,
+        REPOSITORY_URL,
+        GitUpdateError,
+        UpdateCheckError,
+        UpdateConnectionError,
+        UpdateProxyConfig,
+        check_for_updates,
+        load_update_proxy_config,
+        save_update_proxy_config,
+        update_from_git,
+    )
 except ImportError:
-    from .cgyro_update import APP_VERSION, REPOSITORY_URL, UpdateCheckError, check_for_updates
+    from .cgyro_update import (
+        APP_VERSION,
+        DEFAULT_SSH_PORT,
+        REPOSITORY_URL,
+        GitUpdateError,
+        UpdateCheckError,
+        UpdateConnectionError,
+        UpdateProxyConfig,
+        check_for_updates,
+        load_update_proxy_config,
+        save_update_proxy_config,
+        update_from_git,
+    )
 
 
 class CgyroUiMixin:
@@ -824,11 +848,164 @@ class CgyroUiMixin:
             shortcut="<F1>",
         )
         help_menu.add_separator()
+        help_menu.add_command(
+            label="Update Connection...",
+            command=self.open_update_connection_settings,
+        )
         help_menu.add_command(label="Check for Updates...", command=self.check_for_updates)
         help_menu.add_separator()
         help_menu.add_command(label="About", command=self.show_about)
         self.help_menu = help_menu
         self._update_check_menu = help_menu
+
+    def open_update_connection_settings(self):
+        """Configure direct, existing SOCKS5, or SSH dynamic-forward updates."""
+        existing = getattr(self, "_update_connection_window", None)
+        if existing is not None and existing.winfo_exists():
+            existing.deiconify()
+            existing.lift()
+            existing.focus_force()
+            return
+
+        config = load_update_proxy_config()
+        dialog = tk.Toplevel(self.root)
+        self._update_connection_window = dialog
+        dialog.title("Update Connection")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+
+        mode_var = tk.StringVar(value=config.mode)
+        socks_proxy_var = tk.StringVar(value=config.socks_proxy)
+        ssh_host_var = tk.StringVar(value=config.ssh_host)
+        ssh_user_var = tk.StringVar(value=config.ssh_user)
+        ssh_port_var = tk.StringVar(value=str(config.ssh_port))
+        local_port_var = tk.StringVar(value=str(config.local_socks_port))
+        identity_file_var = tk.StringVar(value=config.identity_file)
+
+        content = ttk.Frame(dialog, padding=12)
+        content.grid(row=0, column=0, sticky=tk.NSEW)
+        content.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            content,
+            text="Choose how the application should reach GitHub for update checks and Git pull.",
+            style="Hint.TLabel",
+            wraplength=520,
+        ).grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=(0, 10))
+
+        mode_frame = ttk.LabelFrame(content, text="Connection mode", padding=8)
+        mode_frame.grid(row=1, column=0, columnspan=3, sticky=tk.EW, pady=(0, 8))
+        ttk.Radiobutton(
+            mode_frame,
+            text="Direct connection",
+            variable=mode_var,
+            value="direct",
+        ).grid(row=0, column=0, sticky=tk.W, padx=(0, 16))
+        ttk.Radiobutton(
+            mode_frame,
+            text="Use an existing SOCKS5 proxy",
+            variable=mode_var,
+            value="socks5",
+        ).grid(row=0, column=1, sticky=tk.W, padx=(0, 16))
+        ttk.Radiobutton(
+            mode_frame,
+            text="Start an SSH dynamic SOCKS5 tunnel",
+            variable=mode_var,
+            value="ssh-socks",
+        ).grid(row=0, column=2, sticky=tk.W)
+
+        ttk.Label(content, text="SOCKS5 URL:").grid(row=2, column=0, sticky=tk.W, pady=3)
+        socks_entry = ttk.Entry(content, textvariable=socks_proxy_var, width=46)
+        socks_entry.grid(row=2, column=1, columnspan=2, sticky=tk.EW, pady=3)
+        ttk.Label(content, text="Example: socks5h://127.0.0.1:1080", style="Hint.TLabel").grid(
+            row=3, column=1, columnspan=2, sticky=tk.W
+        )
+
+        ssh_frame = ttk.LabelFrame(content, text="SSH relay", padding=8)
+        ssh_frame.grid(row=4, column=0, columnspan=3, sticky=tk.EW, pady=(8, 8))
+        ssh_frame.columnconfigure(1, weight=1)
+        ttk.Label(ssh_frame, text="Relay host:").grid(row=0, column=0, sticky=tk.W, pady=3)
+        ssh_host_entry = ttk.Entry(ssh_frame, textvariable=ssh_host_var, width=32)
+        ssh_host_entry.grid(row=0, column=1, columnspan=3, sticky=tk.EW, pady=3)
+        ttk.Label(ssh_frame, text="SSH user:").grid(row=1, column=0, sticky=tk.W, pady=3)
+        ssh_user_entry = ttk.Entry(ssh_frame, textvariable=ssh_user_var, width=18)
+        ssh_user_entry.grid(row=1, column=1, sticky=tk.W, pady=3)
+        ttk.Label(ssh_frame, text="SSH port:").grid(row=1, column=2, sticky=tk.W, padx=(12, 4), pady=3)
+        ssh_port_entry = ttk.Entry(ssh_frame, textvariable=ssh_port_var, width=8)
+        ssh_port_entry.grid(row=1, column=3, sticky=tk.W, pady=3)
+        ttk.Label(ssh_frame, text="Local SOCKS port:").grid(row=2, column=0, sticky=tk.W, pady=3)
+        local_port_entry = ttk.Entry(ssh_frame, textvariable=local_port_var, width=12)
+        local_port_entry.grid(row=2, column=1, sticky=tk.W, pady=3)
+        ttk.Label(ssh_frame, text="0 = choose automatically", style="Hint.TLabel").grid(
+            row=2, column=2, columnspan=2, sticky=tk.W, padx=(12, 0)
+        )
+        ttk.Label(ssh_frame, text="Identity file:").grid(row=3, column=0, sticky=tk.W, pady=3)
+        identity_entry = ttk.Entry(ssh_frame, textvariable=identity_file_var, width=32)
+        identity_entry.grid(row=3, column=1, columnspan=2, sticky=tk.EW, pady=3)
+
+        def browse_identity():
+            selected = filedialog.askopenfilename(
+                parent=dialog,
+                title="Select SSH private key",
+            )
+            if selected:
+                identity_file_var.set(selected)
+
+        identity_button = ttk.Button(ssh_frame, text="Browse...", command=browse_identity)
+        identity_button.grid(row=3, column=3, sticky=tk.E, padx=(6, 0), pady=3)
+        ttk.Label(
+            content,
+            text="Use an SSH key or ssh-agent. Passwords are not stored by this application.",
+            style="Hint.TLabel",
+            wraplength=520,
+        ).grid(row=5, column=0, columnspan=3, sticky=tk.W, pady=(0, 10))
+
+        def update_widget_states(*_args):
+            mode = mode_var.get()
+            socks_state = tk.NORMAL if mode == "socks5" else tk.DISABLED
+            ssh_state = tk.NORMAL if mode == "ssh-socks" else tk.DISABLED
+            socks_entry.configure(state=socks_state)
+            for widget in (
+                ssh_host_entry,
+                ssh_user_entry,
+                ssh_port_entry,
+                local_port_entry,
+                identity_entry,
+                identity_button,
+            ):
+                widget.configure(state=ssh_state)
+
+        mode_var.trace_add("write", update_widget_states)
+        update_widget_states()
+
+        button_frame = ttk.Frame(content)
+        button_frame.grid(row=6, column=0, columnspan=3, sticky=tk.E)
+
+        def save_and_close():
+            try:
+                new_config = UpdateProxyConfig(
+                    mode=mode_var.get(),
+                    socks_proxy=socks_proxy_var.get(),
+                    ssh_host=ssh_host_var.get(),
+                    ssh_user=ssh_user_var.get(),
+                    ssh_port=int(ssh_port_var.get() or DEFAULT_SSH_PORT),
+                    local_socks_port=int(local_port_var.get() or 0),
+                    identity_file=identity_file_var.get(),
+                )
+                path = save_update_proxy_config(new_config)
+            except (ValueError, UpdateConnectionError, OSError) as exc:
+                messagebox.showerror("Update Connection", str(exc), parent=dialog)
+                return
+            dialog.destroy()
+            self._update_connection_window = None
+            self.status_var.set("Update connection settings saved: {}".format(path))
+
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(button_frame, text="Save", command=save_and_close).pack(side=tk.RIGHT)
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+        dialog.bind("<Return>", lambda _event: save_and_close())
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        dialog.grab_set()
 
     def _check_for_updates_silently(self):
         """Run the startup check without interrupting offline users."""
@@ -862,7 +1039,10 @@ class CgyroUiMixin:
 
     def _update_check_worker(self, silent):
         try:
-            result = check_for_updates(APP_VERSION)
+            result = check_for_updates(
+                APP_VERSION,
+                proxy_config=load_update_proxy_config(),
+            )
         except UpdateCheckError as exc:
             self._post_update_check_result(silent, None, str(exc))
         except Exception as exc:  # Keep an unexpected network/parser error from killing the worker.
@@ -911,111 +1091,33 @@ class CgyroUiMixin:
         """Fast-forward the current Git checkout after explicit user approval."""
         app_dir = os.path.dirname(os.path.abspath(__file__))
         try:
-            repo_check = subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],
-                cwd=app_dir,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False,
-                timeout=10,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            self._show_manual_git_update(app_dir, f"Could not locate Git: {exc}")
-            return
-
-        if repo_check.returncode != 0:
-            self._show_manual_git_update(
-                app_dir,
-                "This application is not running from a Git checkout.",
-            )
-            return
-
-        repo_root = repo_check.stdout.strip() or app_dir
-        branch_check = subprocess.run(
-            ["git", "symbolic-ref", "HEAD"],
-            cwd=repo_root,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-            timeout=10,
-        )
-        branch_ref = branch_check.stdout.strip()
-        branch_prefix = "refs/heads/"
-        branch = (
-            branch_ref[len(branch_prefix):]
-            if branch_ref.startswith(branch_prefix)
-            else ""
-        )
-        if branch != "main":
-            self._show_manual_git_update(
-                repo_root,
-                f"The current Git branch is '{branch or 'detached HEAD'}', not 'main'.",
-            )
-            return
-
-        status_check = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=repo_root,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-            timeout=10,
-        )
-        if status_check.returncode != 0 or status_check.stdout.strip():
-            self._show_manual_git_update(
-                repo_root,
-                "Local Git changes were found, so the update was not applied automatically.",
-            )
-            return
-
-        try:
             auto_workspace_path = self._save_auto_workspace()
         except Exception as exc:
-            self._show_manual_git_update(
-                repo_root,
-                f"Could not save the current workspace before updating: {exc}",
-            )
+            self._show_manual_git_update(app_dir, f"Could not save the current workspace before updating: {exc}")
             return
 
         try:
-            pull_result = subprocess.run(
-                ["git", "pull", "--ff-only", "origin", "main"],
-                cwd=repo_root,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                check=False,
-                timeout=60,
+            result = update_from_git(
+                repo_dir=app_dir,
+                remote="origin",
+                branch="main",
+                timeout=60.0,
+                proxy_config=load_update_proxy_config(),
             )
-        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        except (GitUpdateError, UpdateConnectionError, OSError, ValueError, subprocess.SubprocessError) as exc:
             self._remove_auto_workspace(auto_workspace_path)
-            self._show_manual_git_update(repo_root, f"The Git update failed: {exc}")
+            self._show_manual_git_update(app_dir, f"The Git update failed: {exc}")
             return
 
-        output = pull_result.stdout.strip()
-        if pull_result.returncode == 0:
-            try:
-                self._restart_after_update(auto_workspace_path, latest_version)
-            except (OSError, ValueError, subprocess.SubprocessError) as exc:
-                self._remove_auto_workspace(auto_workspace_path)
-                messagebox.showerror(
-                    "Update Restart Failed",
-                    f"Version {latest_version} was downloaded, but the application could not restart automatically.\n\n"
-                    f"{exc}\n\nPlease restart the application manually.\n\n{output}",
-                    parent=self.root,
-                )
-        else:
+        try:
+            self._restart_after_update(auto_workspace_path, latest_version)
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
             self._remove_auto_workspace(auto_workspace_path)
-            self._show_manual_git_update(
-                repo_root,
-                f"The Git update failed:\n{output or 'unknown error'}",
+            messagebox.showerror(
+                "Update Restart Failed",
+                f"Version {latest_version} was downloaded, but the application could not restart automatically.\n\n"
+                f"{exc}\n\nPlease restart the application manually.\n\n{result.output}",
+                parent=self.root,
             )
 
     def _save_auto_workspace(self):
@@ -1070,10 +1172,11 @@ class CgyroUiMixin:
 
     def _show_manual_git_update(self, repo_dir, reason):
         """Show a copyable command when an automatic fast-forward is unsafe."""
-        command = f'cd "{repo_dir}"\ngit pull --ff-only origin main'
+        update_script = os.path.join(repo_dir, "cgyro_update.py")
+        command = f'cd "{repo_dir}"\n"{sys.executable}" "{update_script}" --update'
         messagebox.showwarning(
             "Update Not Applied",
-            f"{reason}\n\nRun this command manually after checking the repository:\n\n{command}",
+            f"{reason}\n\nThe command below uses the saved update connection settings:\n\n{command}",
             parent=self.root,
         )
 

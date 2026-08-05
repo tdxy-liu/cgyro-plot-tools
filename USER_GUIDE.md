@@ -1,6 +1,6 @@
 # CGYRO Comparison Tool 用户说明书
 
-适用版本：0.2.12 及以上
+适用版本：0.2.13 及以上
 说明书文件：`USER_GUIDE.md`
 
 本工具用于加载、比较和可视化多个 CGYRO 模拟案例。说明书面向日常使用者，重点介绍界面操作、绘图流程、工作区保存、数据导出、更新和常见问题。
@@ -295,6 +295,30 @@ python cgyro_update.py --update
 ```
 
 命令行更新要求程序目录是 Git checkout、当前分支与目标分支一致，并且更新可以安全 fast-forward。
+
+### 9.4 通过 SSH/SOCKS5 中转更新
+
+如果计算节点无法直接访问 GitHub，可以打开 `Help -> Update Connection...`。
+
+- `Direct connection`：直接连接。
+- `Use an existing SOCKS5 proxy`：使用已经启动的本地 SOCKS5 代理。
+- `Start an SSH dynamic SOCKS5 tunnel`：由程序临时执行 `ssh -D`，通过国内服务器中转本次版本检查或 Git 更新。
+
+SSH 模式需要服务器已经配置好 SSH 密钥或 `ssh-agent`，程序不会保存 SSH 密码。例如命令行可以使用：
+
+```text
+python cgyro_update.py --check-update --ssh-relay relay.example.cn --ssh-user your_user --ssh-key ~/.ssh/id_ed25519
+python cgyro_update.py --update --ssh-relay relay.example.cn --ssh-user your_user --ssh-key ~/.ssh/id_ed25519
+```
+
+也可以先手动建立 SOCKS5：
+
+```text
+ssh -N -D 1080 your_user@relay.example.cn
+python cgyro_update.py --update --socks5-proxy socks5h://127.0.0.1:1080
+```
+
+GUI 保存的配置位于用户目录下的 `.cgyro_comparison_tool/update_connection.json`，使用 `--direct` 可以让单次命令忽略已保存的中转设置。
 
 ## 10. 快捷键
 
