@@ -1085,9 +1085,26 @@ class CgyroUiMixin:
         )
 
     @staticmethod
+    def _decode_user_guide_unicode_escapes(value):
+        """Decode literal JSON-style Unicode escapes without touching real UTF-8."""
+        text = str(value)
+        if not re.search(r"\\u[0-9a-fA-F]{4}|\\U[0-9a-fA-F]{8}", text):
+            return text
+
+        def replace_escape(match):
+            try:
+                return chr(int(match.group(1), 16))
+            except (TypeError, ValueError):
+                return match.group(0)
+
+        text = re.sub(r"\\u([0-9a-fA-F]{4})", replace_escape, text)
+        return re.sub(r"\\U([0-9a-fA-F]{8})", replace_escape, text)
+
+    @staticmethod
     def _user_guide_plain_text(value):
         """Remove lightweight Markdown markers for the built-in text viewer."""
-        text = str(value).replace("**", "").replace("__", "").replace("`", "")
+        text = CgyroUiMixin._decode_user_guide_unicode_escapes(value)
+        text = text.replace("**", "").replace("__", "").replace("`", "")
         return re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", text)
 
     def _insert_user_guide_content(self, text_widget, content):
@@ -1128,7 +1145,9 @@ class CgyroUiMixin:
             elif raw_line.lstrip().startswith("- "):
                 indent = len(raw_line) - len(raw_line.lstrip())
                 body = self._user_guide_plain_text(raw_line.lstrip()[2:])
-                text_widget.insert(tk.END, f"{' ' * indent}  • {body}\n", "body")
+                # Keep generated bullets ASCII so old Tk/font stacks do not
+                # render a literal escaped ``\\u2022`` sequence.
+                text_widget.insert(tk.END, f"{' ' * indent}- {body}\n", "body")
             else:
                 text_widget.insert(
                     tk.END,
@@ -1222,7 +1241,7 @@ class CgyroUiMixin:
         guide_path = self._user_guide_path()
         try:
             with open(guide_path, "r", encoding="utf-8-sig") as handle:
-                content = handle.read()
+                content = self._decode_user_guide_unicode_escapes(handle.read())
         except (OSError, UnicodeError) as exc:
             messagebox.showerror(
                 "User Guide",
