@@ -30,7 +30,7 @@ from urllib.request import HTTPSHandler, ProxyHandler, Request, build_opener, ur
 REPOSITORY_URL = "https://github.com/tdxy-liu/cgyro-plot-tools"
 RELEASE_API_URL = f"https://api.github.com/repos/tdxy-liu/cgyro-plot-tools/releases/latest"
 VERSION_URL = "https://raw.githubusercontent.com/tdxy-liu/cgyro-plot-tools/main/VERSION"
-DEFAULT_VERSION = "0.2.13"
+DEFAULT_VERSION = "0.2.14"
 DEFAULT_TIMEOUT = 5.0
 DEFAULT_SSH_PORT = 22
 DEFAULT_LOCAL_SOCKS_PORT = 0

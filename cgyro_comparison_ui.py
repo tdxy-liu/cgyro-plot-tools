@@ -1627,14 +1627,18 @@ class CgyroUiMixin:
             text="Normalize by max value",
             variable=self.fluc_norm_max_var,
         )
-        self.fluc_theta_kx_label = ttk.Label(self.options_frame, text="kx (blank=avg):")
+        self.fluc_theta_kx_label = ttk.Label(
+            self.options_frame, text="kx (physical, blank=avg):"
+        )
         self.fluc_theta_kx_var = tk.StringVar(value="")
         self.fluc_theta_kx_entry = ttk.Entry(
             self.options_frame,
             textvariable=self.fluc_theta_kx_var,
             width=12,
         )
-        self.fluc_theta_ky_label = ttk.Label(self.options_frame, text="ky (blank=avg):")
+        self.fluc_theta_ky_label = ttk.Label(
+            self.options_frame, text="ky (physical, blank=avg):"
+        )
         self.fluc_theta_ky_var = tk.StringVar(value="")
         self.fluc_theta_ky_entry = ttk.Entry(
             self.options_frame,
@@ -2265,7 +2269,8 @@ class CgyroUiMixin:
             content,
             text=(
                 "Choose a value for each case. Leave a cell blank to average "
-                "over that axis; use idx:n or val:x when needed."
+                "over that axis; plain numbers match the nearest physical value; "
+                "use idx:n only for an explicit array index."
             ),
             wraplength=640,
             justify=tk.LEFT,
@@ -2295,8 +2300,12 @@ class CgyroUiMixin:
         )
 
         ttk.Label(inner, text="Case").grid(row=0, column=0, sticky=tk.W, padx=(2, 12), pady=(0, 4))
-        ttk.Label(inner, text="kx (blank=avg)").grid(row=0, column=1, sticky=tk.W, padx=4, pady=(0, 4))
-        ttk.Label(inner, text="ky (blank=avg)").grid(row=0, column=2, sticky=tk.W, padx=4, pady=(0, 4))
+        ttk.Label(inner, text="kx (physical, blank=avg)").grid(
+            row=0, column=1, sticky=tk.W, padx=4, pady=(0, 4)
+        )
+        ttk.Label(inner, text="ky (physical, blank=avg)").grid(
+            row=0, column=2, sticky=tk.W, padx=4, pady=(0, 4)
+        )
 
         editors = []
         for row, case_name in enumerate(case_names, start=1):
@@ -2579,7 +2588,7 @@ class CgyroUiMixin:
                     r"Phi vs theta: Mean Absolute (code definition)",
                     r"Field slice: $F(k_x,\theta,k_y,t)=\phi/\rho_s$.",
                     r"Blank kx or ky selection averages over that spectral axis.",
-                    r"Use $idx:n$ for an index or $val:x$ for the nearest physical kx/ky value.",
+                    r"Plain numeric kx/ky input matches the nearest physical value; use $idx:n$ for an index.",
                     r"Optional max normalization divides the final profile by its finite maximum.",
                     r"$A(\theta)=\left\langle\mathrm{mean}_{k_x,k_y}|F(k_x,\theta,k_y,t)|\right\rangle_t$.",
                     r"The time window follows the shared Time controls.",
@@ -2589,7 +2598,7 @@ class CgyroUiMixin:
                     r"Phi vs theta: Root Mean Square (code definition)",
                     r"Field slice: $F(k_x,\theta,k_y,t)=\phi/\rho_s$.",
                     r"Blank kx or ky selection averages over that spectral axis.",
-                    r"Use $idx:n$ for an index or $val:x$ for the nearest physical kx/ky value.",
+                    r"Plain numeric kx/ky input matches the nearest physical value; use $idx:n$ for an index.",
                     r"Optional max normalization divides the final profile by its finite maximum.",
                     r"$A(\theta)=\sqrt{\left\langle\mathrm{mean}_{k_x,k_y}|F(k_x,\theta,k_y,t)|^2\right\rangle_t}$.",
                     r"The time window follows the shared Time controls.",
@@ -2599,7 +2608,7 @@ class CgyroUiMixin:
                 r"Fluctuation 1D: Mean Absolute (code definition)",
                 r"Field slice used in code: $F(k_x,k_y,t)$ from midplane $\theta$ and radial index $[1:]$.",
                 r"Normalization in code: $F\leftarrow F/\rho_s$ (uses case `rho`; if invalid, fallback $1$).",
-                r"Blank fixed-axis selection averages; enter $idx:n$ or $val:x$ to select a mode.",
+                r"Blank fixed-axis selection averages; plain numeric input matches the nearest physical mode, while $idx:n$ selects an index.",
                 r"Optional max normalization divides the final profile by its finite maximum.",
                 r"vs $k_y$: $A(k_y)=\left\langle\mathrm{mean}_{k_x}|F(k_x,k_y,t)|\right\rangle_{t\in[t_0,t_1]}$; fixed kx selects one mode.",
                 r"vs $k_x$: $A(k_x)=\left\langle\mathrm{mean}_{k_y}|F(k_x,k_y,t)|\right\rangle_{t\in[t_0,t_1]}$; fixed ky selects one mode.",
@@ -2611,7 +2620,7 @@ class CgyroUiMixin:
                 r"Fluctuation 1D: Root Mean Square (code definition)",
                 r"Field slice used in code: $F(k_x,k_y,t)$ from midplane $\theta$ and radial index $[1:]$.",
                 r"Normalization in code: $F\leftarrow F/\rho_s$ (uses case `rho`; if invalid, fallback $1$).",
-                r"Blank fixed-axis selection averages; enter $idx:n$ or $val:x$ to select a mode.",
+                r"Blank fixed-axis selection averages; plain numeric input matches the nearest physical mode, while $idx:n$ selects an index.",
                 r"Optional max normalization divides the final profile by its finite maximum.",
                 r"vs $k_y$: $A(k_y)=\sqrt{\left\langle\mathrm{mean}_{k_x}|F(k_x,k_y,t)|^2\right\rangle_{t\in[t_0,t_1]}}$; fixed kx selects one mode.",
                 r"vs $k_x$: $A(k_x)=\sqrt{\left\langle\mathrm{mean}_{k_y}|F(k_x,k_y,t)|^2\right\rangle_{t\in[t_0,t_1]}}$; fixed ky selects one mode.",
@@ -3020,18 +3029,26 @@ class CgyroUiMixin:
                 row += 1
             else:
                 if fluc_xaxis == "v.s ky":
-                    self.fluc_theta_kx_label.configure(text="fixed kx (blank=avg):")
+                    self.fluc_theta_kx_label.configure(
+                        text="fixed kx (physical, blank=avg):"
+                    )
                     self.fluc_theta_kx_label.grid(row=row, column=0, sticky=tk.W)
                     self.fluc_theta_kx_entry.grid(row=row, column=1, sticky=tk.W)
                     row += 1
                 elif fluc_xaxis == "v.s kx":
-                    self.fluc_theta_ky_label.configure(text="fixed ky (blank=avg):")
+                    self.fluc_theta_ky_label.configure(
+                        text="fixed ky (physical, blank=avg):"
+                    )
                     self.fluc_theta_ky_label.grid(row=row, column=0, sticky=tk.W)
                     self.fluc_theta_ky_entry.grid(row=row, column=1, sticky=tk.W)
                     row += 1
                 elif fluc_xaxis == "v.s theta":
-                    self.fluc_theta_kx_label.configure(text="kx (blank=avg):")
-                    self.fluc_theta_ky_label.configure(text="ky (blank=avg):")
+                    self.fluc_theta_kx_label.configure(
+                        text="kx (physical, blank=avg):"
+                    )
+                    self.fluc_theta_ky_label.configure(
+                        text="ky (physical, blank=avg):"
+                    )
                     self.fluc_theta_kx_label.grid(row=row, column=0, sticky=tk.W)
                     self.fluc_theta_kx_entry.grid(row=row, column=1, sticky=tk.W)
                     self.fluc_theta_ky_label.grid(row=row, column=2, sticky=tk.W, padx=(8, 0))

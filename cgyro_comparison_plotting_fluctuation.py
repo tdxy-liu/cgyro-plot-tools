@@ -135,7 +135,7 @@ class FluctuationPlotting:
         return None, spec_label
 
     def _resolve_optional_axis_indices(self, axis_values, raw_text, axis_name, label):
-        """Return all axis indices for blank input, otherwise one requested index."""
+        """Return all indices for blank input or the nearest physical value."""
         axis = np.asarray(axis_values, dtype=float).reshape(-1)
         if axis.size <= 0:
             return np.array([], dtype=int), "none"
@@ -149,7 +149,9 @@ class FluctuationPlotting:
             text,
             axis_name,
             label,
-            prefer_value=False,
+            # kx/ky entry fields represent physical quantities.  Use idx:n
+            # when an explicit array index is needed.
+            prefer_value=True,
         )
         index = max(0, min(int(index), axis.size - 1))
         return np.array([index], dtype=int), f"{axis[index]:.4g}"
