@@ -7,6 +7,9 @@ Provides:
 - Special handling for `.cgyro.triad`: split by physical channel into Sheet1..Sheet8
 """
 
+import csv
+import datetime
+import json
 import os
 import re
 from tkinter import filedialog, messagebox
@@ -93,6 +96,134 @@ class CgyroDataExportMixin:
             messagebox.showinfo("Save current plot data", f"Plot data saved:\n{out_path}")
         except Exception as e:
             messagebox.showerror("Save current plot data", f"Failed to save plot data:\n{e}")
+
+    def batch_export_current_plot_data(self):
+        """Export every dataset in the current figure into a new folder."""
+        datasets = self._collect_current_plot_xyz_datasets()
+        if not datasets:
+            messagebox.showwarning(
+                "Batch export",
+                "No plotted data found to export.",
+                parent=getattr(self, "root", None),
+            )
+            return
+
+        selected_dir = filedialog.askdirectory(
+            title="Select folder for current plot data export",
+            initialdir=self._default_data_export_dir(),
+            mustexist=False,
+        )
+        if not selected_dir:
+            return
+
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        export_dir = os.path.join(
+            selected_dir,
+            "cgyro_plot_export_{}".format(timestamp),
+        )
+
+        try:
+            os.makedirs(export_dir, exist_ok=False)
+            dataset_records = []
+            combined_path = os.path.join(export_dir, "all_datasets.csv")
+            with open(combined_path, "w", encoding="utf-8-sig", newline="") as combined_file:
+                combined_writer = csv.writer(combined_file)
+                combined_writer.writerow(["Dataset", "X", "Y", "Z"])
+
+                for index, (label, x, y, z) in enumerate(datasets, start=1):
+                    safe_label = self._export_filename_label(label)
+                    filename = "dataset_{:03d}_{}.csv".format(index, safe_label)
+                    path = os.path.join(export_dir, filename)
+                    n = min(len(x), len(y), len(z))
+                    with open(path, "w", encoding="utf-8-sig", newline="") as data_file:
+                        writer = csv.writer(data_file)
+                        writer.writerow(["X", "Y", "Z"])
+                        for row_index in range(n):
+                            row = [x[row_index], y[row_index], z[row_index]]
+                            writer.writerow(row)
+                            combined_writer.writerow([label, *row])
+
+                    dataset_records.append({
+                        "label": str(label),
+                        "file": filename,
+                        "points": int(n),
+                    })
+
+            metadata = self._current_plot_export_metadata(dataset_records)
+            metadata["combined_file"] = "all_datasets.csv"
+            metadata_path = os.path.join(export_dir, "plot_metadata.json")
+            with open(metadata_path, "w", encoding="utf-8") as metadata_file:
+                json.dump(metadata, metadata_file, ensure_ascii=False, indent=2)
+
+            messagebox.showinfo(
+                "Batch export complete",
+                "Exported {} dataset(s) to:\n{}".format(len(datasets), export_dir),
+                parent=getattr(self, "root", None),
+            )
+        except Exception as exc:
+            messagebox.showerror(
+                "Batch export",
+                "Failed to export current plot data:\n{}".format(exc),
+                parent=getattr(self, "root", None),
+            )
+
+    @staticmethod
+    def _export_filename_label(label):
+        """Convert a plotted label into a safe, readable filename fragment."""
+        text = str(label) if label is not None else "dataset"
+        text = re.sub(r"[^A-Za-z0-9._+-]+", "_", text).strip("._")
+        return text[:100] or "dataset"
+
+    def _current_plot_export_metadata(self, dataset_records):
+        """Collect lightweight context alongside a batch plot-data export."""
+        plot_type = ""
+        display_plot_type = ""
+        try:
+            built = self._build_effective_plot_type()
+            if isinstance(built, tuple) and len(built) >= 3:
+                plot_type = str(built[1])
+                display_plot_type = str(built[2])
+        except Exception:
+            pass
+        if not plot_type:
+            try:
+                plot_type = str(self.plot_type_var.get()).strip()
+                display_plot_type = plot_type
+            except Exception:
+                plot_type = ""
+
+        axes = []
+        for index, axis in enumerate(getattr(getattr(self, "fig", None), "axes", []), start=1):
+            try:
+                axes.append({
+                    "index": index,
+                    "title": axis.get_title(),
+                    "xlabel": axis.get_xlabel(),
+                    "ylabel": axis.get_ylabel(),
+                })
+            except Exception:
+                pass
+
+        case_names = []
+        try:
+            case_names = [str(name) for name in self._get_selected_case_names()]
+        except Exception:
+            pass
+
+        metadata = {
+            "tool": "CGYRO Comparison Tool",
+            "exported_at": datetime.datetime.now().astimezone().isoformat(),
+            "plot_type": plot_type,
+            "display_plot_type": display_plot_type,
+            "cases": case_names,
+            "axes": axes,
+            "datasets": dataset_records,
+        }
+        try:
+            metadata["workspace_state"] = self._get_workspace_state()
+        except Exception:
+            pass
+        return metadata
 
     def _collect_current_plot_xyz_datasets(self):
         """Collect cached 2D datasets plus visible 1D line/image artists."""

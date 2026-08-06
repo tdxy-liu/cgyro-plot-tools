@@ -268,7 +268,15 @@ Workspace 保存的是 case 路径而不是完整模拟数据。如果 case 被�
 
 必须先成功绘图，才有可导出的当前图数据。
 
-### 8.4 Binary 转 readable
+### 8.4 批量导出当前绘图数据
+
+使用 `Data -> Batch Export Current Plot Data...` 或 Ctrl+Shift+B。选择输出目录后，程序会自动创建带时间戳的子目录，并生成：
+
+- 每个曲线或二维数据集一个 CSV 文件；
+- `all_datasets.csv` 合并文件；
+- `plot_metadata.json`，记录 plot type、坐标轴、case 和数据集信息。
+
+### 8.5 Binary 转 readable
 
 使用 `Data -> Convert Binary to Readable...`，将选定 case 的 `bin.cgyro.*` 数据转换为可读文本。默认输出目录优先为 `/data/share/$USER`，不可用时回退到其他可写目录。
 

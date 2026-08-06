@@ -948,6 +948,13 @@ class CgyroUiMixin:
             accelerator="Ctrl+Shift+E",
             shortcut="<Control-Shift-E>",
         )
+        self._add_menu_command(
+            data_menu,
+            "Batch Export Current Plot Data...",
+            self.batch_export_current_plot_data,
+            accelerator="Ctrl+Shift+B",
+            shortcut="<Control-Shift-B>",
+        )
         self.data_menu = data_menu
 
         plot_menu = tk.Menu(menubar, tearoff=0)
