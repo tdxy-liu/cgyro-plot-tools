@@ -5,6 +5,7 @@ Auto-extracted from cgyro_comparison_plotting.py during refactor.
 
 import numpy as np
 import os
+import sys
 from tkinter import messagebox
 from matplotlib.colors import LinearSegmentedColormap, SymLogNorm, TwoSlopeNorm
 
@@ -106,10 +107,8 @@ class EnergyPlotting:
         if path is None:
             return None
 
-        try:
-            dtype = np.dtype(getattr(data, "BYTE", "float64"))
-        except Exception:
-            dtype = np.dtype("float64")
+        dtype_candidates = self._fullt_binary_dtype_candidates(data, case_dir)
+        dtype = dtype_candidates[0][0] if dtype_candidates else np.dtype("float32")
 
         n_n = int(getattr(data, "n_n", 0))
         n_radial = int(getattr(data, "n_radial", 0))
@@ -149,7 +148,7 @@ class EnergyPlotting:
             setattr(data, "_triad_memmap_path", path)
         except Exception:
             pass
-        print(f"Triad for {label}: opened memmap {path} (n_time={n_time}).")
+        print(f"Triad for {label}: opened memmap {path} (dtype={dtype.name}, n_time={n_time}).")
         return triad
 
     def _load_triad_if_needed(self, data, label):
@@ -2374,6 +2373,84 @@ class EnergyPlotting:
 
         return asym, stats
 
+    def _fullt_binary_dtype_candidates(self, data, case_dir):
+        """Return real dtypes to try for a FULLT binary, in trusted order.
+
+        CGYRO writes the precision flag at the end of ``out.cgyro.equilibrium``.
+        Older pygacode versions, and lightweight data objects used by the GUI,
+        do not always expose ``BYTE`` consistently, so a missing attribute must
+        not silently force double precision.  The caller still has to validate
+        each candidate against the on-disk time count and FULLT shape.
+        """
+        candidates = []
+
+        def _add(dtype_value, source):
+            if dtype_value is None:
+                return
+            try:
+                dtype = np.dtype(dtype_value)
+            except (TypeError, ValueError):
+                return
+            if dtype.kind != 'f' or dtype.itemsize not in (4, 8):
+                return
+            if any(existing[0] == dtype for existing in candidates):
+                return
+            candidates.append((dtype, str(source)))
+
+        def _add_from_hiprec(value, source):
+            try:
+                value = np.asarray(value).reshape(-1)
+                if value.size <= 0:
+                    return
+                flag = float(value[0])
+                flag_int = int(round(flag))
+            except (TypeError, ValueError, IndexError):
+                return
+            if flag_int in (0, 1) and abs(flag - flag_int) <= 1.0e-8:
+                dtype = 'float64' if flag_int == 1 else 'float32'
+                _add(dtype, f"{source}={flag_int}")
+
+        # Prefer current-case metadata on disk.  This avoids using stale
+        # attributes after the GUI switches between cases.
+        equilibrium_path = os.path.join(str(case_dir or ''), 'out.cgyro.equilibrium')
+        if os.path.isfile(equilibrium_path):
+            try:
+                equilibrium = np.fromfile(equilibrium_path, dtype=float, sep=' ')
+                if equilibrium.size > 0:
+                    _add_from_hiprec(equilibrium[-1], 'out.cgyro.equilibrium hiprec_flag')
+            except (OSError, ValueError):
+                pass
+
+        _add_from_hiprec(getattr(data, 'hiprec_flag', None), 'data.hiprec_flag')
+        data_module = sys.modules.get(type(data).__module__)
+        if data_module is not None:
+            _add(getattr(data_module, 'BYTE', None), 'pygacode module BYTE')
+        _add(getattr(data, 'BYTE', None), 'data.BYTE')
+
+        # float32 is CGYRO's normal output precision and must be the safe
+        # fallback when old metadata is unavailable.  Keep float64 available
+        # for explicitly high-precision cases and for file-size validation.
+        _add(np.dtype('float32'), 'float32 fallback')
+        _add(np.dtype('float64'), 'float64 fallback')
+        return candidates
+
+    @staticmethod
+    def _fullt_time_count_from_file(case_dir):
+        """Return the number of time rows in the current case time file.
+
+        ``out.cgyro.time`` contains several columns (the first is time and
+        the remaining columns are diagnostics), so counting flattened values
+        would overestimate the number of FULLT records.
+        """
+        path = os.path.join(str(case_dir or ''), 'out.cgyro.time')
+        if not os.path.isfile(path):
+            return 0
+        try:
+            values = np.loadtxt(path, dtype=float, ndmin=2)
+            return int(values.shape[0])
+        except (OSError, ValueError):
+            return 0
+
     def _load_fullt_if_needed(
         self,
         data,
@@ -2392,7 +2469,9 @@ class EnergyPlotting:
         source_attr = cache_attr + "_source"
         case_token_attr = cache_attr + "_case_token"
         cache_version_attr = cache_attr + "_cache_version"
-        cache_version = 5
+        # Bump this whenever the binary precision/shape validation changes so
+        # a long-running GUI cannot reuse an array loaded by the old reader.
+        cache_version = 6
         try:
             case_token = self._resolve_case_dir(data)
         except Exception:
@@ -2423,6 +2502,7 @@ class EnergyPlotting:
                 cache_attr + "_source_kx",
                 cache_attr + "_source_kx_index",
                 cache_attr + "_n_source_kx",
+                cache_attr + "_dtype",
                 cache_attr + "_time_indices",
             ]
             for attr in attrs:
@@ -2433,12 +2513,6 @@ class EnergyPlotting:
                     pass
             if reason:
                 print(f"{diag_name} cache for {label}: {reason}; reloading.")
-
-        def _real_dtype():
-            try:
-                return np.dtype(getattr(data, "BYTE", "float64"))
-            except Exception:
-                return np.dtype("float64")
 
         def _case_file_path():
             try:
@@ -2466,14 +2540,7 @@ class EnergyPlotting:
             case_dir = str(case_dir or "")
             if not case_dir:
                 return 0
-            path = os.path.join(case_dir, "out.cgyro.time")
-            if not os.path.isfile(path):
-                return 0
-            try:
-                t_file = np.fromfile(path, dtype=float, sep=" ")
-                return int(np.asarray(t_file).size)
-            except Exception:
-                return 0
+            return self._fullt_time_count_from_file(case_dir)
 
         def _input_fullt_hints():
             """
@@ -2593,7 +2660,7 @@ class EnergyPlotting:
                 return None
             return idx
 
-        def _infer_file_shape(n_elem):
+        def _infer_file_shape(n_elem, exact_time_only=False):
             block_no_time = n_radial * (2 * n_n - 1) * n_n
             if block_no_time <= 0:
                 return 0, 0, 0, False
@@ -2607,6 +2674,9 @@ class EnergyPlotting:
                             denom = scale * block_no_time * n_source_try * n_channel_try
                             if denom > 0 and n_elem == denom * n_time_file:
                                 return int(n_channel_try), int(n_time_file), int(n_source_try), bool(scale == 2)
+
+                if exact_time_only:
+                    return 0, 0, 0, False
 
             for scale in (1, 2):
                 for n_source_try in source_kx_candidates:
@@ -2622,12 +2692,49 @@ class EnergyPlotting:
             path = _case_file_path()
             if path is None or n_n <= 0 or n_radial <= 0:
                 return None
-            dtype = _real_dtype()
             try:
-                n_elem = int(os.path.getsize(path) // dtype.itemsize)
-            except Exception:
+                file_size = int(os.path.getsize(path))
+            except OSError as e:
+                print(f"Cannot stat {diag_name} file for {label}: {e}")
                 return None
-            n_channel_file, n_time, n_source_kx, legacy_complex = _infer_file_shape(n_elem)
+
+            try:
+                case_dir = self._resolve_case_dir(data)
+            except Exception:
+                case_dir = getattr(data, 'dir', None) or getattr(data, 'path', None) or ''
+            n_time_file = _case_time_count_from_file()
+            dtype = None
+            dtype_source = ''
+            n_elem = 0
+            n_channel_file = 0
+            n_time = 0
+            n_source_kx = 0
+            legacy_complex = False
+            for dtype_try, source in self._fullt_binary_dtype_candidates(data, case_dir):
+                if file_size % dtype_try.itemsize != 0:
+                    continue
+                n_elem_try = int(file_size // dtype_try.itemsize)
+                shape = _infer_file_shape(
+                    n_elem_try,
+                    exact_time_only=(n_time_file > 0),
+                )
+                if shape[0] not in (1, 2) or shape[1] <= 0 or shape[2] <= 0:
+                    continue
+                dtype = dtype_try
+                dtype_source = source
+                n_elem = n_elem_try
+                n_channel_file, n_time, n_source_kx, legacy_complex = shape
+                break
+
+            if dtype is None:
+                if n_time_file > 0:
+                    print(
+                        f"Cannot resolve {diag_name} precision for {label}: "
+                        f"file_bytes={file_size}, out.cgyro.time samples={n_time_file}."
+                    )
+                else:
+                    print(f"Cannot resolve {diag_name} precision for {label}: file_bytes={file_size}.")
+                return None
             if n_channel_file not in (1, 2) or n_time <= 0 or n_source_kx <= 0:
                 return None
 
@@ -2676,11 +2783,13 @@ class EnergyPlotting:
             setattr(data, channel_attr, 1)
             setattr(data, case_token_attr, case_token)
             setattr(data, cache_version_attr, cache_version)
+            setattr(data, cache_attr + "_dtype", dtype.name)
             setattr(data, cache_attr + "_source_ky_axis", np.asarray([source_ky_used], dtype=float))
             setattr(data, cache_attr + "_source_ky_full_index", int(source_ky_idx_full))
             setattr(data, cache_attr + "_n_source_ky_full", int(n_n))
             setattr(data, cache_attr + "_time_indices", np.asarray(time_idx, dtype=int))
             storage = "legacy complex" if legacy_complex else "real"
+            precision = f", dtype={dtype.name} ({dtype_source})"
             source_kx_msg = ""
             try:
                 source_kx_msg = f", source_kx={getattr(data, cache_attr + '_source_kx'):.6g}"
@@ -2690,12 +2799,12 @@ class EnergyPlotting:
                 data,
                 source_attr,
                 f"direct slice {os.path.basename(path)} ({storage}, source_ky={source_ky_used:.6g}, "
-                f"source_kx_count={n_source_kx}{source_kx_msg}, channel=0, n_time={n_time_read})",
+                f"source_kx_count={n_source_kx}{source_kx_msg}, channel=0, n_time={n_time_read}{precision})",
             )
             print(
                 f"{diag_name} for {label}: read direct source slice from {path} "
                 f"({storage}, source_ky={source_ky_used:.6g}, source_kx_count={n_source_kx}{source_kx_msg}, "
-                f"channel=0, n_time={n_time_read}/{n_time})."
+                f"channel=0, n_time={n_time_read}/{n_time}{precision})."
             )
             return arr
 
@@ -2809,9 +2918,16 @@ class EnergyPlotting:
         # source-ky/source-kx slice, so direct memmap keeps large all-kx cases
         # from exhausting RAM.
         if source_ky_value is not None:
+            native_path = _case_file_path()
             arr = _load_direct_source_slice()
             if arr is not None:
                 return True
+            if native_path is not None:
+                print(
+                    f"{diag_name} for {label}: native binary exists but its "
+                    "precision/shape could not be validated; refusing reader fallback."
+                )
+                return False
 
         if hasattr(data, reader_attr):
             arr = _accept_existing(getattr(data, reader_attr))
@@ -3042,12 +3158,8 @@ class EnergyPlotting:
         n_signed = 2 * n_n - 1
 
         try:
-            dtype = np.dtype(getattr(data, "BYTE", "float64"))
-        except Exception:
-            dtype = np.dtype("float64")
-        try:
-            n_elem = int(os.path.getsize(path) // dtype.itemsize)
-        except Exception as e:
+            file_size = int(os.path.getsize(path))
+        except OSError as e:
             print(f"Cannot stat {diag_name} trace file for {label}: {e}")
             return None
 
@@ -3071,33 +3183,30 @@ class EnergyPlotting:
 
         n_time_file = 0
         try:
-            t_path = os.path.join(case_dir, "out.cgyro.time")
-            if os.path.isfile(t_path):
-                n_time_file = int(np.asarray(np.fromfile(t_path, dtype=float, sep=" ")).size)
+            n_time_file = self._fullt_time_count_from_file(case_dir)
         except Exception:
             n_time_file = 0
 
         block_no_time = n_radial * n_signed * n_n
-        n_channel = 0
-        n_time = 0
-        n_source_kx = 0
-        legacy_complex = False
-        if n_time_file > 0:
-            for scale in (1, 2):
-                for n_source_try in source_kx_candidates:
-                    for n_channel_try in channel_candidates:
-                        denom = scale * block_no_time * n_source_try * n_channel_try
-                        if denom > 0 and n_elem == denom * n_time_file:
-                            n_channel = int(n_channel_try)
-                            n_time = int(n_time_file)
-                            n_source_kx = int(n_source_try)
-                            legacy_complex = (scale == 2)
-                            break
-                    if n_channel > 0:
-                        break
-                if n_channel > 0:
-                    break
-        if n_channel <= 0:
+
+        def _infer_trace_shape(n_elem, exact_time_only=False):
+            if block_no_time <= 0:
+                return 0, 0, 0, False
+            if n_time_file > 0:
+                for scale in (1, 2):
+                    for n_source_try in source_kx_candidates:
+                        for n_channel_try in channel_candidates:
+                            denom = scale * block_no_time * n_source_try * n_channel_try
+                            if denom > 0 and n_elem == denom * n_time_file:
+                                return (
+                                    int(n_channel_try),
+                                    int(n_time_file),
+                                    int(n_source_try),
+                                    bool(scale == 2),
+                                )
+                if exact_time_only:
+                    return 0, 0, 0, False
+
             for scale in (1, 2):
                 for n_source_try in source_kx_candidates:
                     for n_channel_try in channel_candidates:
@@ -3105,15 +3214,46 @@ class EnergyPlotting:
                         if denom > 0 and n_elem % denom == 0:
                             n_time_try = int(n_elem // denom)
                             if n_time_try > 0:
-                                n_channel = int(n_channel_try)
-                                n_time = int(n_time_try)
-                                n_source_kx = int(n_source_try)
-                                legacy_complex = (scale == 2)
-                                break
-                    if n_channel > 0:
-                        break
-                if n_channel > 0:
-                    break
+                                return (
+                                    int(n_channel_try),
+                                    n_time_try,
+                                    int(n_source_try),
+                                    bool(scale == 2),
+                                )
+            return 0, 0, 0, False
+
+        dtype = None
+        dtype_source = ''
+        n_elem = 0
+        n_channel = 0
+        n_time = 0
+        n_source_kx = 0
+        legacy_complex = False
+        for dtype_try, source in self._fullt_binary_dtype_candidates(data, case_dir):
+            if file_size % dtype_try.itemsize != 0:
+                continue
+            n_elem_try = int(file_size // dtype_try.itemsize)
+            shape = _infer_trace_shape(
+                n_elem_try,
+                exact_time_only=(n_time_file > 0),
+            )
+            if shape[0] not in (1, 2) or shape[1] <= 0 or shape[2] <= 0:
+                continue
+            dtype = dtype_try
+            dtype_source = source
+            n_elem = n_elem_try
+            n_channel, n_time, n_source_kx, legacy_complex = shape
+            break
+
+        if dtype is None:
+            if n_time_file > 0:
+                print(
+                    f"Cannot resolve {diag_name} trace precision for {label}: "
+                    f"file_bytes={file_size}, out.cgyro.time samples={n_time_file}."
+                )
+            else:
+                print(f"Cannot resolve {diag_name} trace precision for {label}: file_bytes={file_size}.")
+            return None
         if n_channel not in (1, 2) or n_time <= 0 or n_source_kx <= 0:
             print(f"Cannot infer {diag_name} trace shape for {label}: raw_size={n_elem}.")
             return None
@@ -3168,7 +3308,8 @@ class EnergyPlotting:
         print(
             f"{diag_name} trace for {label}: read {os.path.basename(path)} "
             f"(source ky={source_ky_display:.6g}, "
-            f"source_kx_count={n_source_kx}, time={time_idx.size}/{n_time})."
+            f"source_kx_count={n_source_kx}, time={time_idx.size}/{n_time}, "
+            f"dtype={dtype.name} ({dtype_source}))."
         )
         return {
             "trace": trace,

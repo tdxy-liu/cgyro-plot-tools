@@ -12,6 +12,7 @@ import datetime
 import json
 import os
 import re
+import sys
 from tkinter import filedialog, messagebox
 
 import numpy as np
@@ -1103,12 +1104,43 @@ class CgyroDataExportMixin:
 
     @staticmethod
     def _real_dtype_for_data(data):
-        """Return real dtype used by the loaded CGYRO data object."""
+        """Return the real dtype used by the loaded CGYRO data object.
+
+        Recent pygacode exposes ``BYTE`` at module scope rather than on each
+        ``cgyrodata`` instance.  Prefer the current case precision flag when
+        available, then support both pygacode layouts, and finally use CGYRO's
+        single-precision default instead of silently choosing float64.
+        """
+        case_dir = getattr(data, "dir", None) or getattr(data, "path", None) or ""
+        equilibrium_path = os.path.join(str(case_dir), "out.cgyro.equilibrium")
+        if os.path.isfile(equilibrium_path):
+            try:
+                equilibrium = np.loadtxt(equilibrium_path, dtype=float, ndmin=1)
+                if equilibrium.size > 0:
+                    flag = float(equilibrium[-1])
+                    flag_int = int(round(flag))
+                    if flag_int in (0, 1) and abs(flag - flag_int) <= 1.0e-8:
+                        return np.dtype("float64" if flag_int == 1 else "float32")
+            except (OSError, ValueError):
+                pass
+
         dtype = getattr(data, "BYTE", None)
         try:
-            return np.dtype(dtype)
-        except Exception:
-            return np.dtype("float64")
+            dt = np.dtype(dtype)
+            if dt.kind == "f" and dt.itemsize in (4, 8):
+                return dt
+        except (TypeError, ValueError):
+            pass
+
+        data_module = sys.modules.get(type(data).__module__)
+        try:
+            dt = np.dtype(getattr(data_module, "BYTE", None))
+            if dt.kind == "f" and dt.itemsize in (4, 8):
+                return dt
+        except (TypeError, ValueError):
+            pass
+
+        return np.dtype("float32")
 
     @staticmethod
     def _complex_dtype_for_data(data):
