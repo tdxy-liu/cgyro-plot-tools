@@ -675,16 +675,17 @@ plot_comparison()
 - 若用户输入了 `n_var`（实际作为 ky 值使用），插值计算各曲线在该 ky 的值，并输出 `ratio = gamma_eff / gamma_lin` 到 legend 和 stdout。
 
 **分支 D：Single plot** → `_plot_energy_balance_single_mode(...)`：
-- 支持 quantity：`T`, `N`, `T-N`, `entropy`。
-- 支持 x-axis：`vs Time`（直接时间序列）、`vs ky`（时均谱）、`vs kxky`（2D 等高线）。
+- 支持 quantity：`T`, `N`, `T-N`, `Dr`, `Dtheta`, `Dc`, `DZ`, `entropy`。
+- 支持 x-axis：`vs Time`（直接时间序列）、`vs ky`（时均谱）、`vs kx`（选定 ky 的时均谱）、`vs kxky`（二维色彩图）。
 - `vs ky` 且 `quantity=='entropy'` 时：走 `_plot_energy_balance_single_entropy_spectrum()`，**双轴布局**（上 ion 黑色，下 electron 红色）。
   - 使用 `self._energy_entropy_axes_active` 状态机防止重复 `fig.clear()`。
   - 每算例线型通过 `_get_case_linestyle(..., map_attr="_energy_entropy_case_style", line_styles=['-', '--', '-.', ':'])` 保持稳定。
   - 计算 `log(sum_kx <delta S_a>_t)`，对 ky 作图。
 - `vs ky` 非 entropy 时：通过 `_compute_energy_balance_single_vs_ky()` 计算时均的 `T(ky)`、`N(ky)` 或 `T-N(ky)`。
-- `vs kxky`：通过 `_compute_energy_balance_single_vs_kxky()` 在 `(kx, ky)` 平面上画 `contourf`。
-  - 对 triad channel 0 (T) 或 channel 1 (N) 做时间平均，得到 `[radial, n_ky]` 分布。
-  - radial 维度映射为 kx（优先用 `data.kx`，缺失时用 `data.length` 计算），n_n 维度映射为 ky。
+- `vs kxky`：通过 `_compute_energy_balance_single_vs_kxky()` 在 `(kx, ky)` 平面上画 `pcolormesh`，零值为白色，正负值采用对称色标。
+  - 对选定物种的 triad 实部通道做时间平均，得到 `[radial, n_ky]` 分布；`DZ` 为 channel 5、6、7（零基索引，即 Dr、Dtheta、Dc）的时均和，保留正负号，不应用 Single plot 的 T 归一化。
+  - radial 维度用 `_energy_balance_kx_selection()` 对齐 `data.kx`；若 kx 长度为 `n_radial-1`，对应 triad 的径向行 `[1:]`。ky 来自 `data.kynorm` / `data.ky`，二维图不使用 `ky scan` 筛选。
+  - 记录原始谱点坐标和值，供当前图片数据导出和批量导出使用。
   - entropy 模式不支持 vs kxky。
 
 **分支 E：FULLT transfer map** → `_plot_energy_balance_fullt(...)`：

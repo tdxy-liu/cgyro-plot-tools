@@ -5,6 +5,7 @@
 ## 功能特性
 
 ### 最新更新
+- **DZ 二维谱图**: 在 `Energy balance -> Single plot` 中选择 `Quantity: DZ`、`X-axis: vs kxky`，绘制所选时间窗内的 $\langle D_r+D_\theta+D_c\rangle_t$。支持主离子、电子或物种求和，保留各谱点的正负值；`ky scan` 不限制二维图的 ky 范围，支持现有图片数据导出。
 - **说明书编码兼容**: 内置 Help 阅读器兼容被 JSON/旧环境转义为 `\uXXXX` 的说明书文本，并使用 ASCII 项目符号避免旧 Tk 字体显示转义串。
 - **内置用户说明书**: 新增 `USER_GUIDE.md`，可通过 `Help -> User Guide...` 或 `F1` 在程序内离线查看和搜索，不依赖浏览器。
 - **左侧栏布局优化**: Cases 固定在顶部、Plot setup 独立滚动、Plot 与翻页操作固定在底部；case 列表新增独立滚动条和紧凑的两行管理按钮。

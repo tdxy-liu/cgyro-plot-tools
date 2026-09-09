@@ -1478,6 +1478,7 @@ class EnergyPlotting:
           - 'Dr'  -> < Re(idx6) >_t on (kx, ky) grid
           - 'Dtheta' -> < Re(idx7) >_t on (kx, ky) grid
           - 'Dc' -> < Re(idx8) >_t on (kx, ky) grid
+          - 'DZ' -> < Dr + Dtheta + Dc >_t on (kx, ky) grid
 
         Returns (kx_grid, ky_grid, z_data) or None on failure.
         z_data shape: [n_kx, n_ky] (ready for contourf with transpose).
@@ -1537,11 +1538,24 @@ class EnergyPlotting:
             z = np.mean(self._triad_real_channel(triad, spec, 6, ky_sel=slice(0, n_ky), time_sel=valid_t), axis=2)
         elif quantity_key == 'Dc':
             z = np.mean(self._triad_real_channel(triad, spec, 7, ky_sel=slice(0, n_ky), time_sel=valid_t), axis=2)
+        elif quantity_key == 'DZ':
+            # Keep each spectral cell and the signed dissipative channels,
+            # using the same species/time reduction as the 1D DZ spectra.
+            z = sum(
+                np.mean(
+                    self._triad_real_channel(
+                        triad, spec, channel,
+                        ky_sel=slice(0, n_ky), time_sel=valid_t,
+                    ),
+                    axis=2,
+                )
+                for channel in (5, 6, 7)
+            )
         else:
             # Fallback to T for unknown quantities
             z = np.mean(self._triad_real_channel(triad, spec, 0, ky_sel=slice(0, n_ky), time_sel=valid_t), axis=2)
         t_ref = None
-        if normalize_mode != "none" and quantity_key not in ['Dr', 'Dtheta', 'Dc']:
+        if normalize_mode != "none" and quantity_key not in ['Dr', 'Dtheta', 'Dc', 'DZ']:
             t_ref = np.mean(self._triad_real_channel(triad, spec, 0, ky_sel=slice(0, n_ky), time_sel=valid_t), axis=2)
 
         # Align native cgyrodata kx length with the corresponding triad radial rows.
@@ -1823,6 +1837,7 @@ class EnergyPlotting:
         - `vs time`: direct time-trace.
         - `vs ky`: time-averaged spectrum summed over kx.
         - `vs kx`: time-averaged spectrum at the nearest stored `ky scan`.
+        - `vs kxky`: time-averaged map retaining both spectral axes (except entropy).
 
         Notes:
         - Any averaged result carries `(Avg: t0-t1)` in legend text.
@@ -1929,11 +1944,8 @@ class EnergyPlotting:
             return
 
         if mode_txt == 'vs kxky':
-            if qty_txt == 'dz':
-                print(f"DZ is only supported for vs time/ky/kx in Single plot; skipped {label}.")
-                return
             if qty_txt == 'entropy':
-                print(f"entropy vs kxky not supported for {label}; use T, N, T-N, Dr, Dtheta or Dc.")
+                print(f"entropy vs kxky not supported for {label}; use T, N, T-N, Dr, Dtheta, Dc or DZ.")
                 return
             kxky_data = self._compute_energy_balance_single_vs_kxky(
                 data, label, None, qty_name, t_indices,
@@ -1980,6 +1992,12 @@ class EnergyPlotting:
             self.ax.set_title(
                 f"{qty_name}{norm_label} map{avg_suffix}"
             )
+            record_dataset = getattr(self, '_record_current_plot_xyz_dataset', None)
+            if callable(record_dataset):
+                record_dataset(
+                    f"{label} {qty_name}{norm_suffix}{avg_suffix}",
+                    kx_axis, ky_axis, z_plot.T,
+                )
             return
 
         ky_scan = self._parse_energy_balance_ky_scan()
