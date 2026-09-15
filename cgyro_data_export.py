@@ -483,6 +483,11 @@ class CgyroDataExportMixin:
         for fname in sorted(os.listdir(bin_dir)):
             if not fname.startswith("bin.cgyro."):
                 continue
+            if fname.endswith(".fti") or ".partial." in fname:
+                continue
+            if fname == "bin.cgyro.fullt_asym.ftz":
+                yield ".cgyro.fullt_asym"
+                continue
             yield fname[len("bin"):]  # e.g. ".cgyro.triad"
 
     def _collect_bin_suffixes(self, case_dir):
@@ -529,6 +534,15 @@ class CgyroDataExportMixin:
         can filter and plot by coordinates.  Unknown files still export as a
         flat, first-row-header table.
         """
+        if suffix in (".cgyro.fullt", ".cgyro.fullt_asym"):
+            from cgyro_fullt_compressed_bridge import open_fullt
+            packed = open_fullt(self._resolve_case_dir_for_export(data), suffix, data)
+            if packed is not None:
+                from cgyro_fullt_reader import export_origin
+                out_name = self._sanitize_name(suffix.lstrip(".")) + ".txt"
+                with packed:
+                    export_origin(packed, os.path.join(case_out, out_name))
+                return True
         arr = self._extract_bin_array(data, suffix)
         if arr is None:
             return False

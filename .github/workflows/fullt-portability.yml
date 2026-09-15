@@ -1,0 +1,47 @@
+name: FULLT reader portability
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reader:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            python: '3.9'
+          - os: windows-2022
+            python: '3.12'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      MPLBACKEND: Agg
+      GACODE_ROOT: ${{ github.workspace }}/legacy-gacode
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # Intentionally no custom FTZ module: GUI must use its bundled reader.
+      - uses: actions/checkout@v4
+        with:
+          repository: ASIPPfusion/gacode
+          ref: 0d43e39221d71645026e9da82dc0e4d35f10e8d7
+          path: legacy-gacode
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install this platform's dependencies
+        run: python -m pip install numpy scipy matplotlib -r requirements-compression.txt
+      - name: Check runtime without local configuration
+        run: python cgyro_runtime_check.py
+      - name: Unit and headless GUI tests
+        run: python -m unittest discover -s tests -v

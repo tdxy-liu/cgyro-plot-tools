@@ -7,6 +7,10 @@ __pycache__/
 .vscode/
 .idea/
 
+# Machine-specific reader location and ABI-specific optional dependencies
+cgyro_runtime.local.json
+.runtime/
+
 # OS artifacts
 .DS_Store
 Thumbs.db

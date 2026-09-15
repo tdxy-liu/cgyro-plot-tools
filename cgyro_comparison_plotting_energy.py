@@ -2489,7 +2489,7 @@ class EnergyPlotting:
         cache_version_attr = cache_attr + "_cache_version"
         # Bump this whenever the binary precision/shape validation changes so
         # a long-running GUI cannot reuse an array loaded by the old reader.
-        cache_version = 6
+        cache_version = 7
         try:
             case_token = self._resolve_case_dir(data)
         except Exception:
@@ -2506,6 +2506,56 @@ class EnergyPlotting:
         # therefore (..., source_kx, global_source_ky, time).
         n_n = int(getattr(data, 'n_n', 0))
         n_radial = int(getattr(data, 'n_radial', 0))
+
+        # Resolve the format before any legacy cache/fallback. Only requested
+        # committed blocks are decoded; integrity errors must propagate.
+        from cgyro_fullt_compressed_bridge import open_fullt
+        packed = open_fullt(case_token, file_suffix, data)
+        if packed is not None:
+            with packed:
+                m = packed.layout
+                if (n_n, n_radial) != (m.ny, m.nx):
+                    raise ValueError("FTZ grid differs from the loaded case")
+                ky_axis = np.arange(m.ny)*m.dy
+                source_iy = (None if source_ky_value is None else
+                             self._nearest_source_ky_index(ky_axis, source_ky_value))
+                if source_ky_value is not None and source_iy is None:
+                    raise ValueError("Cannot select the requested FTZ diagnosed ky")
+                kx_axis = (np.array([0.0]) if m.ns == 1 else
+                           (np.arange(m.ns)-m.nx//2)*m.dx)
+                source_ix = int(np.argmin(np.abs(kx_axis-(0.0 if source_kx_value is None else source_kx_value))))
+                tids = (np.arange(packed.nt, dtype=int) if time_indices is None else
+                        np.asarray(time_indices, dtype=int).reshape(-1))
+                tids = tids[(tids >= 0) & (tids < packed.nt)]
+                if tids.size == 0:
+                    raise ValueError("No requested time samples have committed FTZ data")
+                signature = (packed.signature, source_iy, source_ix, tuple(tids))
+                if getattr(data, cache_attr+"_ftz_signature", None) == signature:
+                    return True
+                arr = packed.legacy(source_iy, source_ix, tids)[:, :, 0, :, :, :, :]
+                setattr(data, cache_attr, arr)
+                setattr(data, channel_attr, m.nc)
+                setattr(data, case_token_attr, case_token)
+                setattr(data, cache_version_attr, cache_version)
+                setattr(data, cache_attr+"_ftz_signature", signature)
+                setattr(data, cache_attr+"_dtype", m.dtype.name)
+                setattr(data, cache_attr+"_source_kx", float(kx_axis[source_ix]))
+                setattr(data, cache_attr+"_source_kx_index", source_ix)
+                setattr(data, cache_attr+"_n_source_kx", m.ns)
+                used_ky = (ky_axis if source_iy is None else
+                           np.array([self._display_source_ky_value(ky_axis, source_iy, source_ky_value)]))
+                setattr(data, cache_attr+"_source_ky_axis", used_ky)
+                setattr(data, cache_attr+"_source_ky_full_index", 0 if source_iy is None else int(source_iy))
+                setattr(data, cache_attr+"_n_source_ky_full", m.ny)
+                setattr(data, cache_attr+"_time_indices", tids)
+                setattr(data, source_attr, "checked native FULLT (raw MPI layout or bit-exact FTZ)")
+                print(f"{diag_name} for {label}: read requested native blocks, times={len(tids)}/{packed.nt}.")
+                return True
+        if hasattr(data, cache_attr+"_ftz_signature"):
+            # No selected native file: never reuse an earlier native cache.
+            delattr(data, cache_attr+"_ftz_signature")
+            if hasattr(data, cache_attr):
+                delattr(data, cache_attr)
 
         def _clear_fullt_cache(reason):
             attrs = [
@@ -3155,6 +3205,31 @@ class EnergyPlotting:
         if not case_dir:
             print(f"Cannot load {diag_name} trace for {label}: missing case directory.")
             return None
+
+        from cgyro_fullt_compressed_bridge import open_fullt
+        packed = open_fullt(case_dir, file_suffix, data)
+        if packed is not None:
+            with packed:
+                m = packed.layout
+                axis = np.arange(m.ny)*m.dy
+                iy = self._nearest_source_ky_index(axis, source_ky_value)
+                if iy is None:
+                    raise ValueError("Cannot select requested FTZ trace ky")
+                tids = (np.arange(packed.nt, dtype=int) if time_indices is None else
+                        np.asarray(time_indices, dtype=int).reshape(-1))
+                tids = tids[(tids >= 0) & (tids < packed.nt)]
+                if not tids.size:
+                    raise ValueError("No requested FTZ trace times are committed")
+                trace = packed.read(iy, time_indices=tids)[:, :, 0, :, :].transpose(2, 0, 1, 3)
+                return {
+                    "trace": trace,
+                    "source_kx_axis": (np.array([0.0]) if m.ns == 1 else
+                                       (np.arange(m.ns)-m.nx//2)*m.dx),
+                    "target_kx_axis": (np.arange(m.nx)-m.nx//2)*m.dx,
+                    "target_ky_axis": (np.arange(2*m.ny-1)-(m.ny-1))*m.dy,
+                    "source_ky": float(self._display_source_ky_value(axis, iy, source_ky_value)),
+                    "source_ky_idx": int(iy), "time_indices": tids,
+                }
 
         path = None
         for candidate in (
@@ -4169,6 +4244,11 @@ class EnergyPlotting:
                     and pair_diag["rms_rel"] > 1.0e-8
                     and pair_diag["rms_abs"] > 1.0e-14
                 ):
+                    if getattr(data, "fullt_asym_ftz_signature", None) is not None:
+                        raise ValueError(
+                            "Decoded FTZ native values failed the physical pair-symmetry check; "
+                            "compression preserves those values and will not replace them with a constructed diagnostic."
+                        )
                     print(
                         f"FULLT_ASYM native data for {label} failed pair-symmetry check; "
                         "using FULLT-constructed ASYM for this plot."

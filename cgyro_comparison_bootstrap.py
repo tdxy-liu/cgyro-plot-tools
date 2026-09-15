@@ -7,10 +7,43 @@ Centralizes pygacode import bootstrap, fallback mocks, and shared constants.
 import os
 import sys
 import getpass
+import json
+import sysconfig
 import numpy as np
 
 # Ensure pygacode can be imported.
 _script_dir = os.path.dirname(__file__)
+# Machine-local settings survive ordinary launches and remain outside Git.
+# An explicit GACODE_ROOT still has priority, including over a stale local file.
+_runtime_config_path = os.path.join(_script_dir, "cgyro_runtime.local.json")
+_selected_gacode_root = os.environ.get("GACODE_ROOT")
+_root_selection_source = "GACODE_ROOT" if _selected_gacode_root else None
+if not _selected_gacode_root and os.path.isfile(_runtime_config_path):
+    try:
+        with open(_runtime_config_path, encoding="utf-8-sig") as handle:
+            _runtime_config = json.load(handle)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("Cannot read CGYRO local runtime configuration: " + _runtime_config_path) from exc
+    if not isinstance(_runtime_config, dict):
+        raise RuntimeError("CGYRO local runtime configuration must be a JSON object")
+    _configured_root = _runtime_config.get("gacode_root")
+    if not isinstance(_configured_root, str) or not _configured_root.strip():
+        raise RuntimeError("CGYRO local runtime configuration requires a nonempty gacode_root")
+    _selected_gacode_root = os.path.expanduser(_configured_root.strip())
+    if not os.path.isabs(_selected_gacode_root):
+        _selected_gacode_root = os.path.join(_script_dir, _selected_gacode_root)
+    _root_selection_source = "cgyro_runtime.local.json"
+
+# Only the current interpreter/platform's private dependencies may be imported.
+# In particular, never load a cp312 Windows decoder into a cp39/Linux process.
+_runtime_abi = sys.implementation.cache_tag + "-" + sysconfig.get_platform()
+_private_dependencies = os.path.join(_script_dir, ".runtime", "python", _runtime_abi)
+if os.path.isfile(os.path.join(_private_dependencies, "zstandard", "__init__.py")):
+    _private_dependencies = os.path.abspath(_private_dependencies)
+    sys.path[:] = [p for p in sys.path if os.path.normcase(os.path.abspath(p)) !=
+                  os.path.normcase(_private_dependencies)]
+    sys.path.insert(0, _private_dependencies)
+
 _pygacode_candidates = [
     os.path.abspath(os.path.join(_script_dir, rel_path))
     for rel_path in (
@@ -19,14 +52,33 @@ _pygacode_candidates = [
         '../gacode-master/f2py',
     )
 ]
+if _selected_gacode_root:
+    # A selected root must win even when it was already in PYTHONPATH.
+    # Do not quietly select an older sibling repository if it is invalid.
+    _pygacode_candidates = [os.path.abspath(os.path.join(_selected_gacode_root, "f2py"))]
+    if not os.path.isfile(os.path.join(_pygacode_candidates[0], "pygacode", "cgyro", "data.py")):
+        raise RuntimeError(_root_selection_source + " does not contain f2py/pygacode/cgyro/data.py")
 for candidate in reversed(_pygacode_candidates):
-    if os.path.isdir(candidate) and candidate not in sys.path:
+    if os.path.isdir(candidate):
+        sys.path[:] = [p for p in sys.path if os.path.normcase(os.path.abspath(p)) !=
+                      os.path.normcase(os.path.abspath(candidate))]
         sys.path.insert(0, candidate)
+
+if _selected_gacode_root and "pygacode" in sys.modules:
+    loaded = getattr(sys.modules["pygacode"], "__file__", "") or ""
+    expected = os.path.join(_pygacode_candidates[0], "pygacode", "__init__.py")
+    if os.path.normcase(os.path.abspath(loaded)) != os.path.normcase(expected):
+        raise RuntimeError("An older pygacode is already loaded; restart the GUI with the selected GACODE root")
 
 try:
     from pygacode.cgyro.data import cgyrodata
     from pygacode.cgyro.data_plot import cgyrodata_plot
-except ImportError:
+except ImportError as exc:
+    if os.environ.get("CGYRO_ALLOW_MOCK_DATA") != "1":
+        raise RuntimeError(
+            "Cannot import pygacode. Set GACODE_ROOT to the intended repository "
+            "or install pygacode. Mock data are disabled for real analysis."
+        ) from exc
     print("Error: Could not import cgyrodata. Please ensure pygacode is available.")
 
     class cgyrodata:

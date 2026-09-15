@@ -5,6 +5,8 @@
 ## 功能特性
 
 ### 最新更新
+
+- **v0.2.20 跨机器压缩读取**: 工具自带 FULLT 原格式/FTZ v1 按需读取层，不再要求外部 pygacode 含定制压缩模块。更新后安装 `requirements-compression.txt` 即可读取压缩图、跨 Kx 追踪和导出，无需整文件落盘解压。普通场/通量仍需 pygacode；提供无窗口检查命令 `python cgyro_runtime_check.py`。见 [压缩读取与迁移说明](FULLT_COMPRESSED_READING.md)。
 - **DZ 二维谱图**: 在 `Energy balance -> Single plot` 中选择 `Quantity: DZ`、`X-axis: vs kxky`，绘制所选时间窗内的 $\langle D_r+D_\theta+D_c\rangle_t$。支持主离子、电子或物种求和，保留各谱点的正负值；`ky scan` 不限制二维图的 ky 范围，支持现有图片数据导出。
 - **说明书编码兼容**: 内置 Help 阅读器兼容被 JSON/旧环境转义为 `\uXXXX` 的说明书文本，并使用 ASCII 项目符号避免旧 Tk 字体显示转义串。
 - **内置用户说明书**: 新增 `USER_GUIDE.md`，可通过 `Help -> User Guide...` 或 `F1` 在程序内离线查看和搜索，不依赖浏览器。
@@ -92,3 +94,34 @@
 *   `matplotlib`
 *   `numpy`
 *   `pygacode` (GACODE 的 Python 接口)
+*   `zstandard`（读取压缩 FULL_T_ASYM 时需要；原格式按需读取不依赖它）
+
+### 其他机器更新与安装
+
+在工具目录中，用启动 GUI 的同一个 Python 环境执行：
+
+```sh
+git pull --ff-only
+python -m pip install -r requirements-compression.txt
+python cgyro_runtime_check.py
+python cgyro_comparison.py
+```
+
+Windows/Linux 均使用上述命令；不要复制另一台机器的 `.runtime` 二进制库。
+服务器无法访问软件源时，见 [离线安装](FULLT_COMPRESSED_READING.md#离线安装)。
+本次只更新后处理工具，无需重新编译 CGYRO，也不修改已有输出。
+
+### 普通 pygacode 与本机配置
+
+普通场/通量的 pygacode 选择顺序为：显式 `GACODE_ROOT` → 工具目录中的 `cgyro_runtime.local.json` → 原有相邻目录/已安装的 pygacode。
+本机配置示例（仅在原环境找不到 pygacode 或需要指定另一份时使用；根目录需包含 `f2py/pygacode/cgyro/data.py`，**不要求**含压缩模块）：
+
+```json
+{"gacode_root": "../gacode"}
+```
+
+相对路径以工具目录为准，不随终端当前目录改变。配置了不存在的目录、配置损坏、或已载入另一份 pygacode 时会明确报错，不会悄悄改用旧读取器。更换配置后应重启 GUI。
+
+可选依赖的私有目录是 `.runtime/python/<cache_tag>-<platform>/`，例如 CPython 3.12 Windows x64 使用 `.runtime/python/cpython-312-win-amd64/`。只加载匹配当前解释器的目录，不能把 Windows 或其他 Python 版本的二进制依赖直接拿到 Linux/另一解释器使用。也可在启动工具的同一个 Python 环境中安装 `zstandard`。
+
+`cgyro_runtime.local.json` 和 `.runtime/` 属于本机配置，已加入 Git 忽略列表。压缩算例需保留配对的 `.ftz/.fti`、原输入/网格/时间元数据，并正确设置 `FULL_T_ASYM_COMPRESSION=1`；格式冲突或损坏仍会报错。
