@@ -1069,7 +1069,7 @@ class CgyroUiMixin:
         self._update_check_menu = help_menu
 
     def open_update_connection_settings(self):
-        """Configure direct, existing SOCKS5, or SSH dynamic-forward updates."""
+        """Configure HTTP CONNECT, direct, SOCKS5, or SSH-forward updates."""
         existing = getattr(self, "_update_connection_window", None)
         if existing is not None and existing.winfo_exists():
             existing.deiconify()
@@ -1085,6 +1085,7 @@ class CgyroUiMixin:
         dialog.resizable(False, False)
 
         mode_var = tk.StringVar(value=config.mode)
+        http_proxy_var = tk.StringVar(value=config.http_proxy)
         socks_proxy_var = tk.StringVar(value=config.socks_proxy)
         ssh_host_var = tk.StringVar(value=config.ssh_host)
         ssh_user_var = tk.StringVar(value=config.ssh_user)
@@ -1107,32 +1108,45 @@ class CgyroUiMixin:
         mode_frame.grid(row=1, column=0, columnspan=3, sticky=tk.EW, pady=(0, 8))
         ttk.Radiobutton(
             mode_frame,
+            text="HTTP proxy (default)",
+            variable=mode_var,
+            value="http",
+        ).grid(row=0, column=0, sticky=tk.W, padx=(0, 16))
+        ttk.Radiobutton(
+            mode_frame,
             text="Direct connection",
             variable=mode_var,
             value="direct",
-        ).grid(row=0, column=0, sticky=tk.W, padx=(0, 16))
+        ).grid(row=0, column=1, sticky=tk.W, padx=(0, 16))
         ttk.Radiobutton(
             mode_frame,
             text="Use an existing SOCKS5 proxy",
             variable=mode_var,
             value="socks5",
-        ).grid(row=0, column=1, sticky=tk.W, padx=(0, 16))
+        ).grid(row=1, column=0, sticky=tk.W, padx=(0, 16))
         ttk.Radiobutton(
             mode_frame,
             text="Start an SSH dynamic SOCKS5 tunnel",
             variable=mode_var,
             value="ssh-socks",
-        ).grid(row=0, column=2, sticky=tk.W)
+        ).grid(row=1, column=1, sticky=tk.W)
 
-        ttk.Label(content, text="SOCKS5 URL:").grid(row=2, column=0, sticky=tk.W, pady=3)
-        socks_entry = ttk.Entry(content, textvariable=socks_proxy_var, width=46)
-        socks_entry.grid(row=2, column=1, columnspan=2, sticky=tk.EW, pady=3)
-        ttk.Label(content, text="Example: socks5h://127.0.0.1:1080", style="Hint.TLabel").grid(
+        ttk.Label(content, text="HTTP proxy URL:").grid(row=2, column=0, sticky=tk.W, pady=3)
+        http_entry = ttk.Entry(content, textvariable=http_proxy_var, width=46)
+        http_entry.grid(row=2, column=1, columnspan=2, sticky=tk.EW, pady=3)
+        ttk.Label(content, text="HTTP CONNECT; HTTPS certificate checks remain enabled.", style="Hint.TLabel").grid(
             row=3, column=1, columnspan=2, sticky=tk.W
         )
 
+        ttk.Label(content, text="SOCKS5 URL:").grid(row=4, column=0, sticky=tk.W, pady=3)
+        socks_entry = ttk.Entry(content, textvariable=socks_proxy_var, width=46)
+        socks_entry.grid(row=4, column=1, columnspan=2, sticky=tk.EW, pady=3)
+        ttk.Label(content, text="Example: socks5h://127.0.0.1:1080", style="Hint.TLabel").grid(
+            row=5, column=1, columnspan=2, sticky=tk.W
+        )
+
         ssh_frame = ttk.LabelFrame(content, text="SSH relay", padding=8)
-        ssh_frame.grid(row=4, column=0, columnspan=3, sticky=tk.EW, pady=(8, 8))
+        ssh_frame.grid(row=6, column=0, columnspan=3, sticky=tk.EW, pady=(8, 8))
         ssh_frame.columnconfigure(1, weight=1)
         ttk.Label(ssh_frame, text="Relay host:").grid(row=0, column=0, sticky=tk.W, pady=3)
         ssh_host_entry = ttk.Entry(ssh_frame, textvariable=ssh_host_var, width=32)
@@ -1168,10 +1182,11 @@ class CgyroUiMixin:
             text="Use an SSH key or ssh-agent. Passwords are not stored by this application.",
             style="Hint.TLabel",
             wraplength=520,
-        ).grid(row=5, column=0, columnspan=3, sticky=tk.W, pady=(0, 10))
+        ).grid(row=7, column=0, columnspan=3, sticky=tk.W, pady=(0, 10))
 
         def update_widget_states(*_args):
             mode = mode_var.get()
+            http_entry.configure(state=tk.NORMAL if mode == "http" else tk.DISABLED)
             socks_state = tk.NORMAL if mode == "socks5" else tk.DISABLED
             ssh_state = tk.NORMAL if mode == "ssh-socks" else tk.DISABLED
             socks_entry.configure(state=socks_state)
@@ -1189,12 +1204,13 @@ class CgyroUiMixin:
         update_widget_states()
 
         button_frame = ttk.Frame(content)
-        button_frame.grid(row=6, column=0, columnspan=3, sticky=tk.E)
+        button_frame.grid(row=8, column=0, columnspan=3, sticky=tk.E)
 
         def save_and_close():
             try:
                 new_config = UpdateProxyConfig(
                     mode=mode_var.get(),
+                    http_proxy=http_proxy_var.get(),
                     socks_proxy=socks_proxy_var.get(),
                     ssh_host=ssh_host_var.get(),
                     ssh_user=ssh_user_var.get(),

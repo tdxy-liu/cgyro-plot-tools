@@ -34,6 +34,7 @@ DEFAULT_VERSION = "0.2.14"
 DEFAULT_TIMEOUT = 5.0
 DEFAULT_SSH_PORT = 22
 DEFAULT_LOCAL_SOCKS_PORT = 0
+DEFAULT_HTTP_PROXY = "http://47.102.120.146:18889"
 UPDATE_CONFIG_ENV = "CGYRO_UPDATE_CONFIG"
 UPDATE_CONFIG_NAME = "update_connection.json"
 
@@ -51,7 +52,7 @@ class GitUpdateError(RuntimeError):
 
 
 class UpdateConnectionError(RuntimeError):
-    """Raised when the configured direct/SOCKS/SSH update connection fails."""
+    """Raised when the configured direct/HTTP/SOCKS/SSH connection fails."""
 
 
 @dataclass(frozen=True)
@@ -84,19 +85,20 @@ class GitUpdateResult:
 class UpdateProxyConfig:
     """Connection settings used only while checking or downloading updates.
 
-    ``mode`` is one of ``direct``, ``socks5`` (an already running SOCKS5
-    proxy), or ``ssh-socks`` (the application starts ``ssh -D`` itself).
+    ``mode`` is ``http`` (HTTP CONNECT, default), ``direct``, ``socks5``
+    (an existing SOCKS5 proxy), or ``ssh-socks`` (starts ``ssh -D``).
     SSH passwords are intentionally not represented or stored; use an SSH
     key or an ssh-agent.
     """
 
-    mode: str = "direct"
+    mode: str = "http"
     socks_proxy: str = ""
     ssh_host: str = ""
     ssh_user: str = ""
     ssh_port: int = DEFAULT_SSH_PORT
     local_socks_port: int = DEFAULT_LOCAL_SOCKS_PORT
     identity_file: str = ""
+    http_proxy: str = DEFAULT_HTTP_PROXY
 
 
 def normalize_version(value):
@@ -156,15 +158,15 @@ def normalize_update_proxy_config(value=None):
     else:
         raw = {}
 
-    mode = str(raw.get("mode", "direct") or "direct").strip().lower()
+    mode = str(raw.get("mode", "http") or "http").strip().lower()
     mode = {
         "ssh": "ssh-socks",
         "ssh_socks": "ssh-socks",
         "ssh-socks5": "ssh-socks",
         "socks": "socks5",
     }.get(mode, mode)
-    if mode not in ("direct", "socks5", "ssh-socks"):
-        mode = "direct"
+    if mode not in ("direct", "http", "socks5", "ssh-socks"):
+        raise UpdateConnectionError("Unknown update connection mode: " + mode)
 
     return UpdateProxyConfig(
         mode=mode,
@@ -179,11 +181,12 @@ def normalize_update_proxy_config(value=None):
             65535,
         ),
         identity_file=str(raw.get("identity_file", "") or "").strip(),
+        http_proxy=str(raw.get("http_proxy", DEFAULT_HTTP_PROXY) or "").strip(),
     )
 
 
 def load_update_proxy_config():
-    """Load saved update connection settings, falling back to direct access."""
+    """Use the HTTP default only when no readable settings exist; retain old modes."""
     path = update_connection_config_path()
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -205,6 +208,30 @@ def save_update_proxy_config(config):
     )
     temporary.replace(path)
     return path
+
+
+def _parse_http_proxy(proxy_url):
+    """Validate an unauthenticated HTTP proxy; return (host, port, canonical URL)."""
+    value = str(proxy_url or "").strip()
+    if not value or any(c.isspace() or ord(c) < 32 for c in value):
+        raise UpdateConnectionError("The HTTP proxy address is empty or contains whitespace.")
+    if "://" not in value:
+        value = "http://" + value
+    try:
+        parsed = urlsplit(value)
+        port = 80 if parsed.port is None else parsed.port
+        host = parsed.hostname
+    except ValueError as exc:
+        raise UpdateConnectionError("The HTTP proxy address is invalid.") from exc
+    if parsed.scheme.lower() != "http":
+        raise UpdateConnectionError("Use http://HOST:PORT for the HTTP proxy (HTTPS targets remain encrypted).")
+    if parsed.username is not None or parsed.password is not None:
+        raise UpdateConnectionError("Proxy credentials in URLs are not supported or stored.")
+    if (not host or not 1 <= port <= 65535 or parsed.path not in ("", "/")
+            or parsed.query or parsed.fragment or "\\" in host):
+        raise UpdateConnectionError("The HTTP proxy must be a host and port, without a path/query/fragment.")
+    authority = "[{}]".format(host) if ":" in host else host
+    return host, port, "http://{}:{}".format(authority, port)
 
 
 def _parse_socks_proxy(proxy_url):
@@ -236,7 +263,9 @@ def _socks_url(host, port):
 
 def _validate_update_proxy_config(config):
     config = normalize_update_proxy_config(config)
-    if config.mode == "socks5":
+    if config.mode == "http":
+        _parse_http_proxy(config.http_proxy)
+    elif config.mode == "socks5":
         _parse_socks_proxy(config.socks_proxy)
     elif config.mode == "ssh-socks":
         if not config.ssh_host:
@@ -381,6 +410,8 @@ def _update_proxy_session(proxy_config=None, timeout=DEFAULT_TIMEOUT):
     )
     if config.mode == "direct":
         yield None
+    elif config.mode == "http":
+        yield _parse_http_proxy(config.http_proxy)[2]
     elif config.mode == "socks5":
         yield config.socks_proxy
     else:
@@ -475,7 +506,23 @@ class _SocksHTTPSConnection(http.client.HTTPSConnection):
         self.sock = self._context.wrap_socket(self.sock, server_hostname=self.host)
 
 
+class _HTTPProxyHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS through an explicit HTTP CONNECT proxy, with normal TLS validation.
+
+    Unlike environment-based ProxyHandler routing, this cannot silently bypass
+    the selected proxy because of NO_PROXY or Windows Internet Settings.
+    """
+
+    def __init__(self, host, proxy_host, proxy_port, **kwargs):
+        super().__init__(host, **kwargs)
+        target_host, target_port = self.host, self.port
+        self.host, self.port = proxy_host, int(proxy_port)
+        self.set_tunnel(target_host, target_port)
+
+
 class _SocksHTTPSHandler(HTTPSHandler):
+    connection_type = _SocksHTTPSConnection
+
     def __init__(self, proxy_host, proxy_port):
         super().__init__(context=ssl.create_default_context())
         self._socks_proxy_host = proxy_host
@@ -483,7 +530,7 @@ class _SocksHTTPSHandler(HTTPSHandler):
 
     def https_open(self, req):
         connection_factory = partial(
-            _SocksHTTPSConnection,
+            self.connection_type,
             proxy_host=self._socks_proxy_host,
             proxy_port=self._socks_proxy_port,
         )
@@ -491,8 +538,11 @@ class _SocksHTTPSHandler(HTTPSHandler):
             connection_factory,
             req,
             context=self._context,
-            check_hostname=self._check_hostname,
         )
+
+
+class _HTTPProxyHTTPSHandler(_SocksHTTPSHandler):
+    connection_type = _HTTPProxyHTTPSConnection
 
 
 def _fetch_text(url, timeout=DEFAULT_TIMEOUT, allow_not_found=False, proxy_url=None):
@@ -505,10 +555,15 @@ def _fetch_text(url, timeout=DEFAULT_TIMEOUT, allow_not_found=False, proxy_url=N
     )
     try:
         if proxy_url:
-            proxy_host, proxy_port = _parse_socks_proxy(proxy_url)
+            if str(proxy_url).lower().startswith(("socks5://", "socks5h://")):
+                proxy_host, proxy_port = _parse_socks_proxy(proxy_url)
+                handler = _SocksHTTPSHandler(proxy_host, proxy_port)
+            else:
+                proxy_host, proxy_port, _ = _parse_http_proxy(proxy_url)
+                handler = _HTTPProxyHTTPSHandler(proxy_host, proxy_port)
             opener = build_opener(
                 ProxyHandler({}),
-                _SocksHTTPSHandler(proxy_host, proxy_port),
+                handler,
             )
             response_context = opener.open(request, timeout=timeout)
         else:
@@ -651,16 +706,24 @@ def _build_socks_proxy_command(proxy_host, proxy_port):
 
 
 def _git_environment_for_proxy(proxy_url):
-    """Return an environment that routes both Git HTTPS and SSH through SOCKS."""
+    """Scoped child environment; HTTP uses HTTPS remotes, SOCKS also tunnels SSH."""
     if not proxy_url:
         return None
-    proxy_host, proxy_port = _parse_socks_proxy(proxy_url)
+    is_socks = str(proxy_url).lower().startswith(("socks5://", "socks5h://"))
+    if is_socks:
+        proxy_host, proxy_port = _parse_socks_proxy(proxy_url)
+    else:
+        proxy_host, proxy_port, proxy_url = _parse_http_proxy(proxy_url)
     environment = os.environ.copy()
     # Git/libcurl honors http.proxy and these standard proxy variables for
     # HTTPS remotes.  The explicit -c option below is used as an additional
     # compatibility path for older Git builds.
     for variable in ("ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"):
         environment[variable] = proxy_url
+    # A deliberate proxy choice wins over inherited bypass lists.
+    environment["NO_PROXY"] = environment["no_proxy"] = ""
+    if not is_socks:
+        return environment
 
     proxy_command = _build_socks_proxy_command(proxy_host, proxy_port)
     ssh_command = [
@@ -764,6 +827,40 @@ def _git_output(result):
     return str(result.stdout or "").strip()
 
 
+def _http_remote_override(repo_root, remote, timeout):
+    """Temporarily use HTTPS for GitHub SSH fetches; never edit saved origin.
+
+    Passing http.proxy to SSH alone would leave Git traffic outside the HTTP
+    proxy. Other SSH hosts must be configured as HTTPS explicitly.
+    """
+    lookup = _run_git(repo_root, ["config", "--get-all", "remote.{}.url".format(remote)], timeout)
+    if lookup.returncode != 0:
+        raise GitUpdateError("Cannot resolve the named Git remote for HTTP proxy updates.")
+    urls = _git_output(lookup).splitlines()
+    if len(urls) != 1:
+        raise GitUpdateError("HTTP proxy updates require a single remote URL; multiple URLs are ambiguous.")
+    url = urls[0]
+    prefixes = (
+        "git@github.com:", "ssh://git@github.com/", "ssh://git@github.com:22/",
+        "ssh://git@ssh.github.com:443/",
+    )
+    for prefix in prefixes:
+        if url.startswith(prefix):
+            path = url[len(prefix):]
+            if not path or path.startswith("/") or any(c.isspace() for c in path):
+                raise GitUpdateError("Invalid GitHub SSH remote path.")
+            # remote.<name>.url is multi-valued: adding a -c URL does NOT
+            # replace its first (SSH) URL. Rewrite the exact existing URL for
+            # this command instead; leave both config and tracking intact.
+            return ["-c", "url.https://github.com/{}.insteadOf={}".format(path, url)]
+    if url.lower().startswith("https://"):
+        return []
+    raise GitUpdateError(
+        "HTTP proxy updates require an HTTPS remote (GitHub SSH remotes are mapped "
+        "temporarily). Configure this remote as HTTPS or choose SOCKS5/direct."
+    )
+
+
 def update_from_git(
     repo_dir=None,
     remote="origin",
@@ -845,6 +942,8 @@ def update_from_git(
             if proxy_url:
                 pull_args[0:0] = ["-c", "http.proxy={}".format(proxy_url)]
                 pull_environment = _git_environment_for_proxy(proxy_url)
+                if str(proxy_url).startswith("http://"):
+                    pull_args[0:0] = _http_remote_override(repo_root, remote, timeout)
             pull_args.extend(["--ff-only", remote, branch])
             pull_result = _run_git(
                 repo_root,
@@ -916,6 +1015,14 @@ def _build_cli_parser():
         help="ignore saved proxy settings and use the normal network connection",
     )
     connection.add_argument(
+        "--http-proxy",
+        nargs="?",
+        const=DEFAULT_HTTP_PROXY,
+        default=None,
+        metavar="URL",
+        help="use HTTP CONNECT proxy (default address: {})".format(DEFAULT_HTTP_PROXY),
+    )
+    connection.add_argument(
         "--socks5-proxy",
         default=None,
         metavar="URL",
@@ -963,13 +1070,16 @@ def _build_cli_parser():
 
 
 def _connection_config_from_cli(args):
-    selected = int(bool(args.direct)) + int(args.socks5_proxy is not None) + int(args.ssh_relay is not None)
+    selected = (int(bool(args.direct)) + int(args.http_proxy is not None)
+                + int(args.socks5_proxy is not None) + int(args.ssh_relay is not None))
     if selected > 1:
         raise UpdateConnectionError(
-            "Choose only one of --direct, --socks5-proxy, or --ssh-relay."
+            "Choose only one of --direct, --http-proxy, --socks5-proxy, or --ssh-relay."
         )
     if args.direct:
-        return UpdateProxyConfig()
+        return UpdateProxyConfig(mode="direct")
+    if args.http_proxy is not None:
+        return _validate_update_proxy_config(UpdateProxyConfig(mode="http", http_proxy=args.http_proxy))
     if args.socks5_proxy is not None:
         return _validate_update_proxy_config(
             UpdateProxyConfig(mode="socks5", socks_proxy=args.socks5_proxy)
