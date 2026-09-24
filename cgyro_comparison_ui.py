@@ -1746,41 +1746,52 @@ class CgyroUiMixin:
         self.options_frame.columnconfigure(3, weight=0)
 
         # --- Persistent Options (Time Range) ---
-        ttk.Label(self.options_frame, text="Time Start:").grid(row=0, column=0, sticky=tk.W)
+        # Keep these columns independent of each plot mode's labels and inputs.
+        # A long spectral selector must not squeeze the time fields above it.
+        self.time_options_frame = ttk.Frame(self.options_frame)
+        self.time_options_frame.grid(row=0, column=0, columnspan=4, rowspan=2, sticky=tk.EW)
+        self.time_options_frame.columnconfigure(1, weight=1)
+        self.t_start_label = ttk.Label(self.time_options_frame, text="Time Start:")
+        self.t_start_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 8), pady=2)
         self.t_start_var = tk.StringVar()
         self.t_start_entry = ttk.Entry(
-            self.options_frame,
+            self.time_options_frame,
             textvariable=self.t_start_var,
             width=9,
         )
-        self.t_start_entry.grid(row=0, column=1, sticky=tk.W)
+        self.t_start_entry.grid(row=0, column=1, sticky=tk.EW, pady=2)
         self._install_entry_placeholder(self.t_start_entry, self.t_start_var, "50% End")
 
-        ttk.Label(self.options_frame, text="Time End:").grid(row=1, column=0, sticky=tk.W)
+        self.t_end_label = ttk.Label(self.time_options_frame, text="Time End:")
+        self.t_end_label.grid(row=1, column=0, sticky=tk.W, padx=(0, 8), pady=2)
         self.t_end_var = tk.StringVar()
         self.t_end_entry = ttk.Entry(
-            self.options_frame,
+            self.time_options_frame,
             textvariable=self.t_end_var,
             width=9,
         )
-        self.t_end_entry.grid(row=1, column=1, sticky=tk.W)
+        self.t_end_entry.grid(row=1, column=1, sticky=tk.EW, pady=2)
         self._install_entry_placeholder(self.t_end_entry, self.t_end_var, "End")
 
         # --- Global Log Scale Options ---
+        self.log_options_frame = ttk.Frame(self.time_options_frame)
+        self.log_options_frame.grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=(3, 0))
+        self.log_options_frame.columnconfigure(2, weight=1)
         self.log_x_var = tk.BooleanVar(value=False)
-        self.log_x_check = ttk.Checkbutton(self.options_frame, text="Log X", variable=self.log_x_var)
-        self.log_x_check.grid(row=0, column=2, sticky=tk.W, padx=(6, 0))
+        self.log_x_check = ttk.Checkbutton(self.log_options_frame, text="Log X", variable=self.log_x_var)
+        self.log_x_check.grid(row=0, column=0, sticky=tk.W)
 
         self.log_y_var = tk.BooleanVar(value=False)
-        self.log_y_check = ttk.Checkbutton(self.options_frame, text="Log Y", variable=self.log_y_var)
-        self.log_y_check.grid(row=1, column=2, sticky=tk.W, padx=(6, 0))
+        self.log_y_check = ttk.Checkbutton(self.log_options_frame, text="Log Y", variable=self.log_y_var)
+        self.log_y_check.grid(row=0, column=1, sticky=tk.W, padx=(6, 0))
 
-        ttk.Button(
-            self.options_frame,
+        self.clear_time_button = ttk.Button(
+            self.log_options_frame,
             text="Clear",
             width=6,
             command=self.clear_time_range,
-        ).grid(row=0, column=3, rowspan=2, padx=(6, 0), sticky=tk.EW)
+        )
+        self.clear_time_button.grid(row=0, column=2, padx=(6, 0), sticky=tk.E)
 
         # Separator
         ttk.Separator(self.options_frame, orient=tk.HORIZONTAL).grid(row=2, column=0, columnspan=4, sticky="ew", pady=5)
@@ -1842,9 +1853,15 @@ class CgyroUiMixin:
         ) = self._create_formula_panel(self.options_frame, figsize=(4.0, 2.4))
 
         # 3. Fluctuation 1D Options
+        self.fluc_options_frame = ttk.Frame(self.options_frame)
+        for column in (0, 1):
+            self.fluc_options_frame.columnconfigure(column, weight=1, uniform="fluc_selectors")
+        self.fluc_axis_frame = ttk.Frame(self.fluc_options_frame)
+        for column in (1, 3):
+            self.fluc_axis_frame.columnconfigure(column, weight=1, uniform="fluc_axis_inputs")
         self.fluc_field_var = tk.StringVar(value="Phi")
         self.fluc_field_combo = ttk.Combobox(
-            self.options_frame,
+            self.fluc_options_frame,
             textvariable=self.fluc_field_var,
             values=list(self._FLUC_FIELD_OPTIONS),
             state="readonly",
@@ -1853,7 +1870,7 @@ class CgyroUiMixin:
         
         self.fluc_xaxis_var = tk.StringVar(value="v.s ky")
         self.fluc_xaxis_combo = ttk.Combobox(
-            self.options_frame,
+            self.fluc_options_frame,
             textvariable=self.fluc_xaxis_var,
             values=list(self._FLUC_XAXIS_OPTIONS),
             state="readonly",
@@ -1865,34 +1882,34 @@ class CgyroUiMixin:
         # does not leave the menu in an unusable half-selected state.
         self._fluc_normalization_current_mode = "None"
         self.fluc_theta_kx_label = ttk.Label(
-            self.options_frame, text="kx:"
+            self.fluc_axis_frame, text="kx:"
         )
         self.fluc_theta_kx_var = tk.StringVar(value="")
         self.fluc_theta_kx_entry = ttk.Entry(
-            self.options_frame,
+            self.fluc_axis_frame,
             textvariable=self.fluc_theta_kx_var,
             width=12,
         )
         self._install_entry_placeholder(self.fluc_theta_kx_entry, self.fluc_theta_kx_var, "Avg")
         self.fluc_theta_ky_label = ttk.Label(
-            self.options_frame, text="ky:"
+            self.fluc_axis_frame, text="ky:"
         )
         self.fluc_theta_ky_var = tk.StringVar(value="")
         self.fluc_theta_ky_entry = ttk.Entry(
-            self.options_frame,
+            self.fluc_axis_frame,
             textvariable=self.fluc_theta_ky_var,
             width=12,
         )
         self._install_entry_placeholder(self.fluc_theta_ky_entry, self.fluc_theta_ky_var, "Avg")
         self.fluc_advanced_var = tk.BooleanVar(value=False)
         self.fluc_advanced_check = ttk.Checkbutton(
-            self.options_frame,
+            self.fluc_options_frame,
             text="Advanced: per-case kx/ky",
             variable=self.fluc_advanced_var,
             command=self._on_fluc_advanced_toggle,
         )
         self.fluc_advanced_button = ttk.Button(
-            self.options_frame,
+            self.fluc_options_frame,
             text="Edit per-case kx/ky...",
             command=self._open_advanced_fluc_selector,
         )
@@ -2589,6 +2606,7 @@ class CgyroUiMixin:
             self.flux_2d_errorbar_check, self.flux_norm_real_ion_check,
             self.flux_scan_xparam_label, self.flux_scan_xparam_combo,
             self.flux_formula_frame,
+            self.fluc_options_frame, self.fluc_axis_frame,
             self.fluc_field_combo, self.fluc_xaxis_combo,
             self.fluc_advanced_check, self.fluc_advanced_button,
             self.fluc_theta_kx_label, self.fluc_theta_kx_entry,
@@ -3244,48 +3262,34 @@ class CgyroUiMixin:
                 self.flux_formula_frame.grid(row=row, column=0, columnspan=4, sticky=tk.W + tk.E, pady=(4, 0))
 
         elif plot_type == "Fluctuation 1D":
-            self.fluc_field_combo.grid(row=row, column=0, sticky=tk.W)
-            self.fluc_xaxis_combo.grid(row=row, column=1, sticky=tk.W)
+            self.fluc_options_frame.grid(row=row, column=0, columnspan=4, sticky=tk.EW)
+            self.fluc_field_combo.grid(row=0, column=0, sticky=tk.EW, padx=(0, 3))
+            self.fluc_xaxis_combo.grid(row=0, column=1, sticky=tk.EW, padx=(3, 0))
             row += 1
 
             fluc_xaxis = self.fluc_xaxis_var.get()
-            self.fluc_advanced_check.grid(row=row, column=0, columnspan=2, sticky=tk.W)
-            row += 1
+            self.fluc_advanced_check.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(4, 2))
 
             advanced = self._fluc_advanced_enabled()
             if advanced and fluc_xaxis in ("v.s ky", "v.s kx", "v.s theta"):
                 self._ensure_fluc_advanced_case_values()
                 self.fluc_advanced_button.grid(
-                    row=row, column=0, columnspan=2, sticky=tk.W
+                    row=2, column=0, columnspan=2, sticky=tk.EW
                 )
-                row += 1
             else:
+                if fluc_xaxis in ("v.s ky", "v.s kx", "v.s theta"):
+                    self.fluc_axis_frame.grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=2)
                 if fluc_xaxis == "v.s ky":
-                    self.fluc_theta_kx_label.configure(
-                        text="fixed kx (physical, blank=avg):"
-                    )
-                    self.fluc_theta_kx_label.grid(row=row, column=0, sticky=tk.W)
-                    self.fluc_theta_kx_entry.grid(row=row, column=1, sticky=tk.W)
-                    row += 1
+                    self.fluc_theta_kx_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 6))
+                    self.fluc_theta_kx_entry.grid(row=0, column=1, columnspan=3, sticky=tk.EW)
                 elif fluc_xaxis == "v.s kx":
-                    self.fluc_theta_ky_label.configure(
-                        text="fixed ky (physical, blank=avg):"
-                    )
-                    self.fluc_theta_ky_label.grid(row=row, column=0, sticky=tk.W)
-                    self.fluc_theta_ky_entry.grid(row=row, column=1, sticky=tk.W)
-                    row += 1
+                    self.fluc_theta_ky_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 6))
+                    self.fluc_theta_ky_entry.grid(row=0, column=1, columnspan=3, sticky=tk.EW)
                 elif fluc_xaxis == "v.s theta":
-                    self.fluc_theta_kx_label.configure(
-                        text="kx (physical, blank=avg):"
-                    )
-                    self.fluc_theta_ky_label.configure(
-                        text="ky (physical, blank=avg):"
-                    )
-                    self.fluc_theta_kx_label.grid(row=row, column=0, sticky=tk.W)
-                    self.fluc_theta_kx_entry.grid(row=row, column=1, sticky=tk.W)
-                    self.fluc_theta_ky_label.grid(row=row, column=2, sticky=tk.W, padx=(8, 0))
-                    self.fluc_theta_ky_entry.grid(row=row, column=3, sticky=tk.W)
-                    row += 1
+                    self.fluc_theta_kx_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 6))
+                    self.fluc_theta_kx_entry.grid(row=0, column=1, columnspan=1, sticky=tk.EW)
+                    self.fluc_theta_ky_label.grid(row=0, column=2, sticky=tk.W, padx=(8, 6))
+                    self.fluc_theta_ky_entry.grid(row=0, column=3, columnspan=1, sticky=tk.EW)
 
             # Check if FFT is selected in the sub-option
             if self.fluc_xaxis_var.get() == "fft":
