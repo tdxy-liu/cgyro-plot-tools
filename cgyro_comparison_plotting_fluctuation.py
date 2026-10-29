@@ -61,7 +61,7 @@ class FluctuationPlotting:
             value = float(var.get()) if var is not None else np.nan
         except (TypeError, ValueError, AttributeError):
             return None
-        if not np.isfinite(value) or abs(value) <= 1.0e-15:
+        if not np.isfinite(value) or value == 0.0:
             return None
         return value
 
@@ -95,7 +95,7 @@ class FluctuationPlotting:
             minimum = float(np.min(finite_values))
             maximum = float(np.max(finite_values))
             span = maximum - minimum
-            if not np.isfinite(span) or abs(span) <= 1.0e-15:
+            if not np.isfinite(span) or span == 0.0:
                 return profile, ""
             normalized = profile.copy()
             normalized[finite] = (profile[finite] - minimum) / span
@@ -108,7 +108,7 @@ class FluctuationPlotting:
         else:
             return profile, ""
 
-        if not np.isfinite(denominator) or abs(denominator) <= 1.0e-15:
+        if not np.isfinite(denominator) or denominator == 0.0:
             return profile, ""
         return profile / denominator, label
 

@@ -45,3 +45,13 @@ jobs:
         run: python cgyro_runtime_check.py
       - name: Unit and headless GUI tests
         run: python -m unittest discover -s tests -v
+      - name: Tk layout tests on Linux
+        if: runner.os == 'Linux'
+        env:
+          CGYRO_TEST_TK_LAYOUT: '1'
+        run: xvfb-run -a python -m unittest discover -s tests -p test_ui_option_layout.py -v
+      - name: Tk layout tests on Windows
+        if: runner.os == 'Windows'
+        env:
+          CGYRO_TEST_TK_LAYOUT: '1'
+        run: python -m unittest discover -s tests -p test_ui_option_layout.py -v

@@ -423,7 +423,35 @@ write_run_info() {
     echo "已保存运行信息: $RUN_INFO_FILE"
 }
 
+decode_run_info_value() {
+    # Decode the backslash quoting emitted by printf %q, without eval/source.
+    # Control-character ($'...') values are intentionally not valid run paths.
+    local encoded=$1 decoded="" char escaped=0 i
+    if [ "$encoded" = "''" ]; then
+        return 0
+    fi
+    for ((i = 0; i < ${#encoded}; i++)); do
+        char=${encoded:i:1}
+        if [ "$escaped" -eq 1 ]; then
+            decoded+="$char"
+            escaped=0
+        elif [ "$char" = '\' ]; then
+            escaped=1
+        elif [[ "$char" == [-[:alnum:]_./:@%+,=] ]]; then
+            decoded+="$char"
+        else
+            return 1
+        fi
+    done
+    [ "$escaped" -eq 0 ] || return 1
+    printf '%s' "$decoded"
+}
+
 load_run_info() {
+    local line key encoded decoded
+    local SAVED_REGION="" SAVED_LOCAL_DIR="" SAVED_LOCAL_COMPARE_DIR=""
+    local SAVED_LOCAL_RESULTS_DIR="" SAVED_REMOTE_RUN_DIR=""
+    local SAVED_SLURM_SCRIPT_NAME="" SAVED_TARGET_HOST="" SAVED_TARGET_PORT="" SAVED_CREATED_AT=""
     if [ -n "$REMOTE_RUN_DIR_OVERRIDE" ]; then
         REMOTE_RUN_DIR="$REMOTE_RUN_DIR_OVERRIDE"
         LOCAL_RESULTS_DIR="$LOCAL_DIR"
@@ -436,8 +464,28 @@ load_run_info() {
         return 1
     fi
 
-    # shellcheck source=/dev/null
-    . "$RUN_INFO_FILE"
+    while IFS= read -r line || [ -n "$line" ]; do
+        line=${line%$'\r'}
+        case "$line" in
+            ''|'#'*) continue ;;
+        esac
+        key=${line%%=*}
+        encoded=${line#*=}
+        case "$key" in
+            SAVED_REGION|SAVED_LOCAL_DIR|SAVED_LOCAL_COMPARE_DIR|SAVED_LOCAL_RESULTS_DIR|SAVED_REMOTE_RUN_DIR|SAVED_SLURM_SCRIPT_NAME|SAVED_TARGET_HOST|SAVED_TARGET_PORT|SAVED_CREATED_AT) ;;
+            *) echo "错误: 运行信息包含无效字段: $key"; return 1 ;;
+        esac
+        if ! decoded=$(decode_run_info_value "$encoded"); then
+            echo "错误: 运行信息字段的格式无效: $key"
+            return 1
+        fi
+        printf -v "$key" '%s' "$decoded"
+    done < "$RUN_INFO_FILE"
+
+    if [ -n "$SAVED_REGION" ] && [ "$SAVED_REGION" != "$REGION" ]; then
+        echo "错误: 运行信息地域与请求的地域不匹配。"
+        return 1
+    fi
 
     if [ -n "${SAVED_LOCAL_DIR:-}" ]; then
         LOCAL_DIR="$SAVED_LOCAL_DIR"
@@ -468,7 +516,7 @@ pull_remote_results() {
     mkdir -p "$LOCAL_RESULTS_DIR"
     local_results_compare_dir=$(cd "$LOCAL_RESULTS_DIR" && pwd -P)
 
-    rsync_args=(-avz --prune-empty-dirs -e "$RSYNC_SSH" --exclude="$SLURM_SCRIPT_NAME" --exclude='.remote_cgyro_timing_baseline' --exclude='.remote_cgyro_timing_baseline.restart')
+    rsync_args=(-avz --protect-args --prune-empty-dirs -e "$RSYNC_SSH" --exclude="$SLURM_SCRIPT_NAME" --exclude='.remote_cgyro_timing_baseline' --exclude='.remote_cgyro_timing_baseline.restart')
     if [ "$local_results_compare_dir" != "$LOCAL_COMPARE_DIR" ]; then
         rsync_args+=(--compare-dest="$LOCAL_COMPARE_DIR")
     fi
@@ -477,11 +525,11 @@ pull_remote_results() {
 }
 
 push_remote_files() {
-    run_with_retries "创建远端目录" ssh "${SSH_OPTS[@]}" "$TARGET_HOST" "mkdir -p ${REMOTE_RUN_DIR}" || return 1
-    run_with_retries "同步算例文件" rsync -avz -e "$RSYNC_SSH" --exclude='*.out' --exclude='*.log' --exclude='_results_*/' "${LOCAL_DIR}/" "${TARGET_HOST}:${REMOTE_RUN_DIR}/" || return 1
-    run_with_retries "同步Slurm脚本" rsync -avz -e "$RSYNC_SSH" "$SLURM_SCRIPT" "${TARGET_HOST}:${REMOTE_SLURM_SCRIPT}" || return 1
+    run_with_retries "创建远端目录" ssh "${SSH_OPTS[@]}" "$TARGET_HOST" "mkdir -p -- $(printf '%q' "$REMOTE_RUN_DIR")" || return 1
+    run_with_retries "同步算例文件" rsync -avz --protect-args -e "$RSYNC_SSH" --exclude='*.out' --exclude='*.log' --exclude='_results_*/' "${LOCAL_DIR}/" "${TARGET_HOST}:${REMOTE_RUN_DIR}/" || return 1
+    run_with_retries "同步Slurm脚本" rsync -avz --protect-args -e "$RSYNC_SSH" "$SLURM_SCRIPT" "${TARGET_HOST}:${REMOTE_SLURM_SCRIPT}" || return 1
     run_with_retries "更新远端Slurm脚本" update_remote_slurm_script || return 1
-    run_with_retries "设置远端Slurm脚本权限" ssh "${SSH_OPTS[@]}" "$TARGET_HOST" "chmod +x ${REMOTE_SLURM_SCRIPT}" || return 1
+    run_with_retries "设置远端Slurm脚本权限" ssh "${SSH_OPTS[@]}" "$TARGET_HOST" "chmod +x -- $(printf '%q' "$REMOTE_SLURM_SCRIPT")" || return 1
     if [ "$UPDATE_INPUT_CGYRO" -eq 1 ]; then
         run_with_retries "更新远端input.cgyro" update_remote_input_cgyro || return 1
     fi
@@ -500,7 +548,7 @@ submit_remote_job() {
         return 0
     fi
 
-    if ! submit_output=$(ssh "${SSH_OPTS[@]}" "$TARGET_HOST" "cd ${REMOTE_RUN_DIR} && sbatch ${SBATCH_ARGS} ./${SLURM_SCRIPT_NAME}" 2>&1); then
+    if ! submit_output=$(ssh "${SSH_OPTS[@]}" "$TARGET_HOST" "cd -- $(printf '%q' "$REMOTE_RUN_DIR") && sbatch ${SBATCH_ARGS} $(printf '%q' "./${SLURM_SCRIPT_NAME}")" 2>&1); then
         existing_job_id=$(query_existing_job_id_by_name)
         if [ -n "$existing_job_id" ]; then
             echo "提交连接异常，但已找到同名任务: $existing_job_id" >&2
@@ -619,7 +667,7 @@ update_remote_slurm_script() {
         return 0
     fi
 
-    ssh "${SSH_OPTS[@]}" "$TARGET_HOST" "REMOTE_SLURM_SCRIPT='${REMOTE_SLURM_SCRIPT}' MPI_COUNT='${MPI_COUNT}' NODE_COUNT='${NODE_COUNT}' bash -s" <<'REMOTE_SCRIPT'
+    ssh "${SSH_OPTS[@]}" "$TARGET_HOST" "REMOTE_SLURM_SCRIPT=$(printf '%q' "$REMOTE_SLURM_SCRIPT") MPI_COUNT='${MPI_COUNT}' NODE_COUNT='${NODE_COUNT}' bash -s" <<'REMOTE_SCRIPT'
 set -e
 
 if [ ! -f "$REMOTE_SLURM_SCRIPT" ]; then
@@ -659,7 +707,7 @@ REMOTE_SCRIPT
 }
 
 update_remote_input_cgyro() {
-    ssh "${SSH_OPTS[@]}" "$TARGET_HOST" "REMOTE_RUN_DIR='${REMOTE_RUN_DIR}' MPI_COUNT='${MPI_COUNT}' bash -s" <<'REMOTE_SCRIPT'
+    ssh "${SSH_OPTS[@]}" "$TARGET_HOST" "REMOTE_RUN_DIR=$(printf '%q' "$REMOTE_RUN_DIR") MPI_COUNT='${MPI_COUNT}' bash -s" <<'REMOTE_SCRIPT'
 set -e
 
 gcd() {
@@ -735,7 +783,7 @@ REMOTE_SCRIPT
 }
 
 report_remote_timing_prediction() {
-    ssh "${SSH_OPTS[@]}" "$TARGET_HOST" "REMOTE_RUN_DIR='${REMOTE_RUN_DIR}' bash -s" <<'REMOTE_SCRIPT'
+    ssh "${SSH_OPTS[@]}" "$TARGET_HOST" "REMOTE_RUN_DIR=$(printf '%q' "$REMOTE_RUN_DIR") bash -s" <<'REMOTE_SCRIPT'
 set -e
 
 BASELINE_FILE="${REMOTE_RUN_DIR}/.remote_cgyro_timing_baseline"

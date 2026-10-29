@@ -9,6 +9,11 @@ import sys
 from tkinter import messagebox
 from matplotlib.colors import LinearSegmentedColormap, SymLogNorm, TwoSlopeNorm
 
+try:
+    from cgyro_fullt_compressed_bridge import open_fullt
+except ImportError:
+    from .cgyro_fullt_compressed_bridge import open_fullt
+
 FULLT_DIVERGING_CMAP = LinearSegmentedColormap.from_list(
     'fullt_blue_white_red_suppressed_weak',
     [
@@ -2509,7 +2514,6 @@ class EnergyPlotting:
 
         # Resolve the format before any legacy cache/fallback. Only requested
         # committed blocks are decoded; integrity errors must propagate.
-        from cgyro_fullt_compressed_bridge import open_fullt
         packed = open_fullt(case_token, file_suffix, data)
         if packed is not None:
             with packed:
@@ -3206,7 +3210,6 @@ class EnergyPlotting:
             print(f"Cannot load {diag_name} trace for {label}: missing case directory.")
             return None
 
-        from cgyro_fullt_compressed_bridge import open_fullt
         packed = open_fullt(case_dir, file_suffix, data)
         if packed is not None:
             with packed:

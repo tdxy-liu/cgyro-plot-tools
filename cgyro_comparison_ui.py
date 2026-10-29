@@ -9,12 +9,18 @@ import sys
 import subprocess
 import tempfile
 import threading
+import queue
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog, font as tkfont
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import numpy as np
+
+try:
+    from cgyro_io import write_json_atomic
+except ImportError:
+    from .cgyro_io import write_json_atomic
 
 try:
     from cgyro_comparison_bootstrap import (
@@ -249,6 +255,9 @@ class CgyroUiMixin:
         self._manual_pager_active = False
         self._manual_pager_label = "Page"
         self._update_check_in_progress = False
+        self._git_update_in_progress = False
+        self._update_events = queue.Queue()
+        self._update_poll_id = None
         self._update_check_menu = None
         self._user_guide_window = None
         self._user_guide_text = None
@@ -836,7 +845,7 @@ class CgyroUiMixin:
             initial_value = float(self.fluc_normalization_custom_value_var.get())
         except (AttributeError, TypeError, ValueError):
             initial_value = 1.0
-        if not np.isfinite(initial_value) or abs(initial_value) <= 1.0e-15:
+        if not np.isfinite(initial_value) or initial_value == 0.0:
             initial_value = 1.0
 
         value = simpledialog.askfloat(
@@ -849,7 +858,7 @@ class CgyroUiMixin:
             self.fluc_normalization_var.set(previous_mode)
             self.update_options()
             return
-        if not np.isfinite(value) or abs(value) <= 1.0e-15:
+        if not np.isfinite(value) or value == 0.0:
             messagebox.showerror(
                 "Custom normalization",
                 "The custom value must be finite and non-zero.",
@@ -1242,7 +1251,7 @@ class CgyroUiMixin:
         self._start_update_check(silent=False)
 
     def _start_update_check(self, silent):
-        if self._update_check_in_progress:
+        if self._update_check_in_progress or self._git_update_in_progress:
             if not silent:
                 messagebox.showinfo(
                     "Check for Updates",
@@ -1255,6 +1264,7 @@ class CgyroUiMixin:
         if self._update_check_menu is not None:
             self._update_check_menu.entryconfig("Check for Updates...", state="disabled")
 
+        self._schedule_update_poll()
         worker = threading.Thread(
             target=self._update_check_worker,
             args=(silent,),
@@ -1277,11 +1287,24 @@ class CgyroUiMixin:
             self._post_update_check_result(silent, result, None)
 
     def _post_update_check_result(self, silent, result, error):
-        """Hand the worker result back to Tk unless the window was closed."""
+        """Workers only enqueue Python values; all Tk calls stay on its owner thread."""
+        self._update_events.put((self._finish_update_check, (silent, result, error)))
+
+    def _schedule_update_poll(self):
+        if self._update_poll_id is None:
+            self._update_poll_id = self.root.after(50, self._poll_update_events)
+
+    def _poll_update_events(self):
+        """Drain completed network operations on the Tk event loop."""
+        self._update_poll_id = None
         try:
-            self.root.after(0, self._finish_update_check, silent, result, error)
-        except tk.TclError:
+            while True:
+                callback, args = self._update_events.get_nowait()
+                callback(*args)
+        except queue.Empty:
             pass
+        if self._update_check_in_progress or self._git_update_in_progress:
+            self._schedule_update_poll()
 
     def _finish_update_check(self, silent, result, error):
         self._update_check_in_progress = False
@@ -1315,6 +1338,8 @@ class CgyroUiMixin:
 
     def _pull_update_from_git(self, latest_version):
         """Fast-forward the current Git checkout after explicit user approval."""
+        if self._git_update_in_progress:
+            return
         app_dir = os.path.dirname(os.path.abspath(__file__))
         try:
             auto_workspace_path = self._save_auto_workspace()
@@ -1322,6 +1347,19 @@ class CgyroUiMixin:
             self._show_manual_git_update(app_dir, f"Could not save the current workspace before updating: {exc}")
             return
 
+        self._git_update_in_progress = True
+        self.status_var.set("Downloading update; the current workspace has been saved...")
+        if self._update_check_menu is not None:
+            self._update_check_menu.entryconfig("Check for Updates...", state="disabled")
+        self._schedule_update_poll()
+        threading.Thread(
+            target=self._git_update_worker,
+            args=(app_dir, auto_workspace_path, latest_version),
+            name="cgyro-git-update", daemon=True,
+        ).start()
+
+    def _git_update_worker(self, app_dir, workspace_path, latest_version):
+        result, error = None, None
         try:
             result = update_from_git(
                 repo_dir=app_dir,
@@ -1330,19 +1368,31 @@ class CgyroUiMixin:
                 timeout=60.0,
                 proxy_config=load_update_proxy_config(),
             )
-        except (GitUpdateError, UpdateConnectionError, OSError, ValueError, subprocess.SubprocessError) as exc:
-            self._remove_auto_workspace(auto_workspace_path)
-            self._show_manual_git_update(app_dir, f"The Git update failed: {exc}")
+        except Exception as exc:
+            # Unexpected parser/process failures must also release the busy state.
+            error = str(exc)
+        self._update_events.put((self._finish_git_update, (
+            app_dir, workspace_path, latest_version, result, error,
+        )))
+
+    def _finish_git_update(self, app_dir, workspace_path, latest_version, result, error):
+        self._git_update_in_progress = False
+        if self._update_check_menu is not None:
+            self._update_check_menu.entryconfig("Check for Updates...", state="normal")
+        if error:
+            self._remove_auto_workspace(workspace_path)
+            self.status_var.set("Update failed; current workspace retained.")
+            self._show_manual_git_update(app_dir, f"The Git update failed: {error}")
             return
 
         try:
-            self._restart_after_update(auto_workspace_path, latest_version)
+            self._restart_after_update(workspace_path, latest_version)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            self._remove_auto_workspace(auto_workspace_path)
             messagebox.showerror(
                 "Update Restart Failed",
                 f"Version {latest_version} was downloaded, but the application could not restart automatically.\n\n"
-                f"{exc}\n\nPlease restart the application manually.\n\n{result.output}",
+                f"{exc}\n\nPlease restart the application manually.\n"
+                f"The saved workspace is available at:\n{workspace_path}\n\n{result.output}",
                 parent=self.root,
             )
 
@@ -2693,6 +2743,12 @@ class CgyroUiMixin:
         min_fs=5.8,
     ):
         """Render formula notes in a wide, unclipped axes with sane scroll extents."""
+        lines = tuple(lines)
+        render_key = (lines, float(fig.dpi), base_fig_w, min_fig_h, title_fs,
+                      line_fs, title_dy, line_dy, frac_fs, frac_dy, width_chars,
+                      min_fs, id(widget))
+        if getattr(canvas, "_formula_render_key", None) == render_key:
+            return
         def line_style(index, text):
             if index == 0:
                 return title_fs, title_dy
@@ -2782,6 +2838,7 @@ class CgyroUiMixin:
             pass
 
         canvas.draw_idle()
+        canvas._formula_render_key = render_key
 
     def _render_flux_kx_formula_math(self):
         """Render math notes for the estimated `Flux vs kx` mode."""
@@ -4176,12 +4233,8 @@ class CgyroUiMixin:
 
     @staticmethod
     def _write_workspace_file(out_path, workspace):
-        """Write a workspace JSON file, creating its parent directory if needed."""
-        parent_dir = os.path.dirname(os.path.abspath(out_path))
-        if parent_dir:
-            os.makedirs(parent_dir, exist_ok=True)
-        with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(workspace, f, indent=2)
+        """Replace a saved workspace only when the entire JSON write succeeds."""
+        write_json_atomic(out_path, workspace)
 
     def _restore_auto_workspace(self):
         """Restore the workspace passed by the update-restarted process."""
@@ -4195,12 +4248,11 @@ class CgyroUiMixin:
         except Exception as exc:
             print(f"Failed to restore the workspace after update: {exc}")
             result = None
-        finally:
-            self._remove_auto_workspace(path)
-
         if result is None:
-            self.status_var.set("Updated successfully, but the previous workspace could not be restored.")
+            self.status_var.set(f"Workspace restore failed; recovery file retained: {path}")
             return
+
+        self._remove_auto_workspace(path)
 
         loaded_count = result["loaded_count"]
         failed = result["failed"]
@@ -4261,36 +4313,67 @@ class CgyroUiMixin:
                 messagebox.showerror("Load workspace", "Invalid workspace: expected a JSON object.")
             return None
 
-        cases = workspace.get("cases", [])
-        if not isinstance(cases, list):
+        cases = workspace.get("cases")
+        selected_cases = workspace.get("selected_cases", [])
+        if (not isinstance(cases, list) or not isinstance(selected_cases, list)
+                or not isinstance(workspace.get("state", {}), dict)):
             if show_message:
-                messagebox.showerror("Load workspace", "Invalid workspace: missing case list.")
+                messagebox.showerror("Load workspace", "Invalid workspace: check cases, selected_cases, and state.")
             return None
 
-        self.cases.clear()
-        self._locked_case_names = []
-        self._fluc_advanced_case_values.clear()
-        self._fluc_advanced_seeded = False
-        self.case_listbox.delete(0, tk.END)
-
-        loaded_count = 0
+        # Stage reads before mutating the live workspace. A disconnected drive
+        # or malformed file must not discard the user's currently loaded cases.
+        staged = {}
         failed = []
+        workspace_dir = os.path.dirname(os.path.abspath(in_path))
         for entry in cases:
             if isinstance(entry, dict):
                 case_dir = entry.get("path", "")
+                case_name = entry.get("name", "")
             else:
                 # Backward-compatible path-only entries are accepted for
                 # hand-written or older workspace files.
                 case_dir = str(entry)
-            case_dir = str(case_dir).strip()
+                case_name = ""
+            case_dir = str(case_dir or "").strip()
             if not case_dir:
                 failed.append("(empty path)")
                 continue
-            if self._load_case_from_dir(case_dir, silent=True):
-                loaded_count += 1
-            else:
+            case_dir = os.path.expanduser(case_dir)
+            if not os.path.isabs(case_dir):
+                case_dir = os.path.join(workspace_dir, case_dir)
+            case_dir = os.path.abspath(case_dir).replace("\\", "/").rstrip("/") + "/"
+            case_name = str(case_name or os.path.basename(os.path.dirname(case_dir)))
+            base_name = case_name
+            suffix = 1
+            while case_name in staged:
+                case_name = f"{base_name}_{suffix}"
+                suffix += 1
+            try:
+                try:
+                    data = self._instantiate_cgyrodata_light(case_dir)
+                except Exception:
+                    data = cgyrodata_plot(case_dir)
+                staged[case_name] = data
+            except Exception as exc:
+                print(f"Failed to load workspace case {case_name}: {exc}")
                 failed.append(case_dir)
 
+        if cases and not staged:
+            if show_message:
+                messagebox.showerror("Load workspace", "No saved cases could be loaded. The current workspace was retained.")
+            return None
+
+        self._stop_animation()
+        self.cases = staged
+        self._locked_case_names = []
+        self._fluc_advanced_case_values.clear()
+        self._fluc_advanced_seeded = False
+        self.case_listbox.delete(0, tk.END)
+        for case_name in staged:
+            self.case_listbox.insert(tk.END, case_name)
+        loaded_count = len(staged)
+        self.clear_plot()
         self._update_species_list()
         self._restore_workspace_state(workspace.get("state", {}))
         try:
@@ -4298,7 +4381,7 @@ class CgyroUiMixin:
         except Exception:
             pass
 
-        selected = set(str(x) for x in workspace.get("selected_cases", []))
+        selected = set(str(x) for x in selected_cases)
         if selected:
             self.case_listbox.selection_clear(0, tk.END)
             for i in range(self.case_listbox.size()):
@@ -4327,6 +4410,7 @@ class CgyroUiMixin:
             "loaded_count": loaded_count,
             "failed": failed,
         }
+        self._refresh_case_summary("Loaded")
         if show_message:
             msg = f"Loaded {loaded_count} case(s) from workspace."
             if failed:

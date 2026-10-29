@@ -117,33 +117,22 @@ class OtherPlotting:
 
     def _plot_other_rcorr_phi(self, data, label, t_indices, t_start, t_end):
         """Plot radial auto-correlation for selected field and theta index."""
-        if not hasattr(data, 'kxky_select'):
-            print(f"rcorr_phi is not supported for this case object: {label}")
-            return
-
         try:
             theta_idx = int(str(self.others_rcorr_theta_var.get()).strip())
         except Exception:
             theta_idx = -1
 
         field_name = str(self.others_rcorr_field_var.get()).strip().lower()
-        field_idx = 0
-        if field_name == "apar":
-            field_idx = 1
-        elif field_name == "bpar":
-            field_idx = 2
-
-        if not hasattr(data, 'kxky_phi'):
-            if not self._ensure_bigfield_loaded(data, label):
-                return
-
-        try:
-            # f shape: [n_radial-1, n_ky, n_t]
-            f, ft = data.kxky_select(theta_idx, field_idx, 'phi', 0)
-            f = np.asarray(f)
-        except Exception as e:
-            print(f"Failed to evaluate rcorr_phi source for {label}: {e}")
+        # Read only the requested field. getbigfield() loads all moments and
+        # could still omit Apar/Bpar after a prior Phi-only plotting action.
+        field = self._load_named_kxky_complex(data, label, field_name)
+        if field is None:
             return
+        theta_idx = field.shape[1] // 2 if theta_idx < 0 else theta_idx
+        if not 0 <= theta_idx < field.shape[1]:
+            print(f"Invalid theta index for rcorr_phi in {label}: {theta_idx}")
+            return
+        f = field[1:, theta_idx, :, :]
 
         if f.ndim != 3:
             print(f"Unexpected rcorr_phi source shape for {label}: {f.shape}")
@@ -235,9 +224,7 @@ class OtherPlotting:
             except Exception as e:
                 print(f"Warning: rcorr_phi fit failed for {label}: {e}")
 
-        ft_txt = str(ft).strip() if ft is not None else r"\phi"
-        if not ft_txt:
-            ft_txt = r"\phi"
+        ft_txt = {"phi": r"\phi", "apar": r"A_\parallel", "bpar": r"B_\parallel"}.get(field_name, r"\phi")
         self.ax.set_xlabel(r'$\Delta r/\rho_s$')
         self.ax.set_ylabel(r'$C_{' + ft_txt + r'}(\Delta r)$')
         self.ax.set_ylim(-1.0, 1.0)

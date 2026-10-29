@@ -204,6 +204,7 @@ class FluxPlotting:
                             ky_plot,
                             t_plot,
                             z_t_ky,
+                            axis=ax_i,
                         )
 
                 try:

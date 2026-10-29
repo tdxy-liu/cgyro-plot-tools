@@ -8,6 +8,7 @@ Provides:
 """
 
 import csv
+import copy
 import datetime
 import json
 import os
@@ -18,9 +19,18 @@ from tkinter import filedialog, messagebox
 import numpy as np
 
 try:
+    from cgyro_io import atomic_text_file
+except ImportError:
+    from .cgyro_io import atomic_text_file
+
+try:
     from cgyro_comparison_bootstrap import default_share_dir
+    from cgyro_fullt_compressed_bridge import open_fullt
+    from cgyro_fullt_reader import export_origin
 except ImportError:
     from .cgyro_comparison_bootstrap import default_share_dir
+    from .cgyro_fullt_compressed_bridge import open_fullt
+    from .cgyro_fullt_reader import export_origin
 
 
 class CgyroDataExportMixin:
@@ -41,7 +51,7 @@ class CgyroDataExportMixin:
         """Reset cached x-y-z datasets for the next plot action."""
         self._current_plot_xyz_datasets = []
 
-    def _record_current_plot_xyz_dataset(self, label, x, y, z):
+    def _record_current_plot_xyz_dataset(self, label, x, y, z, *, axis=None):
         """
         Cache one plotted dataset as x-y-z columns.
 
@@ -53,9 +63,9 @@ class CgyroDataExportMixin:
         # routines can call this hook while they still have clean numerical
         # axes, making Data -> Save current plot data reproduce the actual map.
         try:
-            x_arr = np.asarray(x, dtype=float)
-            y_arr = np.asarray(y, dtype=float)
-            z_arr = np.ma.filled(np.asarray(z, dtype=float), np.nan)
+            x_arr = np.ma.asarray(x, dtype=float).filled(np.nan)
+            y_arr = np.ma.asarray(y, dtype=float).filled(np.nan)
+            z_arr = np.ma.asarray(z, dtype=float).filled(np.nan)
         except Exception:
             return
 
@@ -70,6 +80,7 @@ class CgyroDataExportMixin:
             "x": x_arr.copy(),
             "y": y_arr.copy(),
             "z": np.asarray(z_arr, dtype=float).copy(),
+            "axis": axis if axis is not None else getattr(self, "ax", None),
         })
 
     def save_current_plot_data(self):
@@ -92,7 +103,7 @@ class CgyroDataExportMixin:
             return
 
         try:
-            with open(out_path, "w", encoding="utf-8") as f:
+            with atomic_text_file(out_path) as f:
                 self._write_current_plot_xyz_file(f, datasets)
             messagebox.showinfo("Save current plot data", f"Plot data saved:\n{out_path}")
         except Exception as e:
@@ -133,6 +144,7 @@ class CgyroDataExportMixin:
 
                 for index, (label, x, y, z) in enumerate(datasets, start=1):
                     safe_label = self._export_filename_label(label)
+                    csv_label = self._spreadsheet_safe_label(label)
                     filename = "dataset_{:03d}_{}.csv".format(index, safe_label)
                     path = os.path.join(export_dir, filename)
                     n = min(len(x), len(y), len(z))
@@ -142,7 +154,7 @@ class CgyroDataExportMixin:
                         for row_index in range(n):
                             row = [x[row_index], y[row_index], z[row_index]]
                             writer.writerow(row)
-                            combined_writer.writerow([label, *row])
+                            combined_writer.writerow([csv_label, *row])
 
                     dataset_records.append({
                         "label": str(label),
@@ -167,6 +179,12 @@ class CgyroDataExportMixin:
                 "Failed to export current plot data:\n{}".format(exc),
                 parent=getattr(self, "root", None),
             )
+
+    @staticmethod
+    def _spreadsheet_safe_label(label):
+        """Keep case labels as CSV text instead of executable spreadsheet formulas."""
+        text = str(label)
+        return "'" + text if text.lstrip().startswith(("=", "+", "-", "@")) else text
 
     @staticmethod
     def _export_filename_label(label):
@@ -224,11 +242,25 @@ class CgyroDataExportMixin:
             metadata["workspace_state"] = self._get_workspace_state()
         except Exception:
             pass
+        # Controls can change without replotting. Describe the plotted data,
+        # rather than whatever settings happen to be selected at export time.
+        context = getattr(self, "_current_plot_context", None)
+        if isinstance(context, dict):
+            metadata.update(copy.deepcopy(context))
         return metadata
+
+    def _capture_current_plot_context(self, plot_type, display_plot_type, case_names):
+        self._current_plot_context = {
+            "plot_type": str(plot_type),
+            "display_plot_type": str(display_plot_type),
+            "cases": list(case_names),
+            "workspace_state": copy.deepcopy(self._get_workspace_state()),
+        }
 
     def _collect_current_plot_xyz_datasets(self):
         """Collect cached 2D datasets plus visible 1D line/image artists."""
         datasets = []
+        cached_axes = set()
 
         # Prefer explicitly cached datasets because they preserve the physical
         # axes chosen by the plotting code.  Artist fallback below is only for
@@ -242,12 +274,17 @@ class CgyroDataExportMixin:
             if flat is not None:
                 label, x, y, z = item.get("label", "dataset"), flat[0], flat[1], flat[2]
                 datasets.append((str(label), x, y, z))
+                axis = item.get("axis")
+                if axis is not None:
+                    cached_axes.add(axis)
 
         fig = getattr(self, "fig", None)
         if fig is None:
             return datasets
 
         for ax_idx, ax in enumerate(getattr(fig, "axes", [])):
+            if not ax.get_visible() or ax.get_label() == "<colorbar>" or hasattr(ax, "_colorbar"):
+                continue
             ax_title = ""
             try:
                 ax_title = ax.get_title().strip()
@@ -255,9 +292,11 @@ class CgyroDataExportMixin:
                 ax_title = ""
 
             for line_idx, line in enumerate(ax.get_lines()):
+                if not line.get_visible():
+                    continue
                 try:
-                    x = np.asarray(line.get_xdata(), dtype=float).reshape(-1)
-                    y = np.asarray(line.get_ydata(), dtype=float).reshape(-1)
+                    x = np.ma.asarray(line.get_xdata(), dtype=float).filled(np.nan).reshape(-1)
+                    y = np.ma.asarray(line.get_ydata(), dtype=float).filled(np.nan).reshape(-1)
                 except Exception:
                     continue
                 n = min(x.size, y.size)
@@ -272,8 +311,10 @@ class CgyroDataExportMixin:
                 datasets.append((str(label), x[:n], y[:n], z))
 
             for img_idx, img in enumerate(getattr(ax, "images", [])):
+                if ax in cached_axes or not img.get_visible():
+                    continue
                 try:
-                    z_img = np.ma.filled(np.asarray(img.get_array(), dtype=float), np.nan)
+                    z_img = np.ma.asarray(img.get_array(), dtype=float).filled(np.nan)
                 except Exception:
                     continue
                 if z_img.ndim != 2 or z_img.size <= 0:
@@ -285,6 +326,8 @@ class CgyroDataExportMixin:
                     ymin, ymax = 0.0, float(z_img.shape[0] - 1)
                 x = self._image_axis_centers(xmin, xmax, z_img.shape[1])
                 y = self._image_axis_centers(ymin, ymax, z_img.shape[0])
+                if img.origin == "upper":
+                    y = y[::-1]
                 flat = self._flatten_xyz_dataset(x, y, z_img)
                 if flat is None:
                     continue
@@ -306,9 +349,9 @@ class CgyroDataExportMixin:
     def _flatten_xyz_dataset(x, y, z):
         """Normalize 1D or 2D x-y-z data to three equal-length 1D arrays."""
         try:
-            x_arr = np.asarray(x, dtype=float)
-            y_arr = np.asarray(y, dtype=float)
-            z_arr = np.ma.filled(np.asarray(z, dtype=float), np.nan)
+            x_arr = np.ma.asarray(x, dtype=float).filled(np.nan)
+            y_arr = np.ma.asarray(y, dtype=float).filled(np.nan)
+            z_arr = np.ma.asarray(z, dtype=float).filled(np.nan)
         except Exception:
             return None
 
@@ -434,10 +477,12 @@ class CgyroDataExportMixin:
                 failed_cases.append(f"{case_name} (no bin.cgyro.* files)")
                 continue
 
-            case_out = os.path.join(out_root, f"{self._sanitize_name(case_name)}_readable")
-            os.makedirs(case_out, exist_ok=True)
-
-            n_files, n_sheets = self._export_case_bin_files(data, case_name, suffixes, case_out)
+            try:
+                case_out = self._new_readable_export_dir(out_root, case_name)
+                n_files, n_sheets = self._export_case_bin_files(data, case_name, suffixes, case_out)
+            except Exception as exc:
+                failed_cases.append(f"{case_name} ({exc})")
+                continue
             total_cases += 1
             total_files += int(n_files)
             total_sheets += int(n_sheets)
@@ -469,6 +514,20 @@ class CgyroDataExportMixin:
             return os.path.abspath(p.rstrip("/\\"))
         except Exception:
             return None
+
+    @staticmethod
+    def _new_readable_export_dir(out_root, case_name):
+        """Never overwrite a previous export or a case with the same sanitized name."""
+        stem = CgyroDataExportMixin._sanitize_name(case_name) + "_readable"
+        index = 1
+        while True:
+            name = stem if index == 1 else f"{stem}_{index}"
+            path = os.path.join(out_root, name)
+            try:
+                os.mkdir(path)
+                return path
+            except FileExistsError:
+                index += 1
 
     @staticmethod
     def _sanitize_name(text):
@@ -535,10 +594,8 @@ class CgyroDataExportMixin:
         flat, first-row-header table.
         """
         if suffix in (".cgyro.fullt", ".cgyro.fullt_asym"):
-            from cgyro_fullt_compressed_bridge import open_fullt
             packed = open_fullt(self._resolve_case_dir_for_export(data), suffix, data)
             if packed is not None:
-                from cgyro_fullt_reader import export_origin
                 out_name = self._sanitize_name(suffix.lstrip(".")) + ".txt"
                 with packed:
                     export_origin(packed, os.path.join(case_out, out_name))
@@ -1129,30 +1186,35 @@ class CgyroDataExportMixin:
         equilibrium_path = os.path.join(str(case_dir), "out.cgyro.equilibrium")
         if os.path.isfile(equilibrium_path):
             try:
-                equilibrium = np.loadtxt(equilibrium_path, dtype=float, ndmin=1)
+                equilibrium = np.loadtxt(equilibrium_path, dtype=float, ndmin=1).reshape(-1)
                 if equilibrium.size > 0:
                     flag = float(equilibrium[-1])
                     flag_int = int(round(flag))
                     if flag_int in (0, 1) and abs(flag - flag_int) <= 1.0e-8:
                         return np.dtype("float64" if flag_int == 1 else "float32")
-            except (OSError, ValueError):
+            except (OSError, TypeError, ValueError, OverflowError):
                 pass
 
-        dtype = getattr(data, "BYTE", None)
+        flag = getattr(data, "hiprec_flag", None)
         try:
-            dt = np.dtype(dtype)
-            if dt.kind == "f" and dt.itemsize in (4, 8):
-                return dt
-        except (TypeError, ValueError):
+            flag = float(np.asarray(flag).reshape(-1)[0]) if flag is not None else None
+            if flag in (0.0, 1.0):
+                return np.dtype("float64" if flag == 1.0 else "float32")
+        except (IndexError, TypeError, ValueError):
             pass
 
         data_module = sys.modules.get(type(data).__module__)
-        try:
-            dt = np.dtype(getattr(data_module, "BYTE", None))
-            if dt.kind == "f" and dt.itemsize in (4, 8):
-                return dt
-        except (TypeError, ValueError):
-            pass
+        for dtype in (getattr(data, "BYTE", None), getattr(data_module, "BYTE", None)):
+            # np.dtype(None) means float64, not 'no metadata'. Skip it so
+            # lightweight/older readers reach the correct float32 default.
+            if dtype is None:
+                continue
+            try:
+                dt = np.dtype(dtype)
+                if dt.kind == "f" and dt.itemsize in (4, 8):
+                    return dt
+            except (TypeError, ValueError):
+                continue
 
         return np.dtype("float32")
 

@@ -4,9 +4,30 @@ Auto-extracted from cgyro_comparison_plotting.py during refactor.
 """
 
 import numpy as np
-import os
 
 class FftPlotting:
+    @staticmethod
+    def _prepare_fft_samples(field, time_axis, time_indices):
+        """Align payload/time lengths and reject grids for which FFT bins are invalid."""
+        values = np.asarray(field)
+        times = np.asarray(time_axis, dtype=float).reshape(-1)
+        count = min(values.shape[-1], times.size)
+        indices = np.asarray(time_indices, dtype=int).reshape(-1)
+        if indices.size == 0:
+            indices = np.arange(count)
+        indices = indices[(indices >= 0) & (indices < count)]
+        selected_times = times[indices]
+        if selected_times.size < 2:
+            raise ValueError("Not enough aligned time points for FFT")
+        spacing = np.diff(selected_times)
+        if not np.all(np.isfinite(selected_times)) or np.any(spacing <= 0):
+            raise ValueError("FFT requires finite, strictly increasing time samples")
+        dt = float(np.mean(spacing))
+        tolerance = np.finfo(float).eps * max(1.0, float(np.max(np.abs(selected_times)))) * 8
+        if not np.allclose(spacing, dt, rtol=1e-4, atol=tolerance):
+            raise ValueError("FFT requires uniformly spaced time samples; resample irregular output first")
+        return values[..., indices], selected_times, dt
+
     def _plot_fluctuation_fft(self, data, label, plot_type, t_indices):
         """Render FFT spectra from fluctuation time traces in selected FFT mode."""
         # Determine field name
@@ -28,45 +49,14 @@ class FftPlotting:
             return
         # field_t_all shape: [n_radial, n_ky, nt]
         
-        # Slice time if needed
-        if len(t_indices) > 0:
-            field_t_all = field_t_all[..., t_indices]
-            t_array = data.t[t_indices]
-        else:
-            t_array = data.t
-        
-        nt_slice = len(t_array)
-        if nt_slice < 2:
-            print("Not enough time points for FFT")
-            return
-
-        # Perform FFT along time axis
-        # omega = 2*pi*f
-        dt_arr = np.diff(np.asarray(t_array, dtype=float))
-        valid_dt = dt_arr[np.abs(dt_arr) > 0]
-        if valid_dt.size == 0:
-            print("Invalid or zero time spacing for FFT")
-            return
-        dt = float(np.mean(np.abs(valid_dt)))
-        # Parse out.cgyro.info for ion direction to ensure correctness as per user request
-        # Default to -1.0 (Standard CGYRO e^-iwt vs FFT e^-i2pift)
-        # The sign convention is kept explicit because CGYRO's reported omega
-        # convention and NumPy's FFT convention point in opposite directions.
-        freq_mult = -1.0
-        
         try:
-            data_dir = getattr(data, 'dir', getattr(data, 'path', ''))
-            if data_dir:
-                info_path = os.path.join(data_dir, 'out.cgyro.info')
-                if os.path.exists(info_path):
-                    with open(info_path, 'r') as f:
-                        info_content = f.read()
-                        if "Ion direction: omega > 0" in info_content:
-                            freq_mult = -1.0
-                        elif "Ion direction: omega < 0" in info_content:
-                            freq_mult = -1.0
-        except Exception as e:
-            print(f"Warning checking info file: {e}")
+            field_t_all, t_array, dt = self._prepare_fft_samples(field_t_all, data.t, t_indices)
+        except ValueError as exc:
+            print(f"Cannot compute FFT for {label}: {exc}")
+            return
+        nt_slice = len(t_array)
+        # CGYRO exp(-i*omega*t) and NumPy's forward FFT use opposite signs.
+        freq_mult = -1.0
 
         # Standard FFT freq first
         omega = np.fft.fftfreq(nt_slice, d=dt) * 2 * np.pi
@@ -222,6 +212,7 @@ class FftPlotting:
                     ky_grid,
                     omega_grid,
                     mag_plot1,
+                    axis=ax1,
                 )
             
             cs2 = ax2.contourf(ky_grid, omega_grid, mag_plot2, levels=50, cmap=self._get_2d_contour_cmap())
@@ -236,6 +227,7 @@ class FftPlotting:
                     ky_grid,
                     omega_grid,
                     mag_plot2,
+                    axis=ax2,
                 )
             
             # Overlay Linear Frequency from exported omega/gamma-vs-ky file (same as Zonal path logic).
@@ -379,6 +371,7 @@ class FftPlotting:
                     kx_grid,
                     omega_grid_kx,
                     mag_plot1,
+                    axis=ax1,
                 )
             
             cs2 = ax2.contourf(kx_grid, omega_grid_kx, mag_plot2, levels=50, cmap=self._get_2d_contour_cmap())
@@ -392,6 +385,7 @@ class FftPlotting:
                     kx_grid,
                     omega_grid_kx,
                     mag_plot2,
+                    axis=ax2,
                 )
             
             self.ax = ax2

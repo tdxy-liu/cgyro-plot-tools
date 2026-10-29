@@ -6,11 +6,32 @@ import os
 import re
 import traceback
 import difflib
+from functools import lru_cache
 from tkinter import messagebox
 
 import matplotlib as mpl
 from matplotlib import font_manager as mpl_font_manager
 import numpy as np
+
+
+@lru_cache(maxsize=256)
+def _cached_input_scalars(path, signature):
+    """Bounded metadata cache; the stat signature changes when a case input changes."""
+    scalars = {}
+    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            text = line.split("#", 1)[0].split("!", 1)[0].strip()
+            match = re.fullmatch(
+                r"([A-Za-z][A-Za-z0-9_]*)\s*(?:=\s*|\s+)([-+0-9.eEdD]+)\s*", text,
+            )
+            if match:
+                try:
+                    value = float(match[2].replace("D", "E").replace("d", "e"))
+                except ValueError:
+                    continue
+                if np.isfinite(value):
+                    scalars[match[1].upper()] = value
+    return scalars
 
 LINE_COLOR_PALETTE = [
     "#F14040",
@@ -284,43 +305,16 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
 
     @staticmethod
     def _read_input_cgyro_scalars(case_dir):
-        """
-        Parse scalar assignments from input.cgyro into a dict.
-
-        Supports common forms such as:
-          KEY = value
-          KEY value
-        and ignores comments after `#`.
-        """
-        scalars = {}
+        """Read scalar metadata once per input-file revision, not per GUI refresh."""
         if not case_dir:
-            return scalars
-        path = os.path.join(case_dir, 'input.cgyro')
-        if not os.path.isfile(path):
-            return scalars
-
-        try:
-            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                for line in f:
-                    s = line.split('#', 1)[0].strip()
-                    if not s:
-                        continue
-                    m = re.match(
-                        r'^([A-Za-z][A-Za-z0-9_]*)\s*(?:=\s*|\s+)([-+0-9.eEdD]+)\s*$',
-                        s
-                    )
-                    if not m:
-                        continue
-                    key = m.group(1).upper()
-                    val_txt = m.group(2).replace('D', 'E').replace('d', 'e')
-                    try:
-                        val = float(val_txt)
-                    except Exception:
-                        continue
-                    scalars[key] = val
-        except Exception:
             return {}
-        return scalars
+        path = os.path.abspath(os.path.join(case_dir, "input.cgyro"))
+        try:
+            stat = os.stat(path)
+            signature = (stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
+            return _cached_input_scalars(path, signature).copy()
+        except OSError:
+            return {}
 
     def _use_fluc2d_x_rhoe(self):
         """Return True when Fluctuation-2D spatial axes should use electron-scale normalization."""
@@ -1029,6 +1023,7 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
         self._stop_animation()
         if hasattr(self, "_clear_current_plot_data"):
             self._clear_current_plot_data()
+        self._current_plot_context = None
         self._energy_entropy_axes = None
         self._energy_entropy_axes_active = False
         self._energy_entropy_case_style = {}
@@ -1198,6 +1193,9 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
                 if hasattr(self, "_refresh_case_summary"):
                     self._refresh_case_summary("Ready")
                 return
+
+        if hasattr(self, "_capture_current_plot_context"):
+            self._capture_current_plot_context(plot_type, display_plot_type, selected_cases)
 
         if (
             plot_type_selection == "Flux"
@@ -2328,6 +2326,20 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
 
         # Packed real/imag first axis.
         if arr.ndim > 0 and arr.shape[0] == 2:
+            if arr.flags.f_contiguous and arr.dtype.kind == "f" and arr.dtype.itemsize in (4, 8):
+                # CGYRO's Fortran layout stores adjacent real/imaginary words.
+                # A strided complex view needs no full-volume allocation.
+                dtype = np.dtype(f"{arr.dtype.byteorder}c{arr.dtype.itemsize * 2}")
+                view = np.ndarray(arr.shape[1:], dtype=dtype, buffer=arr, strides=arr.strides[1:])
+                if species_dependent:
+                    if arr.ndim == 6:
+                        return view
+                    if arr.ndim == 5:
+                        return view[:, :, None, :, :]
+                elif arr.ndim == 5:
+                    return view
+                elif arr.ndim == 6 and arr.shape[3] == 1:
+                    return view[:, :, 0, :, :]
             if species_dependent:
                 if arr.ndim == 6:
                     return arr[0] + 1j * arr[1]  # [nr,theta,ns,ky,t]
@@ -2390,7 +2402,20 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
         if raw is None:
             return None
 
-        return self._coerce_kxky_complex(raw, label, attr_name, species_dependent=species_dependent)
+        cache = getattr(data, "_comparison_complex_fields", None)
+        if cache is None:
+            cache = {}
+            data._comparison_complex_fields = cache
+        key = (attr_name, bool(species_dependent))
+        cached = cache.get(key)
+        if cached is not None and cached[0] is raw:
+            return cached[1]
+        field = self._coerce_kxky_complex(raw, label, attr_name, species_dependent=species_dependent)
+        if field is not None:
+            # Preserve pygacode's public packed arrays for kxky_select() and
+            # invalidate this derived view when reload replaces the source.
+            cache[key] = (raw, field)
+        return field
 
     @staticmethod
     def _field_attr_suffix_from_name(field_name):

@@ -1,8 +1,8 @@
 """
 Small, dependency-free update checker for the CGYRO comparison tool.
 
-The checker prefers the latest GitHub release and falls back to the VERSION
-file on the default branch.  It is deliberately synchronous so callers can
+The checker compares the latest GitHub release and the default-branch VERSION
+file, using either endpoint if the other fails. It is synchronous so callers can
 choose the appropriate execution model (the Tk UI runs it in a worker thread).
 """
 
@@ -25,6 +25,11 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPSHandler, ProxyHandler, Request, build_opener, urlopen
+
+try:
+    from cgyro_io import write_json_atomic
+except ImportError:
+    from .cgyro_io import write_json_atomic
 
 
 REPOSITORY_URL = "https://github.com/tdxy-liu/cgyro-plot-tools"
@@ -200,13 +205,7 @@ def save_update_proxy_config(config):
     config = normalize_update_proxy_config(config)
     _validate_update_proxy_config(config)
     path = update_connection_config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(
-        json.dumps(asdict(config), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    temporary.replace(path)
+    write_json_atomic(path, asdict(config), sort_keys=True)
     return path
 
 
@@ -227,7 +226,8 @@ def _parse_http_proxy(proxy_url):
         raise UpdateConnectionError("Use http://HOST:PORT for the HTTP proxy (HTTPS targets remain encrypted).")
     if parsed.username is not None or parsed.password is not None:
         raise UpdateConnectionError("Proxy credentials in URLs are not supported or stored.")
-    if (not host or not 1 <= port <= 65535 or parsed.path not in ("", "/")
+    if (not host or not re.fullmatch(r"[A-Za-z0-9_.:-]+", host)
+            or not 1 <= port <= 65535 or parsed.path not in ("", "/")
             or parsed.query or parsed.fragment or "\\" in host):
         raise UpdateConnectionError("The HTTP proxy must be a host and port, without a path/query/fragment.")
     authority = "[{}]".format(host) if ":" in host else host
@@ -237,28 +237,32 @@ def _parse_http_proxy(proxy_url):
 def _parse_socks_proxy(proxy_url):
     """Return ``(host, port)`` for a SOCKS5 URL or host:port value."""
     value = str(proxy_url or "").strip()
-    if not value:
+    if not value or any(c.isspace() or ord(c) < 32 for c in value):
         raise UpdateConnectionError("The SOCKS5 proxy address is empty.")
     if "://" not in value:
         value = "socks5h://" + value
     try:
         parsed = urlsplit(value)
-        port = parsed.port or 1080
+        port = 1080 if parsed.port is None else parsed.port
     except ValueError as exc:
         raise UpdateConnectionError("The SOCKS5 proxy address is invalid.") from exc
     if parsed.scheme.lower() not in ("socks5", "socks5h"):
         raise UpdateConnectionError("The update proxy must use socks5:// or socks5h://.")
-    if parsed.username or parsed.password:
+    if parsed.username is not None or parsed.password is not None:
         raise UpdateConnectionError(
             "SOCKS5 username/password is not supported; use a local SSH tunnel instead."
         )
-    if not parsed.hostname or not 1 <= int(port) <= 65535:
+    if (not parsed.hostname or not re.fullmatch(r"[A-Za-z0-9_.:-]+", parsed.hostname)
+            or not 1 <= int(port) <= 65535
+            or parsed.path not in ("", "/") or parsed.query or parsed.fragment
+            or "\\" in parsed.hostname):
         raise UpdateConnectionError("The SOCKS5 proxy host or port is invalid.")
     return parsed.hostname, int(port)
 
 
 def _socks_url(host, port):
-    return "socks5h://{}:{}".format(host, int(port))
+    authority = "[{}]".format(host) if ":" in host else host
+    return "socks5h://{}:{}".format(authority, int(port))
 
 
 def _validate_update_proxy_config(config):
@@ -270,6 +274,14 @@ def _validate_update_proxy_config(config):
     elif config.mode == "ssh-socks":
         if not config.ssh_host:
             raise UpdateConnectionError("The SSH relay host is empty.")
+        # ssh still parses options in an argv list; a destination beginning
+        # with '-oProxyCommand=...' must never become an SSH option.
+        if (config.ssh_host.startswith("-")
+                or any(c.isspace() or ord(c) < 32 for c in config.ssh_host)
+                or not re.fullmatch(r"[A-Za-z0-9_.:%\[\]-]+", config.ssh_host)):
+            raise UpdateConnectionError("Use a hostname or IP address for the SSH relay host.")
+        if config.ssh_user and not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", config.ssh_user):
+            raise UpdateConnectionError("The SSH relay username contains invalid characters.")
         if not 1 <= int(config.ssh_port) <= 65535:
             raise UpdateConnectionError("The SSH relay port is invalid.")
         if not 0 <= int(config.local_socks_port) <= 65535:
@@ -336,6 +348,7 @@ class SshSocksTunnel:
         ]
         if self.config.identity_file:
             command.extend(["-i", str(Path(self.config.identity_file).expanduser())])
+        command.append("--")
         command.append(target)
 
         try:
@@ -651,6 +664,7 @@ def check_for_updates(
     try:
         with _update_proxy_session(proxy_config, timeout=timeout) as proxy_url:
             errors = []
+            candidates = []
 
             try:
                 release_payload = _fetch_text(
@@ -662,7 +676,7 @@ def check_for_updates(
                 if release_payload:
                     release_result = _release_info(release_payload, current_version)
                     if release_result is not None:
-                        return release_result
+                        candidates.append(release_result)
             except UpdateCheckError as exc:
                 errors.append(exc)
 
@@ -672,10 +686,12 @@ def check_for_updates(
                     timeout=timeout,
                     proxy_url=proxy_url,
                 )
-                return _manifest_info(manifest_payload, current_version)
+                candidates.append(_manifest_info(manifest_payload, current_version))
             except UpdateCheckError as exc:
                 errors.append(exc)
 
+            if candidates:
+                return max(candidates, key=lambda info: _version_key(info.latest_version))
             if errors:
                 raise UpdateCheckError(
                     "Unable to check for updates. Please verify your internet connection."
@@ -886,6 +902,11 @@ def update_from_git(
         raise GitUpdateError("The Git remote name cannot be empty.")
     if not branch:
         raise GitUpdateError("The Git branch name cannot be empty.")
+    if (remote.startswith("-") or any(c.isspace() or ord(c) < 32 for c in remote)):
+        raise GitUpdateError("The Git remote name cannot start with '-' or contain whitespace.")
+    if (branch.startswith("-") or re.search(r"[\s\x00-\x1f\x7f~^:?*\[\\]", branch)
+            or ".." in branch or "@{" in branch):
+        raise GitUpdateError("The requested Git branch is not a valid branch name.")
 
     repo_check = _run_git(repo_dir, ["rev-parse", "--show-toplevel"], timeout)
     if repo_check.returncode != 0:
