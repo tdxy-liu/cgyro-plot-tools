@@ -78,6 +78,35 @@ class OptionLayoutTests(unittest.TestCase):
                         self.assertEqual(app.fluc_theta_kx_label.cget("text"), "kx:")
                         self.assertEqual(app.fluc_theta_ky_label.cget("text"), "ky:")
 
+    def test_advanced_option_reflows_with_wider_fonts_and_panel_resize(self):
+        from tkinter import font as tkfont, ttk
+
+        with self.application(scaling=2.0) as app:
+            app.t_start_var.set("500")
+            app.fluc_theta_ky_var.set("0.3")
+            font = tkfont.Font(root=app.root, font="TkDefaultFont")
+            font.configure(size=20)
+            ttk.Style(app.root).configure("WideFont.TCheckbutton", font=font)
+            app.fluc_advanced_check.configure(style="WideFont.TCheckbutton")
+            for width in (340, 800, 340):
+                with self.subTest(width=width):
+                    app.main_pane.sashpos(0, width)
+                    app.root.update_idletasks()
+                    text = str(app.fluc_advanced_check.cget("text"))
+                    self.assertEqual(" ".join(text.split()), app._FLUC_ADVANCED_LABEL)
+                    if width == 340:
+                        self.assertIn("\n", text)
+                    else:
+                        self.assertNotIn("\n", text)
+                    self.assert_readable(app, self.time_controls(app) + self.theta_controls(app))
+                    self.assertEqual(app.t_start_var.get(), "500")
+                    self.assertEqual(app.fluc_theta_ky_var.get(), "0.3")
+                    self.assertFalse(app.fluc_advanced_var.get())
+            app.fluc_advanced_check.invoke()
+            app.root.update_idletasks()
+            self.assertTrue(app.fluc_advanced_var.get())
+            self.assert_readable(app, [app.fluc_advanced_check, app.fluc_advanced_button])
+
     def test_mode_switches_keep_values_and_restore_theta_columns(self):
         with self.application() as app:
             app.main_pane.sashpos(0, 340)

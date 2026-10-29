@@ -74,6 +74,7 @@ except ImportError:
 
 
 class CgyroUiMixin:
+    _FLUC_ADVANCED_LABEL = "Advanced: per-case kx/ky"
     # Keep UI option literals centralized.  Plot dispatch below depends on
     # exact strings, so collecting them here makes later menu changes less
     # likely to desynchronize controls and backend handlers.
@@ -1954,10 +1955,11 @@ class CgyroUiMixin:
         self.fluc_advanced_var = tk.BooleanVar(value=False)
         self.fluc_advanced_check = ttk.Checkbutton(
             self.fluc_options_frame,
-            text="Advanced: per-case kx/ky",
+            text=self._FLUC_ADVANCED_LABEL,
             variable=self.fluc_advanced_var,
             command=self._on_fluc_advanced_toggle,
         )
+        self.fluc_options_frame.bind("<Configure>", self._fit_fluc_advanced_label, add="+")
         self.fluc_advanced_button = ttk.Button(
             self.fluc_options_frame,
             text="Edit per-case kx/ky...",
@@ -2318,6 +2320,31 @@ class CgyroUiMixin:
 
         # Initialize layout
         self.update_options()
+
+    def _fit_fluc_advanced_label(self, _event=None):
+        """Wrap the checkbox label using actual theme/font pixels, including Linux DPI."""
+        available = self.fluc_options_frame.winfo_width()
+        if available <= 1:
+            return
+        checkbox = self.fluc_advanced_check
+        style = checkbox.cget("style") or "TCheckbutton"
+        font_name = ttk.Style(self.root).lookup(style, "font") or "TkDefaultFont"
+        font = tkfont.Font(root=self.root, font=font_name)
+        current = str(checkbox.cget("text"))
+        text_width = max(font.measure(line) for line in current.split("\n"))
+        chrome = max(0, checkbox.winfo_reqwidth() - text_width)
+        lines, line = [], ""
+        for word in self._FLUC_ADVANCED_LABEL.split():
+            candidate = f"{line} {word}" if line else word
+            if line and font.measure(candidate) + chrome > available:
+                lines.append(line)
+                line = word
+            else:
+                line = candidate
+        lines.append(line)
+        fitted = "\n".join(lines)
+        if fitted != current:
+            checkbox.configure(text=fitted)
 
     def clear_time_range(self):
         """Clear GUI time-range entries and revert to automatic time-window logic."""
