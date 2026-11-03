@@ -116,14 +116,18 @@ def panel_factors(result, settings):
 
 
 def shared_scale(result, settings):
-    """One linear scale for explicitly multiplied values, without percentile clipping."""
+    """Keep the shared range independent of display multipliers.
+
+    Otherwise enlarging a weak panel also enlarges the colorbar and washes out
+    the unchanged panels. Explicit color_max still overrides the raw reference.
+    """
     maxima = _panel_maxima(result)
     maximum = max(maxima, default=0.)
     divisor = maximum if settings.normalize and maximum > 0 else 1.
     displayed = [peak / divisor * factor for peak, factor in zip(maxima, panel_factors(result, settings))]
     if not np.all(np.isfinite(displayed)):
         raise ValueError("Panel multipliers overflow the displayed values; use smaller factors.")
-    limit = settings.color_max if settings.color_max is not None else max(displayed, default=0.)
+    limit = settings.color_max if settings.color_max is not None else maximum / divisor
     return divisor, (limit if limit > 0 else 1.), maximum
 
 
@@ -276,7 +280,11 @@ def export_bundle(result, settings, destination, formats=("pdf", "svg", "png")):
                         **{f"step_{i:02d}": panel.values for i, panel in enumerate(result.panels, 1)})
     metadata = result.metadata()
     metadata["figure"] = asdict(settings)
-    metadata["shared_color_scale"] = {"divisor": divisor, "limit": limit, "raw_max_abs": maximum}
+    metadata["shared_color_scale"] = {"divisor": divisor, "limit": limit, "raw_max_abs": maximum,
+                                      "reference": "explicit_color_max" if settings.color_max is not None else "unscaled_global_max_abs",
+                                      "saturated_points": [int(np.count_nonzero(
+                                          np.isfinite(p.values) & (np.abs(p.values / divisor * factor) > limit)))
+                                          for p, factor in zip(result.panels, factors)]}
     metadata["display"] = {"panel_multipliers": factors, "formula": "display_value = T_mean / divisor * panel_multiplier",
                            "palette": FULLT_DIVERGING_CMAP.name, "rendering": settings.glyph,
                            "smooth_lattice": "sample-centred Gouraud lobes with neutral cell edges; display only"}
@@ -286,6 +294,8 @@ def export_bundle(result, settings, destination, formats=("pdf", "svg", "png")):
     (target / "README.txt").write_text(
         "Each panel is a successive extremum of the same time-averaged native Re(T) diagnostic.\n"
         "All panels share one zero-centred linear color scale for the DISPLAYED values.\n"
+        "The automatic color range is fixed by the UNMULTIPLIED maps, not recomputed after panel amplification.\n"
+        "Values beyond that range use the endpoint colors; exact values remain in plot_data.csv and maps.npz.\n"
         "display_value = T_mean / global_divisor * panel_multiplier. Multipliers appear before T in each panel header.\n"
         f"Panel multipliers: {', '.join(format(x, 'g') for x in factors)}; global divisor: {divisor:g}.\n"
         "Smooth rendering uses Gouraud lobes fading to neutral cell edges, as in the classic FULLT plot.\n"

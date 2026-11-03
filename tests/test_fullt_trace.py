@@ -259,7 +259,9 @@ class FullTTraceTests(unittest.TestCase):
         style = FigureSettings(panel_scaling="custom", panel_multipliers=(1, 1, 10, 5), normalize=True, dpi=300)
         output = export_bundle(result, style, self.folder / "scaled", formats=("svg",))
         metadata = json.loads((output / "trace.json").read_text(encoding="utf-8"))
-        self.assertEqual(metadata["shared_color_scale"]["limit"], 6.)
+        self.assertEqual(metadata["shared_color_scale"]["limit"], 1.)
+        self.assertEqual(metadata["shared_color_scale"]["reference"], "unscaled_global_max_abs")
+        self.assertGreater(metadata["shared_color_scale"]["saturated_points"][2], 0)
         self.assertEqual(metadata["display"]["panel_multipliers"], [1, 1, 10, 5])
         self.assertEqual(metadata["panels"], result.metadata()["panels"])
         table = np.loadtxt(output / "plot_data.csv", delimiter=",", skiprows=1)
@@ -274,6 +276,22 @@ class FullTTraceTests(unittest.TestCase):
             build_figure(result, replace(style, panel_multipliers=(1, 10)))
         # Extra factors are allowed when a trace stops before the requested step count.
         np.testing.assert_allclose(panel_factors(result, replace(style, panel_multipliers=(1, 1, 10, 5, 2))), [1, 1, 10, 5])
+
+    def test_amplifying_third_panel_keeps_first_two_colors_and_shared_range(self):
+        result = trace_case(self.case, replace(self.settings, steps=3))
+        for normalize, color_max in ((False, None), (True, None), (False, 8.)):
+            with self.subTest(normalize=normalize, color_max=color_max):
+                base = FigureSettings(panel_scaling="none", normalize=normalize, color_max=color_max)
+                custom = replace(base, panel_scaling="custom", panel_multipliers=(1, 1, 10))
+                before, after = build_figure(result, base), build_figure(result, custom)
+                self.assertEqual(before._fullt_trace_scale["limit"], after._fullt_trace_scale["limit"])
+                for i in range(3):
+                    old = before._fullt_trace_axes[i].collections[0]
+                    new = after._fullt_trace_axes[i].collections[0]
+                    np.testing.assert_allclose(new.get_array(), old.get_array() * (10 if i == 2 else 1))
+                    if i < 2:
+                        np.testing.assert_array_equal(new.cmap(new.norm(new.get_array())), old.cmap(old.norm(old.get_array())))
+                self.assertTrue(any(r"10\times T" in text.get_text() for ax in after.axes for text in ax.texts))
 
     def test_classic_lattice_retains_sample_centres_and_masks_missing_values(self):
         values = np.array([[1., -2.], [np.nan, .001]])
@@ -310,12 +328,15 @@ class FullTTraceTests(unittest.TestCase):
             self.assertEqual(len(app.results[0].panels), 4)
             self.assertEqual(len(app.table.get_children()), 4)
             app.vars["normalize"].set(True)
-            app.vars["panel_scaling"].set("Custom multipliers")
+            self.assertEqual(app._options()[1].panel_scaling, "auto")
             app.vars["panel_multipliers"].set("1, 1, 10, 5")
+            self.assertEqual(app._options()[1].panel_scaling, "custom")
             with patch("cgyro_fullt_trace_ui.trace_case", side_effect=AssertionError("style must use cached maps")):
                 app.redraw()
-            self.assertEqual(app.canvas.figure._fullt_trace_scale["limit"], 6.)
+            self.assertEqual(app.canvas.figure._fullt_trace_scale["limit"], 1.)
             self.assertEqual(app.canvas.figure._fullt_trace_scale["panel_multipliers"], [1, 1, 10, 5])
+            self.assertIn("multipliers: 1, 1, 10, 5", app.status.get())
+            self.assertIn("color range: +/-1", app.status.get())
             session = self.folder / "session.json"
             with patch("cgyro_fullt_trace_ui.filedialog.asksaveasfilename", return_value=str(session)):
                 app.save_session()
@@ -323,6 +344,13 @@ class FullTTraceTests(unittest.TestCase):
             with patch("cgyro_fullt_trace_ui.filedialog.askopenfilename", return_value=str(session)):
                 app.load_session()
             self.assertEqual(app._options()[1].panel_multipliers, (1, 1, 10, 5))
+            # Explicit Auto/None in a saved session remains intentional even
+            # when that session remembers a previously typed custom list.
+            saved_figure = app._options()[1]
+            app._set_options(self.settings, replace(saved_figure, panel_scaling="auto"))
+            self.assertEqual(app._options()[1].panel_scaling, "auto")
+            app.vars["panel_multipliers"].set("1, 1, 5, 5")
+            self.assertEqual(app._options()[1].panel_scaling, "custom")
             errors.assert_not_called()
             warnings.assert_not_called()
             app.option_tabs.select(1)

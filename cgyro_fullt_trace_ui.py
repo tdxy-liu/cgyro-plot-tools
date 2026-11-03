@@ -35,6 +35,7 @@ class FullTTraceApp:
         root.geometry("1380x900")
         root.minsize(1040, 720)
         self.cases, self.results, self.vars, self.busy_widgets = [], [], {}, []
+        self._setting_options = False
         self.events = queue.Queue()
         self.cancel = threading.Event()
         self.busy = False
@@ -104,12 +105,13 @@ class FullTTraceApp:
                          ("colorbar_label", "Colorbar label", None), ("dpi", "Export DPI", None)]
         for row, (key, label, choices) in enumerate(figure_fields):
             self._entry(figure_tab, row, key, label, choices)
+        self.vars["panel_multipliers"].trace_add("write", self._multipliers_changed)
         self.vars["normalize"] = tk.BooleanVar(value=False)
         ttk.Checkbutton(figure_tab, text="Divide every panel by ONE global max |T|", variable=self.vars["normalize"]).grid(
             row=len(figure_fields), column=0, columnspan=2, sticky="w", pady=6)
         self.vars["hide_title"] = tk.BooleanVar(value=False)
         ttk.Checkbutton(figure_tab, text="Hide case/time title", variable=self.vars["hide_title"]).grid(row=len(figure_fields) + 1, column=0, columnspan=2, sticky="w")
-        ttk.Label(figure_tab, text="Auto scaling brightens weaker panels; each multiplier is shown before T.\nFor manual factors select Custom and enter e.g. 1, 1, 10.\nBlank color max: shared range after scaling.\nBlank limits: full grid; tracing keeps the same ky.",
+        ttk.Label(figure_tab, text="Entering multipliers selects Custom automatically. Click Apply to update.\nBlank color max: fixed range from the unmultiplied maps.\nChanging multipliers keeps this color range; values beyond it saturate.\nBlank limits: full grid; tracing keeps the same ky.",
                   wraplength=315, foreground="#586575").grid(row=len(figure_fields) + 2, column=0, columnspan=2, sticky="w", pady=7)
         for frame, canvas in self.option_canvases:
             self._bind_option_scroll(frame, canvas)
@@ -222,13 +224,23 @@ class FullTTraceApp:
         values = {**asdict(trace), **asdict(figure)}
         mappings = {"direction": DIRECTIONS, "diagnostic": DIAGNOSTICS, "cycles": CYCLES,
                     "glyph": GLYPHS, "panel_scaling": PANEL_SCALING}
-        for key, value in values.items():
-            if key in mappings:
-                value = next(label for label, code in mappings[key].items() if code == value)
-            if key in ("xlim", "ylim", "panel_multipliers") and value is not None:
-                value = ", ".join(map(str, value))
-            self.vars[key].set("" if value is None else value)
-        self.vars["hide_title"].set(figure.title == "")
+        self._setting_options = True
+        try:
+            for key, value in values.items():
+                if key in mappings:
+                    value = next(label for label, code in mappings[key].items() if code == value)
+                if key in ("xlim", "ylim", "panel_multipliers") and value is not None:
+                    value = ", ".join(map(str, value))
+                self.vars[key].set("" if value is None else value)
+            self.vars["hide_title"].set(figure.title == "")
+        finally:
+            self._setting_options = False
+
+    def _multipliers_changed(self, *_args):
+        """Typing or pasting manual factors must not leave them ignored in Auto."""
+        if not self._setting_options and self.vars["panel_multipliers"].get().strip():
+            self.vars["panel_scaling"].set("Custom multipliers")
+            self.status.set("Manual multipliers selected — click Apply publication style to preview.")
 
     def _options(self):
         def number(key, optional=False):
@@ -336,7 +348,9 @@ class FullTTraceApp:
                 values = [i, panel.mode.kx, panel.mode.ky] + ([peak.kx, peak.ky, peak.value, peak.next_mode.kx, peak.next_mode.ky, peak.conjugated]
                                                            if peak else [""] * 6)
                 self.table.insert("", "end", values=[f"{v:.6g}" if isinstance(v, float) else v for v in values])
-            self.status.set(f"{len(result.panels)} panels — {result.stop_reason}")
+            scale = rendered._fullt_trace_scale
+            factors = ", ".join(f"{x:g}" for x in scale["panel_multipliers"])
+            self.status.set(f"{len(result.panels)} panels | multipliers: {factors} | color range: +/-{scale['limit']:.5g} — {result.stop_reason}")
         except (ValueError, KeyError, OSError) as exc:
             messagebox.showerror("Figure options", str(exc), parent=self.root)
 

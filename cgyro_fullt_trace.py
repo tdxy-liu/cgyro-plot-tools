@@ -24,7 +24,7 @@ def parser():
     cli.add_argument("--panel-height-mm", type=float, default=32.)
     cli.add_argument("--font-pt", type=float, default=9.)
     cli.add_argument("--dpi", type=int, default=600)
-    cli.add_argument("--color-max", type=float, help="Shared symmetric bound for displayed values, after panel multipliers.")
+    cli.add_argument("--color-max", type=float, help="Fixed shared symmetric bound; blank uses the unmultiplied global max |T|.")
     cli.add_argument("--normalize", action="store_true", help="Divide ALL panels by one global max |T|.")
     cli.add_argument("--glyph", choices=("smooth", "diamonds", "cells"), default="smooth",
                      help="Smooth: classic FULLT red-white-blue lobes (default).")
