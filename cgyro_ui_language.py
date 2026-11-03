@@ -15,6 +15,7 @@ except ImportError:
 
 # Scientific symbols, case names, paths and exported plot data are not translated.
 ZH = {
+    "Plot incomplete": "部分算例未能绘制",
     "Ready": "就绪", "Plotting": "绘制中", "Loaded": "已加载", "Removed": "已移除", "Removed all": "已移除全部",
     "Open Workspace...": "打开工作区…", "Add Case Group...": "添加算例分组…", "Remove Selected": "移除选中算例",
     "Remove All...": "移除全部…", "Reload All Cases": "重新读取全部算例",

@@ -1042,8 +1042,26 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
             try:
                 self._plot_single_case(data, case_name, plot_type)
             except Exception as e:
-                print(f"Error plotting {case_name}: {e}")
-                traceback.print_exc()
+                self._record_plot_issue(case_name, e)
+
+    def _record_plot_issue(self, case_name, error):
+        """Keep per-case failures visible while allowing other cases to plot."""
+        if not hasattr(self, "_plot_issues"):
+            self._plot_issues = []
+        self._plot_issues.append(f"{case_name}: {error}")
+        print(f"Error plotting {case_name}: {error}")
+        traceback.print_exc()
+
+    def _show_plot_issues(self):
+        if not self._plot_issues:
+            return
+        try:
+            from cgyro_ui_language import get_language
+        except ImportError:
+            from .cgyro_ui_language import get_language
+        language = get_language(self.root)
+        title = language.pair("部分算例未能绘制", "Some cases could not be plotted")
+        messagebox.showwarning(title, "\n\n".join(self._plot_issues), parent=self.root)
 
     def _single_case_for_contour_plot(self, selected_cases):
         """
@@ -1160,6 +1178,7 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
         """
         if hasattr(self, "_refresh_case_summary"):
             self._refresh_case_summary("Plotting")
+        self._plot_issues = []
         self._reset_plot_area()
         plot_type_selection, plot_type, display_plot_type = self._build_effective_plot_type()
         selected_cases = self._get_selected_case_names()
@@ -1210,7 +1229,8 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
 
         self._finalize_plot(plot_type_selection, plot_type, display_plot_type)
         if hasattr(self, "_refresh_case_summary"):
-            self._refresh_case_summary("Ready")
+            self._refresh_case_summary("Plot incomplete" if self._plot_issues else "Ready")
+        self._show_plot_issues()
 
     def plot_case_info(self):
         """
@@ -2696,15 +2716,13 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
         - Delegate to centralized dispatch.
         - Catch/report per-case exceptions so one bad case does not abort others.
         """
-        t_indices, t_start, t_end = self._compute_case_time_window(data)
-
         try:
+            t_indices, t_start, t_end = self._compute_case_time_window(data)
             self._dispatch_single_case_plot(
                 data, label, plot_type, t_indices, t_start, t_end, species_override_index
             )
         except Exception as e:
-            print(f"Error processing data for {label}: {e}")
-            traceback.print_exc()
+            self._record_plot_issue(label, e)
     
 
 

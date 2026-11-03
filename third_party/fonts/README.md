@@ -28,6 +28,27 @@ and `fangsong ti`, including lowercase family names. Bitmap fonts may round the
 requested point size to the nearest available size. Language selection remains
 independent of font detection; a missing font never silently forces English.
 
+For an affected Linux installation, `cgyro_tk_runtime.py` supports an optional
+**private Xft-enabled Tk 8.6** under `.runtime/tk-xft`. Both GUI entry points load
+it before importing Tk. Its manifest pins the Python prefix, `_tkinter` extension
+checksum and library checksum; another Python environment keeps its own Tk.
+The updater and headless exports do not need this runtime. No compilation or
+network access happens during normal application startup.
+
+To prepare it explicitly, obtain and unpack the
+[official Tk 8.6 source](https://github.com/tcltk/tk/tree/core-8-6-12)
+and run with the Python interpreter used to start the GUI:
+
+```sh
+python cgyro_tk_runtime.py --install-from /path/to/tk-core-8-6-12
+```
+
+This requires gcc, make, X11/Xft development headers, and the matching Tcl
+headers plus `lib/tclConfig.sh` in the Python prefix. It leaves shared Conda and
+system libraries untouched and refuses to overwrite an existing private runtime.
+The Hefei Python 3.11 / Tcl 8.6.12 installation was verified with Tk 8.6.12:
+Latin, Chinese and digit glyphs all resolve to Noto Sans CJK SC at 11 pt.
+
 Arial and SimSun are system fonts and are **not redistributed** here. STIX is
 provided by Matplotlib. On machines without Arial the Latin fallback is
 Liberation Sans, then DejaVu Sans. For identical Arial output on a Linux server,

@@ -32,4 +32,12 @@ Use **File → Save Workspace... / Open Workspace...** in the comparison app to 
 
 ## Verification
 
+Frequency and Growth Rate load only `bin.cgyro.freq` or `out.cgyro.freq` when
+first requested, then average the selected time samples. Missing or malformed
+diagnostics are reported with the case name; valid cases still plot. If the case
+is still running, use Reload after its output files finish writing.
+
+On Linux with an old core-X11 Tk, an optional private Xft Tk enables the bundled
+Noto font without changing the system Python. See [font setup](third_party/fonts/README.md).
+
 Layout checks cover 920×640, 1280×900 and 1600×1000 windows at multiple Tk scaling factors. They check complete-field reflow, control boundaries, retained inputs, independent scrolling and language round trips. Font regression checks cover legacy X11 names; missing font detection does not override the selected language.

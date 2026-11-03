@@ -5,6 +5,12 @@ from pathlib import Path
 import json
 import queue
 import threading
+try:
+    from cgyro_tk_runtime import prepare_tk_runtime
+except ImportError:
+    from .cgyro_tk_runtime import prepare_tk_runtime
+prepare_tk_runtime()
+
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -83,7 +89,7 @@ class FullTTraceApp:
         left.columnconfigure(0, weight=1)
         left.rowconfigure(2, weight=1)
         ttk.Label(left, text="CGYRO Transfer Explorer", style="SidebarTitle.TLabel").grid(row=0, column=0, sticky="w", pady=(2, 10))
-        case_frame = ttk.LabelFrame(left, text=tr("1  选择算例", "1  Select cases"), style="Card.TLabelframe")
+        case_frame = ttk.LabelFrame(left, text=tr("选择算例", "Select cases"), style="Card.TLabelframe")
         case_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10), padx=(0, 8))
         case_frame.columnconfigure(0, weight=1)
         self.case_list = tk.Listbox(case_frame, height=4, width=12, selectmode="extended",
@@ -102,8 +108,8 @@ class FullTTraceApp:
         tabs.grid(row=2, column=0, sticky="nsew", padx=(0, 8))
         self.option_canvases = []
         self._forms, self.field_widgets = [], {}
-        trace_tab = self._scroll_tab(tabs, tr("2  追踪设置", "2  Trace settings"))
-        figure_tab = self._scroll_tab(tabs, tr("3  出图样式", "3  Figure style"))
+        trace_tab = self._scroll_tab(tabs, tr("追踪设置", "Trace settings"))
+        figure_tab = self._scroll_tab(tabs, tr("出图样式", "Figure style"))
 
         def group(parent, title, collapsed=False):
             if collapsed:
@@ -166,7 +172,7 @@ class FullTTraceApp:
         actions = ttk.Frame(left, padding=(0, 8, 8, 0))
         actions.grid(row=3, column=0, sticky="ew")
         actions.columnconfigure(0, weight=1)
-        self.run_button = self._button(actions, tr("4  开始追踪", "4  Trace cases"), self.run_trace)
+        self.run_button = self._button(actions, tr("开始追踪", "Trace cases"), self.run_trace)
         self.run_button.configure(style="Accent.TButton")
         self.run_button.grid(row=0, column=0, sticky="ew")
         self.cancel_button = ttk.Button(actions, text=tr("取消", "Cancel"), command=self.cancel.set, state="disabled")
@@ -181,7 +187,7 @@ class FullTTraceApp:
         results_header = ttk.Frame(right, padding=(0, 0, 0, 8))
         results_header.grid(row=0, column=0, sticky="ew")
         results_header.columnconfigure(1, weight=1)
-        ttk.Label(results_header, text=tr("5  结果", "5  Results"), style="SectionLabel.TLabel").grid(row=0, column=0, padx=(0, 12))
+        ttk.Label(results_header, text=tr("结果", "Results"), style="SectionLabel.TLabel").grid(row=0, column=0, padx=(0, 12))
         self.result_var = tk.StringVar()
         self.result_combo = LocalizedCombobox(results_header, textvariable=self.result_var, width=12, state="readonly")
         self.result_combo.grid(row=0, column=1, sticky="ew")

@@ -501,7 +501,7 @@ class CgyroUiMixin:
         ttk.Label(header, text=f"v{APP_VERSION}", style="Muted.TLabel").grid(row=0, column=1, sticky="e")
         ttk.Label(header, textvariable=self.case_summary_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(3, 0))
 
-        self.case_section = cases = ttk.LabelFrame(left, text=tr("1  选择算例", "1  Select cases"), style="Card.TLabelframe")
+        self.case_section = cases = ttk.LabelFrame(left, text=tr("选择算例", "Select cases"), style="Card.TLabelframe")
         cases.grid(row=1, column=0, sticky="ew", padx=(0, 8), pady=(0, 10))
         cases.columnconfigure(0, weight=1)
         list_frame = ttk.Frame(cases)
@@ -557,7 +557,7 @@ class CgyroUiMixin:
         panel.bind("<Configure>", self._on_left_panel_configure)
         self.left_canvas.bind("<Configure>", self._on_left_canvas_configure)
 
-        diagnostic = ttk.LabelFrame(panel, text=tr("2  诊断与绘制对象", "2  Diagnostic and quantities"), style="Card.TLabelframe")
+        diagnostic = ttk.LabelFrame(panel, text=tr("诊断与绘制对象", "Diagnostic and quantities"), style="Card.TLabelframe")
         diagnostic.pack(fill="x", pady=(0, 10))
         self.plot_type_var = tk.StringVar(value="Frequency")
         self.plot_type_combo = LocalizedCombobox(diagnostic, textvariable=self.plot_type_var, width=16, state="readonly",
@@ -566,7 +566,7 @@ class CgyroUiMixin:
         self.plot_type_combo.bind("<<ComboboxSelected>>", self.update_options)
         self.options_frame = ttk.Frame(diagnostic)
         self.options_frame.pack(fill="x")
-        self.time_section = ttk.LabelFrame(panel, text=tr("3  时间与显示", "3  Time and display"), style="Card.TLabelframe")
+        self.time_section = ttk.LabelFrame(panel, text=tr("时间与显示", "Time and display"), style="Card.TLabelframe")
         self.time_section.pack(fill="x")
         self._option_forms = {}
         self._init_options()
@@ -577,7 +577,7 @@ class CgyroUiMixin:
         self.action_footer = footer = ttk.Frame(left, padding=(0, 8, 8, 0))
         footer.grid(row=3, column=0, sticky="ew")
         self.action_section = footer
-        self.plot_button = ttk.Button(footer, text=tr("4  绘制", "4  Plot"), style="Accent.TButton", command=self.plot_comparison)
+        self.plot_button = ttk.Button(footer, text=tr("绘制", "Plot"), style="Accent.TButton", command=self.plot_comparison)
         self.plot_button.pack(fill="x")
 
         self.right_panel = right = ttk.Frame(self.main_pane, padding=(10, 0, 0, 0))
@@ -587,7 +587,7 @@ class CgyroUiMixin:
         result_header = ttk.Frame(right, padding=(0, 0, 0, 8))
         result_header.grid(row=0, column=0, sticky="ew")
         result_header.columnconfigure(0, weight=1)
-        ttk.Label(result_header, text=tr("5  查看结果", "5  Results"), style="SectionLabel.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(result_header, text=tr("查看结果", "Results"), style="SectionLabel.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Button(result_header, text=tr("导出数据…", "Export data…"), command=self.batch_export_current_plot_data).grid(row=0, column=1, padx=5)
         ttk.Button(result_header, text=tr("清空", "Clear"), command=self.clear_plot).grid(row=0, column=2)
         self.fig = plt.Figure(figsize=(5, 4), dpi=100)

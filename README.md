@@ -6,6 +6,7 @@
 
 ### 最新更新
 
+- **v0.2.35 频率绘图与字体修复**：修复快速加载算例后 Frequency/Growth Rate 无曲线的问题；按需读取频率文件，缺失或尺寸异常时显示算例及原因。移除两套 GUI 中的操作步骤编号。旧式 X11 Tk 可使用程序私有的 Xft 运行库，使附带的 Noto Sans CJK SC 11 pt 真正生效，无需替换共享 Conda。
 - **v0.2.34 中文切换修复与界面精简**：选择中文后立即翻译界面，字体检测不再覆盖语言选择；兼容旧式 X11 Tk 的小写字体名及 `song ti` / `fangsong ti` 中文字体回退。两套 GUI 移除 Choose preset / Save preset，继续通过工作区与会话保存算例和参数。
 - **v0.2.33 更新检测与兼容修复**：主分支 `VERSION` 读取失败时改用 GitHub API；只有旧 Release 可访问时明确报告无法确认更新，不再误报“已是最新版”。修复 Python 3.9 的 Tk 字体初始化兼容问题，并兼容新版 Matplotlib 的字体测试。
 - **v0.2.32 GUI 与语言设置**：两套界面统一字体、间距和可伸缩表单，按选择算例、设置诊断/追踪、时间与样式、运行、结果组织；公式说明默认折叠。新增 **Settings → Language / 设置 → 语言**，即时切换中英文并保存偏好；内部参数、已选算例和绘图结果保持原样。独立追踪工具更名为 **CGYRO Transfer Explorer / CGYRO 转移分析**，启动命令仍为 `python cgyro_fullt_trace.py`。见 [新版界面说明](GUI_GUIDE.md)。

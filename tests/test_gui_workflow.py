@@ -11,6 +11,32 @@ from unittest.mock import patch
 
 @unittest.skipUnless(os.environ.get("CGYRO_TEST_TK_LAYOUT") == "1", "optional Tk workflow integration")
 class GuiWorkflowTests(unittest.TestCase):
+    def test_frequency_action_plots_fast_case_and_shows_missing_case_warning(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        import numpy as np
+        with self.app() as app:
+            data = SimpleNamespace(ky=np.array([0., -.1]), t=np.arange(4.),
+                                   extract=Mock(return_value=('', 'out', np.arange(16.))))
+            missing = SimpleNamespace(ky=np.array([0., -.1]), t=np.arange(4.), dir='/missing/',
+                                      extract=Mock(return_value=('', 'null', [])))
+            app.cases = {'good': data, 'missing': missing}
+            for name in app.cases:
+                app.case_listbox.insert('end', name)
+            app.plot_type_var.set('Frequency')
+            with patch('cgyro_comparison_plotting.messagebox.showwarning') as warning:
+                app.plot_comparison()
+                self.assertEqual(len(app.ax.lines), 1)
+                warning.assert_called_once()
+                self.assertIn('missing: Missing out.cgyro.freq', warning.call_args.args[1])
+                self.assertNotIn('good:', warning.call_args.args[1])
+            self.assertEqual(app.plot_button.cget('text'), 'Plot')
+            app.case_listbox.selection_set(0)
+            with patch('cgyro_comparison_plotting.messagebox.showwarning') as warning:
+                app.plot_comparison()
+                warning.assert_not_called()
+            data.extract.assert_called_once()
+
     @contextmanager
     def app(self, kind="main", scaling=1.5):
         import tkinter as tk
@@ -115,8 +141,8 @@ class GuiWorkflowTests(unittest.TestCase):
                             self.assertEqual(app.case_list.curselection(), (0,))
                             self.assertEqual(app.vars["panel_scaling"].get(), "Custom multipliers")
                             self.assertIn(lang.text("CGYRO Transfer Explorer"), app.root.title())
-                            self.assertEqual(app.option_tabs.tab(0, "text"), lang.text("2  Trace settings"))
-                            self.assertEqual(app.option_tabs.tab(1, "text"), lang.text("3  Figure style"))
+                            self.assertEqual(app.option_tabs.tab(0, "text"), lang.text("Trace settings"))
+                            self.assertEqual(app.option_tabs.tab(1, "text"), lang.text("Figure style"))
                             views = app.table.master.master
                             self.assertEqual(views.tab(0, "text"), lang.text("Stacked figure"))
                             self.assertEqual(views.tab(1, "text"), lang.text("Trace coordinates and values"))
@@ -134,10 +160,10 @@ class GuiWorkflowTests(unittest.TestCase):
                 app.root.update_idletasks()
                 self.assertTrue(lang.chinese)
                 if kind == "main":
-                    self.assertEqual(app.plot_button.cget("text"), "4  绘制")
+                    self.assertEqual(app.plot_button.cget("text"), "绘制")
                     self.assertEqual(app.plot_type_combo.get(), "频率")
                 else:
-                    self.assertEqual(app.option_tabs.tab(0, "text"), "2  追踪设置")
+                    self.assertEqual(app.option_tabs.tab(0, "text"), "追踪设置")
                     self.assertIn("CGYRO 转移分析", app.root.title())
                 self.assertEqual(json.loads(lang.path.read_text())["language"], "zh")
                 with patch.dict(os.environ):

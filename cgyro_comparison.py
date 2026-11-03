@@ -17,6 +17,12 @@ if __name__ == "__main__" and len(sys.argv) > 1:
         from .cgyro_update import _run_cli
     raise SystemExit(_run_cli(sys.argv[1:]))
 
+try:
+    from cgyro_tk_runtime import prepare_tk_runtime
+except ImportError:
+    from .cgyro_tk_runtime import prepare_tk_runtime
+prepare_tk_runtime()
+
 import tkinter as tk
 try:
     from cgyro_comparison_ui import CgyroUiMixin
