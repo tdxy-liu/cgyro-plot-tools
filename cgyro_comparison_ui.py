@@ -1255,7 +1255,10 @@ class CgyroUiMixin:
         elif not silent:
             messagebox.showinfo(
                 "Check for Updates",
-                f"You are using the latest version ({result.current_version}).",
+                f"No newer version was found.\n\n"
+                f"Current version: {result.current_version}\n"
+                f"Latest checked version: {result.latest_version}\n"
+                f"Source: {result.source}",
                 parent=self.root,
             )
 

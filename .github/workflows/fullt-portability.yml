@@ -51,6 +51,7 @@ jobs:
           CGYRO_TEST_TK_LAYOUT: '1'
         run: |
           xvfb-run -a python -m unittest discover -s tests -p test_ui_option_layout.py -v
+          xvfb-run -a python -m unittest discover -s tests -p test_gui_workflow.py -v
           xvfb-run -a python -m unittest discover -s tests -p test_fullt_trace.py -v
       - name: Tk layout tests on Windows
         if: runner.os == 'Windows'
@@ -58,4 +59,5 @@ jobs:
           CGYRO_TEST_TK_LAYOUT: '1'
         run: |
           python -m unittest discover -s tests -p test_ui_option_layout.py -v
+          python -m unittest discover -s tests -p test_gui_workflow.py -v
           python -m unittest discover -s tests -p test_fullt_trace.py -v

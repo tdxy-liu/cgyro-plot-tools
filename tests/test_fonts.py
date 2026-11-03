@@ -17,7 +17,8 @@ class FigureFontTests(unittest.TestCase):
     def test_math_letters_use_plot_font_and_missing_symbols_use_stix(self):
         with mpl.rc_context(plot_font_style()):
             parsed = MathTextParser("path").parse(r"$k_x\rho_s=0.2\quad\mathbb{R}$")
-        families = {font.family_name for font, _size, _char, _x, _y in parsed.glyphs}
+        # Newer Matplotlib adds glyph metadata after the font/size/position.
+        families = {glyph[0].family_name for glyph in parsed.glyphs}
         self.assertIn(plot_font_family(), families)
         self.assertTrue(any(name.startswith("STIX") for name in families), families)
         self.assertNotIn("DejaVu Sans", families - {plot_font_family()})

@@ -28,7 +28,8 @@ def configure_theme(root):
         fonts[name] = tkfont.Font(root=root, family=family, size=size, weight=weight)
     for name in ("TkDefaultFont", "TkTextFont", "TkFixedFont", "TkMenuFont", "TkHeadingFont", "TkTooltipFont",
                  "TkCaptionFont", "TkSmallCaptionFont", "TkIconFont"):
-        tkfont.nametofont(name, root=root).configure(family=family, size=GUI_FONT_SIZE)
+        # nametofont(root=...) is not available in Python 3.9.
+        tkfont.Font(root=root, name=name, exists=True).configure(family=family, size=GUI_FONT_SIZE)
     style = ttk.Style(root)
     if "clam" in style.theme_names():
         style.theme_use("clam")
@@ -139,7 +140,7 @@ class FormLayout:
         if not self.parent.winfo_exists():
             return
         width = max(80, self.parent.winfo_width() - 22)
-        font = tkfont.nametofont("TkDefaultFont", root=self.parent)
+        font = tkfont.Font(root=self.parent, name="TkDefaultFont", exists=True)
         key = (width, tuple(tuple(str(w) for w in row) for row in self.rows),
                tuple(font.actual().items()))
         if key == self._key:

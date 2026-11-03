@@ -2,10 +2,13 @@
 Small, dependency-free update checker for the CGYRO comparison tool.
 
 The checker compares the latest GitHub release and the default-branch VERSION
-file, using either endpoint if the other fails. It is synchronous so callers can
-choose the appropriate execution model (the Tk UI runs it in a worker thread).
+file, with a GitHub Contents API fallback when the raw host is unreachable.
+It is synchronous so callers can choose the appropriate execution model
+(the Tk UI runs it in a worker thread).
 """
 
+import base64
+import binascii
 import json
 import http.client
 import os
@@ -35,6 +38,7 @@ except ImportError:
 REPOSITORY_URL = "https://github.com/tdxy-liu/cgyro-plot-tools"
 RELEASE_API_URL = f"https://api.github.com/repos/tdxy-liu/cgyro-plot-tools/releases/latest"
 VERSION_URL = "https://raw.githubusercontent.com/tdxy-liu/cgyro-plot-tools/main/VERSION"
+VERSION_API_URL = "https://api.github.com/repos/tdxy-liu/cgyro-plot-tools/contents/VERSION?ref=main"
 DEFAULT_VERSION = "0.2.14"
 DEFAULT_TIMEOUT = 5.0
 DEFAULT_SSH_PORT = 22
@@ -564,6 +568,7 @@ def _fetch_text(url, timeout=DEFAULT_TIMEOUT, allow_not_found=False, proxy_url=N
         headers={
             "Accept": "application/vnd.github+json",
             "User-Agent": "CGYRO-Comparison-Tool-Update-Checker",
+            "Cache-Control": "no-cache",
         },
     )
     try:
@@ -628,7 +633,7 @@ def _release_info(payload, current_version):
     )
 
 
-def _manifest_info(payload, current_version):
+def _manifest_info(payload, current_version, source="GitHub VERSION file"):
     latest_version = normalize_version(payload)
     if latest_version is None:
         raise UpdateCheckError("The remote VERSION file contains an invalid version.")
@@ -643,8 +648,23 @@ def _manifest_info(payload, current_version):
         latest_version=latest_version,
         update_available=latest_key > current_key,
         release_url=REPOSITORY_URL,
-        source="GitHub VERSION file",
+        source=source,
     )
+
+
+def _api_manifest_info(payload, current_version):
+    """Read VERSION through api.github.com when the raw host is unreachable."""
+    try:
+        manifest = json.loads(payload)
+        if not isinstance(manifest, dict) or manifest.get("encoding") != "base64":
+            raise ValueError("Expected a base64 GitHub contents response")
+        content = manifest.get("content")
+        if not isinstance(content, str):
+            raise ValueError("Missing VERSION contents")
+        version = base64.b64decode("".join(content.split()), validate=True).decode("utf-8")
+    except (TypeError, ValueError, binascii.Error, UnicodeError) as exc:
+        raise UpdateCheckError("The GitHub VERSION API returned invalid data.") from exc
+    return _manifest_info(version, current_version, source="GitHub VERSION API")
 
 
 def check_for_updates(
@@ -654,7 +674,8 @@ def check_for_updates(
 ):
     """Check GitHub for a newer version.
 
-    ``UpdateCheckError`` is raised only after both supported endpoints fail.
+    Try the VERSION API if the raw file cannot be read. An old release alone
+    cannot establish that an unreleased source checkout is up to date.
     The function performs no UI work and can safely be called from a worker.
     """
     current_version = normalize_version(current_version)
@@ -665,10 +686,11 @@ def check_for_updates(
         with _update_proxy_session(proxy_config, timeout=timeout) as proxy_url:
             errors = []
             candidates = []
+            manifest_result = None
 
             try:
                 release_payload = _fetch_text(
-                    RELEASE_API_URL,
+                    _cache_busted_url(RELEASE_API_URL),
                     timeout=timeout,
                     allow_not_found=True,
                     proxy_url=proxy_url,
@@ -686,12 +708,31 @@ def check_for_updates(
                     timeout=timeout,
                     proxy_url=proxy_url,
                 )
-                candidates.append(_manifest_info(manifest_payload, current_version))
+                manifest_result = _manifest_info(manifest_payload, current_version)
             except UpdateCheckError as exc:
                 errors.append(exc)
+                try:
+                    api_payload = _fetch_text(
+                        _cache_busted_url(VERSION_API_URL),
+                        timeout=timeout,
+                        proxy_url=proxy_url,
+                    )
+                    manifest_result = _api_manifest_info(api_payload, current_version)
+                except UpdateCheckError as api_exc:
+                    errors.append(api_exc)
 
+            if manifest_result is not None:
+                candidates.append(manifest_result)
             if candidates:
-                return max(candidates, key=lambda info: _version_key(info.latest_version))
+                result = max(candidates, key=lambda info: _version_key(info.latest_version))
+                if manifest_result is None and not result.update_available:
+                    raise UpdateCheckError(
+                        f"Could not verify the latest source version (main/VERSION).\n"
+                        f"Current version: {current_version}; GitHub Release: {result.latest_version}.\n"
+                        "The release alone cannot confirm that you are up to date. "
+                        "Please retry or check Update Connection settings."
+                    ) from errors[-1]
+                return result
             if errors:
                 raise UpdateCheckError(
                     "Unable to check for updates. Please verify your internet connection."

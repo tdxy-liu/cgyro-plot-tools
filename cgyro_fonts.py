@@ -80,7 +80,7 @@ def gui_font_family(root):
         families = set(tkfont.families(root))
     _register_matplotlib_gui_fonts()
     family = next((name for name in GUI_FONT_FALLBACKS if name in families), None)
-    return (family or tkfont.nametofont("TkDefaultFont", root=root).actual("family"),
+    return (family or tkfont.Font(root=root, name="TkDefaultFont", exists=True).actual("family"),
             family is not None)
 
 

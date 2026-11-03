@@ -167,7 +167,8 @@ class UpdateReviewTests(unittest.TestCase):
 
     def test_valid_release_survives_manifest_network_failure(self):
         with patch.object(updater, "_fetch_text", side_effect=[
-                self.release("0.2.24"), updater.UpdateCheckError("offline")]):
+                self.release("0.2.24"), updater.UpdateCheckError("raw offline"),
+                updater.UpdateCheckError("API offline")]):
             result = updater.check_for_updates("0.2.22", proxy_config={"mode": "direct"})
         self.assertEqual(result.latest_version, "0.2.24")
 
