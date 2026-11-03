@@ -11,7 +11,7 @@ def parser():
     cli.add_argument("--gui", action="store_true", help="Open the independent GUI.")
     cli.add_argument("--case", action="append", default=[], help="Case folder; repeat for batch export.")
     cli.add_argument("--kx", type=float, default=0.)
-    cli.add_argument("--ky", type=float, default=.2, help="Initial physical ky magnitude, matched to nearest saved mode.")
+    cli.add_argument("--ky", type=float, default=.2, help="Fixed physical ky magnitude; matched once, then held for every step.")
     cli.add_argument("--steps", type=int, default=4, help="Number of panels, including the initial mode (1-20).")
     cli.add_argument("--direction", choices=("positive", "negative"), default="positive")
     cli.add_argument("--diagnostic", choices=("asym", "fullt"), default="asym")

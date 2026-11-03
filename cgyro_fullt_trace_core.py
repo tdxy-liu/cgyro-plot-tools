@@ -101,7 +101,9 @@ class TraceResult:
             "time_indices": self.time_indices.tolist(), "times": self.times.tolist(),
             "averaging": "arithmetic mean of all selected saved Re(T) samples",
             "ky_convention": "positive diagnosed ky; signed partner branches retained",
-            "negative_partner": "next (-kx_prime, -ky_prime) when ky_prime < 0",
+            "trace_rule": "fixed_ky_radial",
+            "fixed_ky": self.panels[0].mode.ky if self.panels else None,
+            "extremum_search": "only partner ky_prime equal to the initial matched ky",
             "stop_code": self.stop_code, "stop_reason": self.stop_reason,
             "panels": [{
                 "step": i + 1, "mode": asdict(panel.mode),
@@ -125,11 +127,6 @@ def _enable_private_decoder():
 def _cancelled(cancel):
     if cancel is not None and cancel.is_set():
         raise TraceCancelled("Trace cancelled; the previous result is retained.")
-
-
-def canonical_partner(kx, ky):
-    """Choose the stored half-plane representative, reversing BOTH coordinates."""
-    return Mode(-float(kx), -float(ky)) if ky < 0 else Mode(float(kx), abs(float(ky)))
 
 
 class FullTSource:
@@ -237,34 +234,38 @@ class FullTSource:
                 raise TraceError("The raw FULLT file changed during tracing; rerun after writing finishes.")
 
 
-def select_peak(values, kx, ky, direction, excluded=()):
-    """Pick a strict positive maximum or negative minimum from actual samples."""
+def select_peak(values, kx, ky, direction, excluded=(), *, fixed_ky):
+    """Pick an extremum on ky_prime=fixed_ky, varying only the radial mode."""
+    if not np.isfinite(fixed_ky) or fixed_ky < 0:
+        raise TraceError("The fixed ky must be a finite nonnegative saved mode.")
+    row = np.isclose(ky, fixed_ky, rtol=1e-8, atol=1e-12)
+    if np.count_nonzero(row) != 1:
+        raise TraceError("The fixed ky must identify exactly one saved partner row.")
     valid = np.isfinite(values) & (values > 0 if direction == "positive" else values < 0)
+    valid &= row[:, None]
     excluded_count = 0
     if excluded:
         before = np.count_nonzero(valid)
-        candidate_x = np.where(ky[:, None] < 0, -kx[None, :], kx[None, :])
-        candidate_y = np.abs(ky[:, None])
         for old in excluded:
-            visited = (np.isclose(candidate_x, old.kx, rtol=1e-8, atol=1e-12) &
-                       np.isclose(candidate_y, old.ky, rtol=1e-8, atol=1e-12))
+            visited = (np.isclose(kx[None, :], old.kx, rtol=1e-8, atol=1e-12) &
+                       np.isclose(ky[:, None], old.ky, rtol=1e-8, atol=1e-12))
             valid &= ~visited
         excluded_count = int(before - np.count_nonzero(valid))
     if not np.any(valid):
         return None, excluded_count
     extreme = float(np.max(values[valid]) if direction == "positive" else np.min(values[valid]))
     matches = np.argwhere(valid & (values == extreme))
-    # Exact ties prefer a directly stored positive partner, then small |ky|,
-    # small |kx|, negative kx. The tie count is included in the exported trace.
-    iy, ix = min(matches, key=lambda p: (ky[p[0]] < 0, abs(ky[p[0]]), abs(kx[p[1]]), kx[p[1]]))
+    # All candidates share one ky; exact ties prefer small |kx|, then negative kx.
+    iy, ix = min(matches, key=lambda p: (abs(kx[p[1]]), kx[p[1]]))
     return Peak(float(kx[ix]), float(ky[iy]), extreme,
-                canonical_partner(kx[ix], ky[iy]), bool(ky[iy] < 0), len(matches)), excluded_count
+                Mode(float(kx[ix]), float(fixed_ky)), False, len(matches)), excluded_count
 
 
 def trace_case(case, settings, *, progress=None, cancel=None):
-    """Trace extrema of time-averaged Re(T); each returned panel is one step."""
+    """Trace radial extrema of mean Re(T) while holding the matched initial ky."""
     with FullTSource(case, settings, progress, cancel) as source:
         indices = source.indices(Mode(settings.kx, abs(settings.ky)))
+        fixed_ky = source.mode(indices).ky
         result = TraceResult(source.case.name, source.reader.path.name, settings,
                              source.kx, source.ky, source.times, source.tids,
                              asdict(source.reader.layout), repr(source.reader.signature))
@@ -279,11 +280,11 @@ def trace_case(case, settings, *, progress=None, cancel=None):
             modes.append(mode)
             values = source.mean_map(indices)
             peak, excluded = select_peak(values, source.kx, source.ky, settings.direction,
-                                         modes if settings.cycles == "skip" else ())
+                                         modes if settings.cycles == "skip" else (), fixed_ky=fixed_ky)
             result.panels.append(TracePanel(mode, values, peak, excluded))
             if peak is None:
                 result.stop_code = "no_extremum"
-                result.stop_reason = "No eligible finite " + settings.direction + " T remains."
+                result.stop_reason = f"No eligible finite {settings.direction} T remains at fixed ky={fixed_ky:.6g}."
                 break
             if step + 1 == settings.steps:
                 result.stop_reason = f"Completed {settings.steps} requested panels."

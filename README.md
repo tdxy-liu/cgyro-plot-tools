@@ -6,6 +6,7 @@
 
 ### 最新更新
 
+- **v0.2.27 固定 ky 追踪**：FULLT Trace Studio 将最初匹配到的 ky 保持不变，只在 `ky′ = ky` 的分支选取最正/最负 T，沿 kx 逐步追踪；图片仅标注当前 kx、ky，移除 `next kx` 和 T 数值行。
 - **v0.2.26 独立 FULLT Trace Studio**：`python cgyro_fullt_trace.py` 启动专门的追踪 GUI，也可从主工具 `Plot -> FULLT Trace Studio...` 打开。逐步追踪最大正 T 或最小负 T，默认四张图上下排列，共用一个色标；提供 PDF/SVG、600 dpi PNG/TIFF 和完整追踪数据导出。支持命令行批量出图，无需 pygacode；详见 [FULLT 追踪说明书](FULLT_TRACE_GUIDE.md)。
 - **v0.2.25 ky 显示约定**：普通谱图和选择器采用正 ky 表示；FULLT 保留正负 partner 分支并统一坐标约定。FULLT 图片移除标题中的 `FULLT asym`、`T` 下标中的 `asym`、色标标题及 source ky index。
 - **v0.2.21 HTTP 代理更新**: 版本检查和 Git 更新支持 HTTP CONNECT；未保存连接配置时默认使用 `http://47.102.120.146:18889`。在 `Help -> Update Connection...` 可选择 HTTP/Direct/SOCKS/SSH；命令行支持 `--http-proxy [URL]`。只影响工具更新，不改系统代理或 Git 全局配置。见 [HTTP 代理说明](UPDATE_PROXY.md)。

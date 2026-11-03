@@ -80,7 +80,7 @@ def shared_scale(result, settings):
 
 
 def build_figure(result, settings=None):
-    """Stack one step per row; whitespace headers never obscure measured points."""
+    """Stack one step per row; show only each panel's current mode in its header."""
     settings = settings or FigureSettings()
     settings.validate()
     if not result.panels:
@@ -88,9 +88,9 @@ def build_figure(result, settings=None):
     divisor, limit, maximum = shared_scale(result, settings)
     norm = TwoSlopeNorm(vmin=-limit, vcenter=0., vmax=limit)
     n = len(result.panels)
-    # Reserve a physical header strip for current/next kx and a bottom legend.
+    # Reserve a physical header strip for the current mode and a bottom legend.
     narrow = settings.width_mm / (settings.font_pt / 9.) < 130
-    header_mm = (17. if narrow else 10.5) * settings.font_pt / 9.
+    header_mm = (11. if narrow else 6.) * settings.font_pt / 9.
     title = settings.title
     if title is None:
         title = f"{result.case}  |  t = {result.times[0]:g}–{result.times[-1]:g}  |  {result.settings.direction} T"
@@ -150,21 +150,12 @@ def build_figure(result, settings=None):
                 ax.set_xlabel(r"$k_x'\rho_s$", fontsize=settings.font_pt, labelpad=2)
             quantity = r"$T^\Phi(k,k')/\max|T|$" if settings.normalize else r"$T^\Phi(k,k')$"
             label = f"({chr(97 + i)}) " + quantity
-            header.text(0, .84 if narrow else .72, label, fontsize=settings.font_pt, va="center")
+            header.text(0, .77 if narrow else .5, label, fontsize=settings.font_pt, va="center")
             current = rf"$k_x\rho_s={panel.mode.kx:.4g},\ k_y\rho_s={panel.mode.ky:.4g}$"
-            if panel.peak:
-                value_label = "raw T" if settings.normalize else "T"
-                following = f"next kx = {panel.peak.next_mode.kx:.4g}; {value_label} = {panel.peak.value:.3g}"
-                if panel.peak.conjugated:
-                    following += " (*)"
-            else:
-                following = "No eligible extremum"
             if narrow:
-                header.text(0, .5, current, ha="left", va="center", fontsize=settings.font_pt)
-                header.text(0, .16, following, ha="left", va="center", fontsize=settings.font_pt - 1)
+                header.text(0, .25, current, ha="left", va="center", fontsize=settings.font_pt)
             else:
-                header.text(1, .72, current, ha="right", va="center", fontsize=settings.font_pt)
-                header.text(1, .23, following, ha="right", va="center", fontsize=settings.font_pt - 1)
+                header.text(1, .5, current, ha="right", va="center", fontsize=settings.font_pt)
         cax = fig.add_subplot(outer[:, 1])
         position = cax.get_position()
         cax.set_position([position.x0, axes[-1].get_position().y0, position.width,
@@ -244,7 +235,8 @@ def export_bundle(result, settings, destination, formats=("pdf", "svg", "png")):
         "Each panel is a successive extremum of the same time-averaged native Re(T) diagnostic.\n"
         "All panels share one zero-centred linear color scale. No percentile clipping, smoothing or per-panel scaling.\n"
         "Diamonds, when selected, are discrete sample marks, not interpolated lobes.\n"
-        "(*) means the selected negative-ky partner is represented by (-kx,-ky) at the next step.\n"
+        "The initial matched ky stays fixed. Extrema are selected only along ky_prime=ky; only kx changes.\n"
+        "Other ky_prime rows remain visible but do not participate in tracing.\n"
         "trace.csv records the path; plot_data.csv and maps.npz retain every grid sample.\n"
         "Nonfinite samples invalidate that grid point for the entire selected average.\n"
         "trace.json records time samples, options, color scaling, input identity and stop reason.\n"

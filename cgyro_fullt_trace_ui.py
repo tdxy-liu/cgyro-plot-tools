@@ -86,12 +86,12 @@ class FullTTraceApp:
         for tab in (trace_tab, figure_tab):
             tab.columnconfigure(1, weight=1)
         trace_fields = [("diagnostic", "Diagnostic", DIAGNOSTICS), ("kx", "Initial kx", None),
-                        ("ky", "Initial ky", None), ("steps", "Panels / steps", None),
+                        ("ky", "Fixed ky", None), ("steps", "Panels / steps", None),
                         ("direction", "Follow", DIRECTIONS), ("cycles", "On repeated mode", CYCLES),
                         ("t_start", "Time start", None), ("t_end", "Time end", None)]
         for row, (key, label, choices) in enumerate(trace_fields):
             self._entry(trace_tab, row, key, label, choices)
-        ttk.Label(trace_tab, text="Blank time start: last 50% of the chosen span.\nBlank time end: last saved sample.\n\nSelection uses the signed mean Re(T),\nwith the same time window at every step.",
+        ttk.Label(trace_tab, text="Blank time start: last 50% of the chosen span.\nBlank time end: last saved sample.\n\nFixed ky at every step; only kx changes.\nExtrema use the row ky' = fixed ky\nand the same mean Re(T) time window.",
                   wraplength=315, foreground="#586575").grid(row=8, column=0, columnspan=2, sticky="w", pady=12)
         figure_fields = [("width_mm", "Width (mm)", None), ("panel_height_mm", "Panel height (mm)", None),
                          ("font_pt", "Font (pt)", None), ("color_max", "Shared color max", None),
@@ -105,7 +105,7 @@ class FullTTraceApp:
             row=10, column=0, columnspan=2, sticky="w", pady=6)
         self.vars["hide_title"] = tk.BooleanVar(value=False)
         ttk.Checkbutton(figure_tab, text="Hide case/time title", variable=self.vars["hide_title"]).grid(row=11, column=0, columnspan=2, sticky="w")
-        ttk.Label(figure_tab, text="Blank color max: automatic shared range.\nBlank limits: full grid; tracing always uses the full grid.\nBlank title: case and actual averaging times.",
+        ttk.Label(figure_tab, text="Blank color max: automatic shared range.\nBlank limits: full grid; tracing uses the full kx row at fixed ky.\nBlank title: case and actual averaging times.",
                   wraplength=315, foreground="#586575").grid(row=12, column=0, columnspan=2, sticky="w", pady=7)
         for frame, canvas in self.option_canvases:
             self._bind_option_scroll(frame, canvas)

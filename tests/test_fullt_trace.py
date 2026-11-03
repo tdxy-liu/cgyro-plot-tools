@@ -21,22 +21,27 @@ from cgyro_fullt_trace_plot import FigureSettings, build_figure, export_bundle
 from cgyro_fullt_reader import FTZWriter, Layout
 
 
-def make_case(folder, *, compressed=True, sign=-1, ns=8):
+def make_case(folder, *, compressed=True, sign=-1, ns=8, off_branch_extrema=False):
     """Explicit SYNTHETIC fixture; never used as application fallback/demo data."""
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     m = Layout(8, 4, 1, ns, 4, .1, sign * .1)
     blocks = [np.zeros(m.shape, dtype=m.dtype) for _ in range(m.ny)]
-    # Distinct positive and negative four-panel paths; include a negative-ky
-    # partner that requires reversing BOTH kx and ky at the next step.
-    paths = [((4, 1), (5, 4), 10), ((5, 1), (6, 5), 8),
-             ((6, 2), (5, 0), 6), ((3, 3), (4, 3), 4),
-             ((4, 1), (3, 4), -9), ((3, 1), (2, 5), -7),
-             ((2, 2), (4, 6), -5), ((4, 3), (4, 3), -3)]
+    # Distinct positive and negative radial paths at the same ky throughout.
+    paths = [((4, 1), (5, 4), 10), ((5, 1), (6, 4), 8),
+             ((6, 1), (7, 4), 6), ((7, 1), (4, 4), 4),
+             ((4, 1), (3, 4), -9), ((3, 1), (2, 4), -7),
+             ((2, 1), (1, 4), -5), ((1, 1), (4, 4), -3)]
     for (source_x, source_y), (partner_x, partner_y), value in paths:
         if ns == 1 and source_x != 4:
             continue
         blocks[source_y][partner_x, partner_y, 0, 0 if ns == 1 else source_x] = value
+    if off_branch_extrema:
+        # Larger extrema on ky'=0, ky'=-ky and a different positive ky must
+        # remain visible in the full map without diverting the radial trace.
+        blocks[1][4, 3, 0, :] = -100
+        blocks[1][2, 2, 0, :] = -200
+        blocks[1][6, 5, 0, :] = 100
     times = np.array([100., 200., 300., 400.])
     (folder / "input.cgyro").write_text(
         f"FULL_T_ASYM_COMPRESSION={int(compressed)}\nFULL_T_REAL_ONLY=1\n"
@@ -66,20 +71,36 @@ class FullTTraceTests(unittest.TestCase):
         self.case = make_case(self.folder / "synthetic_fixture")
         self.settings = TraceSettings(ky=.1, steps=4, t_start=100., t_end=300.)
 
-    def test_four_step_positive_chain_and_negative_partner(self):
+    def test_four_step_positive_chain_holds_initial_ky(self):
         result = trace_case(self.case, self.settings)
         np.testing.assert_allclose([[p.mode.kx, p.mode.ky] for p in result.panels],
-                                   [[0, .1], [.1, .1], [.2, .2], [-.1, .3]])
+                                   [[0, .1], [.1, .1], [.2, .1], [.3, .1]])
         np.testing.assert_allclose([p.peak.value for p in result.panels], [20, 16, 12, 8])
         self.assertEqual(result.stop_code, "completed")
-        self.assertTrue(result.panels[2].peak.conjugated)
-        np.testing.assert_allclose([result.panels[2].peak.kx, result.panels[2].peak.ky], [.1, -.3])
+        self.assertTrue(all(not panel.peak.conjugated for panel in result.panels))
+        self.assertEqual(result.metadata()["trace_rule"], "fixed_ky_radial")
+        self.assertAlmostEqual(result.metadata()["fixed_ky"], .1)
 
     def test_negative_chain_preserves_signed_T(self):
         result = trace_case(self.case, replace(self.settings, direction="negative"))
         np.testing.assert_allclose([[p.mode.kx, p.mode.ky] for p in result.panels],
-                                   [[0, .1], [-.1, .1], [-.2, .2], [0, .3]])
+                                   [[0, .1], [-.1, .1], [-.2, .1], [-.3, .1]])
         np.testing.assert_allclose([p.peak.value for p in result.panels], [-18, -14, -10, -6])
+
+    def test_larger_extrema_on_other_ky_rows_cannot_change_trace(self):
+        for compressed in (True, False):
+            case = make_case(self.folder / f"other_rows_{compressed}", compressed=compressed, off_branch_extrema=True)
+            for direction, expected_x in (("positive", [0, .1, .2, .3]), ("negative", [0, -.1, -.2, -.3])):
+                with self.subTest(compressed=compressed, direction=direction):
+                    result = trace_case(case, replace(self.settings, ky=-.11, direction=direction))
+                    np.testing.assert_allclose([p.mode.kx for p in result.panels], expected_x)
+                    for panel in result.panels:
+                        self.assertAlmostEqual(panel.mode.ky, .1)
+                        self.assertAlmostEqual(panel.peak.ky, .1)
+                        self.assertAlmostEqual(panel.peak.next_mode.ky, .1)
+                        self.assertEqual(panel.values[3, 4], -200.)
+                        self.assertEqual(panel.values[2, 2], -400.)
+                        self.assertEqual(panel.values[5, 6], 200.)
 
     def test_raw_and_ftz_and_ky_conventions_agree(self):
         expected = trace_case(self.case, self.settings)
@@ -105,7 +126,7 @@ class FullTTraceTests(unittest.TestCase):
                 second = source.mean_map((5, 1))
                 self.assertEqual(block.call_count, 3)
                 self.assertAlmostEqual(first[4, 5], 20.)
-                self.assertAlmostEqual(second[5, 6], 16.)
+                self.assertAlmostEqual(second[4, 6], 16.)
 
     def test_repeated_mode_policies_and_missing_sign(self):
         for policy, count, code in (("stop", 1, "cycle"), ("allow", 4, "completed"), ("skip", 1, "no_extremum")):
@@ -130,24 +151,39 @@ class FullTTraceTests(unittest.TestCase):
         with self.assertRaisesRegex(TraceError, "kx=0"):
             trace_case(case, replace(self.settings, kx=.1))
 
-    def test_skip_excludes_both_half_plane_representations_of_visited_mode(self):
+    def test_skip_only_excludes_visited_modes_on_fixed_ky(self):
         kx = np.array([-.1, 0., .1])
         ky = np.array([-.1, 0., .1])
         values = np.array([[10., 0., 0.], [0., 0., 0.], [4., 0., 8.]])
-        peak, count = select_peak(values, kx, ky, "positive", [Mode(.1, .1)])
-        self.assertEqual(count, 2)
+        peak, count = select_peak(values, kx, ky, "positive", [Mode(.1, .1)], fixed_ky=.1)
+        self.assertEqual(count, 1)
         self.assertEqual(peak.next_mode, Mode(-.1, .1))
         self.assertEqual(peak.value, 4.)
+        peak, count = select_peak(values, kx, ky, "positive", [Mode(.1, 0.)], fixed_ky=.1)
+        self.assertEqual(count, 0)
+        self.assertEqual(peak.value, 8.)
 
-    def test_nonfinite_extrema_and_unavailable_nyquist_do_not_corrupt_chain(self):
+    def test_nonfinite_and_wrong_sign_on_fixed_row_do_not_fall_back_to_other_ky(self):
         values = np.zeros((7, 8))
-        values[0, 7] = np.nan
-        values[1, 0] = 50.
+        values[4, 7] = np.nan
+        values[4, 3] = -2.
+        values[3, 0] = 50.
         with patch.object(FullTSource, "mean_map", return_value=values):
             result = trace_case(self.case, self.settings)
-        self.assertEqual(result.stop_code, "unavailable_mode")
-        self.assertAlmostEqual(result.panels[0].peak.next_mode.kx, .4)
+        self.assertEqual(result.stop_code, "no_extremum")
+        self.assertIn("fixed ky=0.1", result.stop_reason)
+        self.assertIsNone(result.panels[0].peak)
         self.assertEqual(result.metadata()["panels"][0]["nonfinite_points"], 1)
+
+    def test_zero_ky_stays_zero_through_repeated_steps(self):
+        values = np.zeros((7, 8))
+        values[3, 5] = 2.
+        values[4, 7] = 100.
+        settings = replace(self.settings, ky=0., cycles="allow")
+        with patch.object(FullTSource, "mean_map", return_value=values):
+            result = trace_case(self.case, settings)
+        self.assertEqual(len(result.panels), 4)
+        self.assertTrue(all(p.mode.ky == 0. and p.peak.ky == 0. for p in result.panels))
 
     def test_cancel_closes_reader_and_produces_no_result(self):
         cancel = threading.Event()
@@ -173,6 +209,8 @@ class FullTTraceTests(unittest.TestCase):
             for ax in fig.axes:
                 boxes = []
                 for text in ax.texts:
+                    self.assertNotIn("next", text.get_text().lower())
+                    self.assertNotIn("T =", text.get_text())
                     bounds = text.get_window_extent(renderer)
                     self.assertGreaterEqual(bounds.x0, 0)
                     self.assertLessEqual(bounds.x1, fig.bbox.width)
