@@ -12,6 +12,7 @@ from matplotlib.collections import PolyCollection
 from matplotlib.colors import TwoSlopeNorm
 from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator, ScalarFormatter
+from matplotlib.transforms import ScaledTranslation
 import numpy as np
 
 try:
@@ -223,7 +224,14 @@ def build_figure(result, settings=None):
         cbar.formatter = formatter
         cbar.update_ticks()
         cbar.ax.tick_params(labelsize=settings.font_pt - 1, length=2.5)
-        cbar.ax.yaxis.get_offset_text().set_fontsize(settings.font_pt - 1)
+        # Grow the scientific multiplier into the colorbar's right margin,
+        # rather than left over the first panel's kx/ky header. Point padding
+        # stays consistent when the preview resizes or export DPI changes.
+        cbar.ax.yaxis.set_offset_position("right")
+        offset = cbar.ax.yaxis.get_offset_text()
+        offset.set_fontsize(settings.font_pt - 1)
+        offset.set_ha("left")
+        offset.set_transform(offset.get_transform() + ScaledTranslation(3 / 72, 0, fig.dpi_scale_trans))
         fig.text(left_mm / settings.width_mm, 1 - 2 / height_mm, title,
                  ha="left", va="top", fontsize=settings.font_pt)
         fig._fullt_trace_axes = axes
