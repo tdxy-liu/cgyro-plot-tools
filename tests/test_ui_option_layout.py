@@ -17,7 +17,7 @@ class OptionLayoutTests(unittest.TestCase):
         root.attributes("-alpha", 0)
         root.tk.call("tk", "scaling", scaling)
         try:
-            with patch.dict(os.environ, {"CGYRO_AUTO_WORKSPACE": ""}), patch.object(
+            with patch.dict(os.environ, {"CGYRO_AUTO_WORKSPACE": "", "CGYRO_UI_LANGUAGE": "en"}), patch.object(
                 CGYRO_Comparison, "_check_for_updates_silently", lambda self: None
             ):
                 app = CGYRO_Comparison(root)
@@ -122,7 +122,10 @@ class OptionLayoutTests(unittest.TestCase):
             self.assert_readable(app, self.theta_controls(app))
             self.assertEqual(app.fluc_theta_kx_entry.grid_info()["columnspan"], 1)
             self.assertEqual(app.fluc_theta_ky_entry.grid_info()["columnspan"], 1)
-            self.assertEqual(app.fluc_theta_ky_entry.grid_info()["column"], 3)
+            # Complete fields now occupy aligned rows, rather than squeezing
+            # both kx and ky into one narrow four-column row.
+            self.assertEqual(app.fluc_theta_kx_entry.grid_info()["column"], app.fluc_theta_ky_entry.grid_info()["column"])
+            self.assertLess(app.fluc_theta_kx_entry.winfo_y(), app.fluc_theta_ky_entry.winfo_y())
             self.assertEqual((app.t_start_var.get(), app.t_end_var.get()), ("500", "1200"))
             self.assertEqual((app.fluc_theta_kx_var.get(), app.fluc_theta_ky_var.get()), ("0", "0.3"))
             app.fluc_advanced_var.set(True)

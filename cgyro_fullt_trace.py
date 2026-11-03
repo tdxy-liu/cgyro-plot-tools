@@ -1,4 +1,4 @@
-"""Standalone FULLT Trace Studio: GUI by default, batch export with --output."""
+"""Standalone CGYRO Transfer Explorer: GUI by default, batch export with --output."""
 
 import argparse
 from pathlib import Path

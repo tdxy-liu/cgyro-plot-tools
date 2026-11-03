@@ -350,6 +350,7 @@ class FullTTraceTests(unittest.TestCase):
             self.assertEqual(len(ax.collections[0]._triangulation.get_masked_triangles()), expected)
 
     @unittest.skipUnless(os.environ.get("CGYRO_TEST_TK_LAYOUT") == "1", "optional Tk integration")
+    @patch.dict(os.environ, {"CGYRO_UI_LANGUAGE": "en"})
     def test_gui_traces_and_restyles_without_rereading_and_scrolls_options(self):
         import tkinter as tk
         from cgyro_fullt_trace_ui import FullTTraceApp
@@ -383,7 +384,7 @@ class FullTTraceTests(unittest.TestCase):
             self.assertEqual(app.canvas.figure._fullt_trace_scale["limit"], 1.)
             self.assertEqual(app.canvas.figure._fullt_trace_scale["panel_multipliers"], [1, 1, 10, 5])
             self.assertIn("multipliers: 1, 1, 10, 5", app.status.get())
-            self.assertIn("color range: +/-1", app.status.get())
+            self.assertIn("color range: \u00b11", app.status.get())
             session = self.folder / "session.json"
             with patch("cgyro_fullt_trace_ui.filedialog.asksaveasfilename", return_value=str(session)):
                 app.save_session()

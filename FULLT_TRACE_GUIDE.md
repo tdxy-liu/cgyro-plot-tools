@@ -1,6 +1,8 @@
-# FULLT Trace Studio 使用说明
+# CGYRO Transfer Explorer 使用说明
 
-适用版本：v0.2.31。独立 GUI 与命令行共用同一套读取、追踪及绘图逻辑。
+适用版本：v0.2.32。独立 GUI 与命令行共用同一套读取、追踪及绘图逻辑。
+
+新增 **设置 → 语言 / Settings → Language** 即时切换中英文，并保存偏好。追踪设置顶部可保存参数预设；低频说明和设置按需展开，导出入口位于结果区下方。详见 [界面说明](GUI_GUIDE.md)。
 
 ## 1. 启动与依赖
 
@@ -10,7 +12,7 @@
 python cgyro_fullt_trace.py
 ```
 
-也可在原比较工具中选择 **Plot -> FULLT Trace Studio...**。它会打开独立窗口，并带入当前选中的 case；没有选中时带入全部 case。
+也可在原比较工具中选择 **Plot -> CGYRO Transfer Explorer...**。它会打开独立窗口，并带入当前选中的 case；没有选中时带入全部 case。
 
 需要 Python 3.9 或更新版本、numpy、matplotlib；GUI 另外需要 tkinter。读取 FTZ 压缩文件还需要 zstandard。可一次安装独立程序的 Python 依赖：
 
@@ -48,8 +50,8 @@ python -m pip install -r requirements-fullt-trace.txt
 1. **Add case...** 添加一个或多个 case，可在列表中多选。
 2. 在 **Trace** 页选择 `FULLT_ASYM` 或 `FULLT`，设置 **Initial kx**、**Fixed ky**、步数及正/负方向。
 3. 填写 **Time start / Time end**。两项留空时取实际时间跨度的后半段。只留空 start 时，从首个时间到所填 end 的中点开始；end 留空时取最后保存时间。时间窗包括两端的样本，空窗口会报错。
-4. 点击 **Trace selected cases**。读取在后台进行，**Cancel** 可取消并保留先前结果。无需一次读入全部时间历史，同一 ky 的均值会在内存预算内复用。
-5. 右侧下拉框切换 case；**Stacked figure** 查看纵向排图，**Trace coordinates** 查看每步当前模式、极值位置、T 值及下一步模式。
+4. 点击 **开始追踪 / Trace cases**。读取在后台进行，**Cancel** 可取消并保留先前结果。无需一次读入全部时间历史，同一 ky 的均值会在内存预算内复用。
+5. 右侧下拉框切换 case；**多面板预览 / Stacked figure** 查看纵向排图，**追踪坐标与数值 / Trace coordinates and values** 查看每步当前模式、极值位置、T 值及下一步模式。
 
 重复模式的处理：
 
@@ -61,7 +63,7 @@ python -m pip install -r requirements-fullt-trace.txt
 
 若固定 ky 行内的极值恰好并列，按较小的 `|kx′|`、再按较小的 kx 确定；并列数量写入数据。
 
-## 4. Publication 页与共享色标
+## 4. 出图样式 / Figure style 页与共享色标
 
 每一步一行，上下排列；右侧单一红—白—蓝色标贯穿全部 panel。共用横纵坐标范围，只在最下方标注横轴；每张图上方留白标注面板编号、带放大倍数的 T 符号和当前 kx/ky，不显示 `next kx` 或 T 数值行。当前模式使用带白边的实心黑色菱形，不显示空心圆、所选极值标记或底部标记图例。详细数值保留在坐标表和导出文件中。
 
@@ -81,7 +83,7 @@ python -m pip install -r requirements-fullt-trace.txt
 | Colorbar label | 默认空白，可选填。 |
 | Export DPI | 默认 600；支持 300–1200。 |
 
-点击 **Apply publication style to preview** 即可修改样式，无需重新读取数据。修改初始模式、时间窗等 Trace 参数后，需要重新点击 **Trace selected cases** 才会重新计算。
+点击 **应用出图样式 / Apply figure style** 即可修改样式，无需重新读取数据。修改初始模式、时间窗等 Trace 参数后，需要重新点击 **开始追踪 / Trace cases** 才会重新计算。
 
 例如第三张显示 `10 × T`，表示着色值为原始 T 的 10 倍；色标范围内的读数须除以 10 才得到原始量。如果同时勾选全局归一化，还要乘回导出元数据中的 `divisor`。放大后超出色标范围的点用端点颜色表示，精确数值请看 CSV，不能由饱和颜色反推。**有面板倍数时不能直接用颜色深浅比较原始强弱**，应结合倍数或查看原始数据。自动倍数依据每张完整谱图的有限最大绝对值计算，不随缩放坐标范围而改变；全零/全非有限值面板不放大。追踪选点始终使用原始值。状态栏显示实际应用的倍数及色标范围。
 

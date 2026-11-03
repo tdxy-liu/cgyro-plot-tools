@@ -10,8 +10,12 @@ from functools import lru_cache
 from tkinter import messagebox
 
 import matplotlib as mpl
-from matplotlib import font_manager as mpl_font_manager
 import numpy as np
+
+try:
+    from cgyro_fonts import plot_font_family, plot_font_families, plot_font_style
+except ImportError:
+    from .cgyro_fonts import plot_font_family, plot_font_families, plot_font_style
 
 
 @lru_cache(maxsize=256)
@@ -74,32 +78,8 @@ PLOT_MARKER_SIZE = 4.0
 TICK_LABEL_FONTSIZE = 14
 MAIN_FONT_FONTSIZE = 14
 LEGEND_FONT_FONTSIZE = 10
-PREFERRED_FONT_FAMILIES = [
-    "Arial",
-    "DejaVu Sans",
-    "Liberation Sans",
-    "Noto Sans",
-    "Helvetica",
-]
-
-
-def _resolve_font_family(preferred_fonts):
-    """Return the first installed font from `preferred_fonts`, with a bundled fallback."""
-    for font_name in preferred_fonts:
-        try:
-            prop = mpl_font_manager.FontProperties(family=font_name)
-            font_path = mpl_font_manager.findfont(prop, fallback_to_default=False)
-            if font_path and os.path.exists(font_path):
-                return font_name
-        except Exception:
-            continue
-    return "DejaVu Sans"
-
-
-FONT_FAMILY = _resolve_font_family(PREFERRED_FONT_FAMILIES)
-FONT_FALLBACKS = [FONT_FAMILY] + [
-    name for name in PREFERRED_FONT_FAMILIES if name != FONT_FAMILY
-]
+FONT_FAMILY = plot_font_family()
+FONT_FALLBACKS = plot_font_families()
 
 try:
     from cgyro_comparison_plotting_zf import ZfPlotting
@@ -157,8 +137,7 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
         except Exception:
             pass
         style_updates = {
-            'font.family': 'sans-serif',
-            'font.sans-serif': FONT_FALLBACKS,
+            **plot_font_style(),
             'font.size': MAIN_FONT_FONTSIZE,
             'axes.titlesize': MAIN_FONT_FONTSIZE,
             'axes.labelsize': MAIN_FONT_FONTSIZE,
@@ -206,18 +185,18 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
                 pass
             for tick in list(getattr(ax, 'get_xticklabels', lambda: [])()) + list(getattr(ax, 'get_yticklabels', lambda: [])()):
                 try:
-                    tick.set_fontname(FONT_FAMILY)
+                    tick.set_fontfamily(FONT_FALLBACKS)
                 except Exception:
                     pass
             try:
-                ax.xaxis.label.set_fontname(FONT_FAMILY)
-                ax.yaxis.label.set_fontname(FONT_FAMILY)
+                ax.xaxis.label.set_fontfamily(FONT_FALLBACKS)
+                ax.yaxis.label.set_fontfamily(FONT_FALLBACKS)
                 ax.xaxis.label.set_fontsize(MAIN_FONT_FONTSIZE)
                 ax.yaxis.label.set_fontsize(MAIN_FONT_FONTSIZE)
             except Exception:
                 pass
             try:
-                ax.title.set_fontname(FONT_FAMILY)
+                ax.title.set_fontfamily(FONT_FALLBACKS)
                 ax.title.set_fontsize(MAIN_FONT_FONTSIZE)
             except Exception:
                 pass
@@ -225,11 +204,11 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
                 leg = ax.get_legend()
                 if leg is not None:
                     for txt in leg.get_texts():
-                        txt.set_fontname(FONT_FAMILY)
+                        txt.set_fontfamily(FONT_FALLBACKS)
                         txt.set_fontsize(LEGEND_FONT_FONTSIZE)
                     ttl = leg.get_title()
                     if ttl is not None:
-                        ttl.set_fontname(FONT_FAMILY)
+                        ttl.set_fontfamily(FONT_FALLBACKS)
                         ttl.set_fontsize(LEGEND_FONT_FONTSIZE)
             except Exception:
                 pass
@@ -249,7 +228,7 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
             txts = []
         for txt in txts:
             try:
-                txt.set_fontname(FONT_FAMILY)
+                txt.set_fontfamily(FONT_FALLBACKS)
                 txt.set_fontsize(MAIN_FONT_FONTSIZE)
             except Exception:
                 pass
@@ -658,9 +637,11 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
             try:
                 mode = str(self.time_mode_var.get()).strip().lower()
             except Exception:
-                mode = "last percent"
+                mode = "manual start/end"
 
-            if t_start_str or t_end_str or mode in ("manual start/end", "manual range"):
+            # Retained manual entries are disabled in automatic GUI modes.
+            # The selected mode must take precedence over those inactive values.
+            if mode not in ("full range", "last duration", "last percent"):
                 t_start = float(t_start_str) if t_start_str else default_start
                 t_end = float(t_end_str) if t_end_str else t_max
             elif mode == "full range":

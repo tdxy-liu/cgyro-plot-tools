@@ -18,16 +18,15 @@ import numpy as np
 try:
     from cgyro_io import write_json_atomic
     from cgyro_fullt_style import FULLT_DIVERGING_CMAP, SMOOTH_CORE_FRACTION, smooth_diamond_mesh
+    from cgyro_fonts import plot_font_style, configure_plot_fonts
 except ImportError:
     from .cgyro_io import write_json_atomic
     from .cgyro_fullt_style import FULLT_DIVERGING_CMAP, SMOOTH_CORE_FRACTION, smooth_diamond_mesh
+    from .cgyro_fonts import plot_font_style, configure_plot_fonts
 
 
 PUBLICATION_STYLE = {
-    "font.family": "sans-serif", "font.sans-serif": ["Arial", "DejaVu Sans"],
-    "font.size": 9, "mathtext.fontset": "dejavusans", "pdf.fonttype": 42,
-    "ps.fonttype": 42, "svg.fonttype": "none", "axes.linewidth": .65,
-    "axes.unicode_minus": True, "text.usetex": False,
+    **plot_font_style(), "font.size": 9, "axes.linewidth": .65,
 }
 PREVIEW_DPI = 110  # Interactive preview only; exported rasters use settings.dpi (>=300).
 
@@ -134,6 +133,7 @@ def shared_scale(result, settings):
 
 def build_figure(result, settings=None):
     """Stack one step per row; show only each panel's current mode in its header."""
+    configure_plot_fonts()
     settings = settings or FigureSettings()
     settings.validate()
     if not result.panels:
