@@ -632,18 +632,21 @@ class CgyroUiMixin:
         if not hasattr(self, "_time_form"):
             return
         mode = self.time_mode_var.get()
-        for widget in (self.time_span_label, self.time_span_entry):
+        for widget in (self.time_span_label, self.time_span_entry,
+                       self.t_start_label, self.t_start_entry, self.t_end_label, self.t_end_entry):
             widget.grid_remove()
         manual = mode == "Manual Start/End"
         for entry in (self.t_start_entry, self.t_end_entry):
             entry.configure(state="normal" if manual else "disabled")
         rows = [(self.time_mode_label, self.time_mode_combo)]
-        if mode in ("Last percent", "Last duration"):
+        if manual:
+            rows.extend([(self.t_start_label, self.t_start_entry), (self.t_end_label, self.t_end_entry)])
+        elif mode in ("Last percent", "Last duration"):
             percent = mode == "Last percent"
             self.time_span_label.configure(text=self._ui_text("末段比例 (%)", "Last (%)") if percent else self._ui_text("末段时长", "Duration"))
             self.time_span_entry.configure(textvariable=self.time_percent_var if percent else self.time_duration_var)
             rows.append((self.time_span_label, self.time_span_entry))
-        rows.extend([(self.t_start_label, self.t_start_entry), (self.t_end_label, self.t_end_entry), self.log_options_frame])
+        rows.append(self.log_options_frame)
         self._time_form.set_rows(rows)
 
     def _reflow_diagnostic_forms(self):
@@ -882,7 +885,6 @@ class CgyroUiMixin:
             label="Full Range",
             variable=self.time_mode_var,
             value="Full range",
-            command=self._clear_simple_time_entries,
         )
         time_menu.add_separator()
         time_menu.add_command(label="Reset Time Window", command=self.clear_time_range)
@@ -2324,12 +2326,6 @@ class CgyroUiMixin:
         dialog.bind("<Escape>", lambda _event: dialog.destroy())
         kx_min_entry.focus_set()
 
-    def _clear_simple_time_entries(self):
-        """Clear left-panel time entries so the top Time menu controls averaging."""
-        self.t_start_var.set("")
-        self.t_end_var.set("")
-        self._refresh_entry_placeholders()
-
     def _set_time_last_percent(self):
         """Prompt for the final time percentage used by the top Time menu."""
         try:
@@ -2348,7 +2344,6 @@ class CgyroUiMixin:
             return
         self.time_percent_var.set(f"{value:g}")
         self.time_mode_var.set("Last percent")
-        self._clear_simple_time_entries()
 
     def _set_time_last_duration(self):
         """Prompt for the final physical-time duration used by the top Time menu."""
@@ -2367,7 +2362,6 @@ class CgyroUiMixin:
             return
         self.time_duration_var.set(f"{value:g}")
         self.time_mode_var.set("Last duration")
-        self._clear_simple_time_entries()
 
     def _browse_linear_gamma_file(self):
         """Open file chooser and update the linear omega/gamma reference file path."""

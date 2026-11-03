@@ -639,7 +639,7 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
             except Exception:
                 mode = "manual start/end"
 
-            # Retained manual entries are disabled in automatic GUI modes.
+            # Retained manual entries are hidden in automatic GUI modes.
             # The selected mode must take precedence over those inactive values.
             if mode not in ("full range", "last duration", "last percent"):
                 t_start = float(t_start_str) if t_start_str else default_start

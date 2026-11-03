@@ -235,19 +235,45 @@ class GuiWorkflowTests(unittest.TestCase):
 
     def test_time_mode_uses_active_controls_and_preserves_manual_input(self):
         import numpy as np
+        from cgyro_ui_language import get_language
         with self.app() as app:
             app.t_start_var.set("300")
             app.t_end_var.set("600")
             time = np.arange(1001.)
-            app.time_mode_var.set("Last percent")
-            app.time_percent_var.set("20")
-            self.assertEqual(app._get_time_indices(time)[1:], (800., 1000.))
-            self.assertTrue(app.t_start_entry.instate(["disabled"]))
-            app.time_mode_var.set("Full range")
-            self.assertEqual(app._get_time_indices(time)[1:], (0., 1000.))
-            app.time_mode_var.set("Manual Start/End")
-            self.assertEqual(app._get_time_indices(time)[1:], (300., 600.))
-            self.assertFalse(app.t_start_entry.instate(["disabled"]))
+            # Menu actions must preserve the same inputs as sidebar changes.
+            with patch("cgyro_comparison_ui.simpledialog.askfloat", return_value=20.):
+                app._set_time_last_percent()
+            with patch("cgyro_comparison_ui.simpledialog.askfloat", return_value=150.):
+                app._set_time_last_duration()
+            manual_fields = (app.t_start_label, app.t_start_entry, app.t_end_label, app.t_end_entry)
+            language = get_language(app.root)
+            for code in ("en", "zh"):
+                language.variable.set(code)
+                language.refresh()
+                for mode, bounds, manual, span in (
+                        ("Manual Start/End", (300., 600.), True, False),
+                        ("Last percent", (800., 1000.), False, True),
+                        ("Last duration", (850., 1000.), False, True),
+                        ("Full range", (0., 1000.), False, False),
+                        ("Manual Start/End", (300., 600.), True, False)):
+                    with self.subTest(language=code, mode=mode):
+                        app.time_mode_combo.current(app.time_mode_combo._values.index(mode))
+                        app.root.update_idletasks()
+                        self.assertEqual(app._get_time_indices(time)[1:], bounds)
+                        for widget in manual_fields:
+                            self.assertEqual(bool(widget.winfo_ismapped()), manual)
+                        for widget in (app.time_span_label, app.time_span_entry):
+                            self.assertEqual(bool(widget.winfo_ismapped()), span)
+                        if span:
+                            self.assertEqual(app.time_span_entry.get(), "20" if mode == "Last percent" else "150")
+                        self.assertTrue(app.log_options_frame.winfo_ismapped())
+                        self.assert_form_fits(app._time_form)
+                        height = app.time_options_frame.winfo_reqheight()
+                        if manual:
+                            manual_height = height
+                        else:
+                            self.assertLess(height, manual_height)
+                        self.assertEqual((app.t_start_var.get(), app.t_end_var.get()), ("300", "600"))
 
     def test_transfer_forms_fit_and_language_keeps_scroll_and_inputs(self):
         from cgyro_ui_language import get_language
