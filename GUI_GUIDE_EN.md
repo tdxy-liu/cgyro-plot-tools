@@ -1,4 +1,4 @@
-# Interface and language guide · v0.2.32
+# Interface and language guide
 
 Start the comparison app with `python cgyro_comparison.py`.
 
@@ -20,18 +20,16 @@ Use **Settings → Language → English / 中文** in either app. Changes apply 
 
 Scientific symbols, exported figures/data, case names, paths and underlying technical error messages are not translated. GUI Chinese, English and digits use **Noto Sans CJK SC, 11 pt** by default; secondary text is 10 pt, section headings 11 pt bold and the app heading 13 pt bold. Regular and bold Noto fonts are bundled and loaded into the current Windows/Linux process when needed, without downloads or system font changes. Tk/system DPI controls scaling.
 
+Some servers use core-X11 Tk builds that cannot load the bundled OpenType fonts. The app falls back to CJK families visible to Tk, such as `song ti` or `fangsong ti`; available bitmap sizes determine the actual size. Font detection never overrides the selected language. If characters remain missing, install Noto Sans CJK SC and use a Fontconfig/Xft-enabled Tk build.
+
 Figure titles, axes, legends and numbers use **Arial**. Math uses the matching regular/italic/bold faces, with **STIX** for unavailable symbols. **SimSun (宋体)** is reserved for Chinese figure text; scientific labels remain English by default. Preview and export share this policy. Arial and SimSun are read from the local system. Without Arial, Linux falls back to Liberation Sans, then DejaVu Sans; exact Arial reproduction requires a licensed local Arial installation. See [fonts and licenses](third_party/fonts/README.md).
 
-## Presets and sessions
+## Workspaces and sessions
 
-Choose preset applies a saved parameter set; its fields remain editable. Save preset stores the current settings. Saving the same name replaces that preset.
+Use **File → Save Workspace... / Open Workspace...** in the comparison app to save and restore case lists and plotting settings. Transfer Explorer saves and opens sessions from its **File** menu. Successful saves are reported in the status bar.
 
-- Comparison presets contain general plotting parameters, excluding case directories, selection locks, per-case kx/ky, species selection and the linear-data file path.
-- Transfer Explorer presets contain trace and figure settings, excluding case directories, current results and export directories.
-- Workspaces and sessions continue to store case lists and session settings. Successful saves are reported in the status bar.
-
-Preset files are `~/.cgyro_comparison_tool/comparison_presets.json` and `fullt_trace_presets.json`. Invalid files produce an error and are not silently overwritten. Isolated configurations can use `CGYRO_PRESET_DIR` and `CGYRO_UI_CONFIG`; `CGYRO_UI_LANGUAGE=en` overrides the startup language for the current process.
+`CGYRO_UI_CONFIG` selects an independent language preference file; `CGYRO_UI_LANGUAGE=en` overrides the startup language for the current process.
 
 ## Verification
 
-Layout checks cover 920×640, 1280×900 and 1600×1000 windows at multiple Tk scaling factors. They check complete-field reflow, control boundaries, retained inputs, independent scrolling, language round trips and preset persistence. Linux registers bundled Noto fonts using Fontconfig; installed-font fallback remains available if registration fails.
+Layout checks cover 920×640, 1280×900 and 1600×1000 windows at multiple Tk scaling factors. They check complete-field reflow, control boundaries, retained inputs, independent scrolling and language round trips. Font regression checks cover legacy X11 names; missing font detection does not override the selected language.

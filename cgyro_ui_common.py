@@ -1,17 +1,13 @@
 """Shared, offline-only Tk presentation helpers. No simulation data lives here."""
 
-import json
-import os
 from pathlib import Path
 import tkinter as tk
-from tkinter import font as tkfont, messagebox, simpledialog, ttk
+from tkinter import font as tkfont, ttk
 
 try:
-    from cgyro_io import write_json_atomic
     from cgyro_ui_language import get_language
     from cgyro_fonts import GUI_FONT_SIZE, gui_font_family, configure_plot_fonts
 except ImportError:
-    from .cgyro_io import write_json_atomic
     from .cgyro_ui_language import get_language
     from .cgyro_fonts import GUI_FONT_SIZE, gui_font_family, configure_plot_fonts
 
@@ -81,7 +77,7 @@ def configure_theme(root):
 
 
 def ui_text(root, chinese, english):
-    """Use readable English on minimal Linux desktops without a CJK font."""
+    """Translate interface text using the user's selected language."""
     configure_theme(root)
     return get_language(root).pair(chinese, english)
 
@@ -236,77 +232,3 @@ def show_interface_guide(root):
         content = str(exc)
     view.insert("1.0", content)
     view.configure(state="disabled")
-
-
-class PresetStore:
-    """One data-only JSON file per app; malformed files are never overwritten."""
-    def __init__(self, name, path=None):
-        base = Path(os.environ.get("CGYRO_PRESET_DIR", str(Path.home() / ".cgyro_comparison_tool")))
-        self.path = Path(path) if path else base / (name + "_presets.json")
-
-    def load(self):
-        if not self.path.exists():
-            return {}
-        data = json.loads(self.path.read_text(encoding="utf-8-sig"))
-        if not isinstance(data, dict) or data.get("format") != "cgyro-presets-1" or not isinstance(data.get("presets"), dict):
-            raise ValueError("Invalid preset file: " + str(self.path))
-        if not all(isinstance(k, str) and isinstance(v, dict) for k, v in data["presets"].items()):
-            raise ValueError("Invalid preset entries: " + str(self.path))
-        return data["presets"]
-
-    def save(self, name, state):
-        name = name.strip()
-        if not name:
-            raise ValueError("Enter a preset name.")
-        presets = self.load()
-        presets[name] = state
-        write_json_atomic(self.path, {"format": "cgyro-presets-1", "presets": presets})
-
-
-class PresetBar(ttk.Frame):
-    def __init__(self, parent, *, root, name, capture, apply, status):
-        super().__init__(parent)
-        self.root, self.capture, self.apply, self.status = root, capture, apply, status
-        self.store = PresetStore(name)
-        self.columnconfigure(0, weight=1)
-        self.choice = tk.StringVar()
-        self.combo = ttk.Combobox(self, textvariable=self.choice, width=12, state="readonly")
-        self.combo.grid(row=0, column=0, sticky="ew", padx=(0, 5))
-        self.combo.bind("<<ComboboxSelected>>", self._apply)
-        self.save_button = ttk.Button(self, text=ui_text(root, "保存预设", "Save preset"), command=self._save)
-        self.save_button.grid(row=0, column=1)
-        self.refresh()
-
-    def refresh(self):
-        try:
-            self.presets = self.store.load()
-        except (ValueError, OSError) as exc:
-            self.presets = {}
-            self.status.set(str(exc))
-        self.combo.configure(values=list(self.presets))
-        if not self.choice.get():
-            self.choice.set(ui_text(self.root, "选择预设…", "Choose preset…"))
-
-    def retranslate(self):
-        if self.choice.get() not in self.presets:
-            self.choice.set(ui_text(self.root, "选择预设…", "Choose preset…"))
-
-    def _apply(self, _event=None):
-        try:
-            self.apply(self.presets[self.choice.get()])
-            self.status.set(ui_text(self.root, "已应用预设，可继续修改", "Preset applied; settings remain editable."))
-        except (ValueError, TypeError, KeyError, tk.TclError) as exc:
-            messagebox.showerror("Preset", str(exc), parent=self.root)
-
-    def _save(self):
-        try:
-            state = self.capture()
-            name = simpledialog.askstring(ui_text(self.root, "保存预设", "Save preset"),
-                                          ui_text(self.root, "预设名称（同名覆盖）", "Name (same name replaces preset)"), parent=self.root)
-            if name and name.strip():
-                self.store.save(name, state)
-                self.refresh()
-                self.choice.set(name.strip())
-                self.status.set(ui_text(self.root, "已保存预设：", "Preset saved: ") + name.strip())
-        except (ValueError, TypeError, KeyError, OSError, tk.TclError) as exc:
-            messagebox.showerror("Preset", str(exc), parent=self.root)

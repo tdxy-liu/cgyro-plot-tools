@@ -15,13 +15,13 @@ try:
     from cgyro_fullt_trace_plot import FigureSettings, build_figure, export_bundle, suggested_bundle_name
     from cgyro_io import write_json_atomic
     from cgyro_ui_language import get_language, LocalizedCombobox
-    from cgyro_ui_common import configure_theme, ui_text, FormLayout, CollapsibleSection, PresetBar, bind_local_scroll, show_interface_guide
+    from cgyro_ui_common import configure_theme, ui_text, FormLayout, CollapsibleSection, bind_local_scroll, show_interface_guide
 except ImportError:
     from .cgyro_fullt_trace_core import TraceCancelled, TraceSettings, trace_case
     from .cgyro_fullt_trace_plot import FigureSettings, build_figure, export_bundle, suggested_bundle_name
     from .cgyro_io import write_json_atomic
     from .cgyro_ui_language import get_language, LocalizedCombobox
-    from .cgyro_ui_common import configure_theme, ui_text, FormLayout, CollapsibleSection, PresetBar, bind_local_scroll, show_interface_guide
+    from .cgyro_ui_common import configure_theme, ui_text, FormLayout, CollapsibleSection, bind_local_scroll, show_interface_guide
 
 
 DIRECTIONS = {"Maximum positive T": "positive", "Minimum negative T": "negative"}
@@ -104,9 +104,6 @@ class FullTTraceApp:
         self._forms, self.field_widgets = [], {}
         trace_tab = self._scroll_tab(tabs, tr("2  追踪设置", "2  Trace settings"))
         figure_tab = self._scroll_tab(tabs, tr("3  出图样式", "3  Figure style"))
-        self.preset_bar = PresetBar(trace_tab, root=self.root, name="fullt_trace",
-                    capture=self._capture_preset, apply=self._apply_preset, status=self.status)
-        self.preset_bar.pack(fill="x", pady=(0, 10))
 
         def group(parent, title, collapsed=False):
             if collapsed:
@@ -289,17 +286,6 @@ class FullTTraceApp:
             wanted = min(max(320, current), width - 380)
             if current != wanted:
                 self.main_pane.sashpos(0, wanted)
-
-    def _capture_preset(self):
-        trace, figure = self._options()
-        return {"trace": asdict(trace), "figure": asdict(figure)}
-
-    def _apply_preset(self, data):
-        trace, figure = TraceSettings(**data["trace"]), FigureSettings(**data["figure"])
-        trace.validate()
-        figure.validate()
-        self._set_options(trace, figure)
-
 
     def _button(self, parent, text, callback):
         button = ttk.Button(parent, text=text, command=callback)

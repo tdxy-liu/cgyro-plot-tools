@@ -22,6 +22,12 @@ No administrator access or persistent OS font installation is required.
 Other platforms can install Noto normally; a readable installed GUI font remains
 available if application-font registration is unsupported.
 
+Older core-X11 Tk builds cannot use Fontconfig's OpenType application fonts.
+For these builds the GUI also recognizes legacy CJK families such as `song ti`
+and `fangsong ti`, including lowercase family names. Bitmap fonts may round the
+requested point size to the nearest available size. Language selection remains
+independent of font detection; a missing font never silently forces English.
+
 Arial and SimSun are system fonts and are **not redistributed** here. STIX is
 provided by Matplotlib. On machines without Arial the Latin fallback is
 Liberation Sans, then DejaVu Sans. For identical Arial output on a Linux server,

@@ -108,7 +108,8 @@ class UiLanguage:
 
     @property
     def chinese(self):
-        return self.variable.get() == "zh" and getattr(self.root, "_cgyro_theme", {}).get("cjk", False)
+        # Font detection must not silently override the user's language choice.
+        return self.variable.get() == "zh"
 
     def pair(self, chinese, english):
         self.catalog[english] = chinese
@@ -196,8 +197,8 @@ class UiLanguage:
         try:
             write_json_atomic(self.path, {"language": self.variable.get()})
             text = self.pair("语言设置已保存", "Language saved")
-            if self.variable.get() == "zh" and not self.chinese:
-                text = "No installed Chinese font found; using readable English."
+            if self.chinese and not getattr(self.root, "_cgyro_theme", {}).get("cjk", False):
+                text = "Chinese enabled; no CJK font detected. Install Noto Sans CJK SC if characters are missing."
         except (OSError, ValueError) as exc:
             text = self.pair("本次已切换，保存失败：", "Changed for this session; could not save: ") + str(exc)
         if self.status is not None:

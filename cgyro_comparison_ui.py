@@ -22,13 +22,13 @@ try:
     from cgyro_ui_language import get_language, LocalizedCombobox
     from cgyro_fonts import interface_plot_font_family
     from cgyro_ui_common import (configure_theme, ui_text, FormLayout,
-                                 CollapsibleSection, PresetBar, bind_local_scroll, show_interface_guide)
+                                 CollapsibleSection, bind_local_scroll, show_interface_guide)
 except ImportError:
     from .cgyro_io import write_json_atomic
     from .cgyro_ui_language import get_language, LocalizedCombobox
     from .cgyro_fonts import interface_plot_font_family
     from .cgyro_ui_common import (configure_theme, ui_text, FormLayout,
-                                  CollapsibleSection, PresetBar, bind_local_scroll, show_interface_guide)
+                                  CollapsibleSection, bind_local_scroll, show_interface_guide)
 
 try:
     from cgyro_comparison_bootstrap import (
@@ -559,9 +559,6 @@ class CgyroUiMixin:
 
         diagnostic = ttk.LabelFrame(panel, text=tr("2  诊断与绘制对象", "2  Diagnostic and quantities"), style="Card.TLabelframe")
         diagnostic.pack(fill="x", pady=(0, 10))
-        self.preset_bar = PresetBar(diagnostic, root=self.root, name="comparison",
-                    capture=self._capture_plot_preset, apply=self._apply_plot_preset, status=self.status_var)
-        self.preset_bar.pack(fill="x", pady=(0, 7))
         self.plot_type_var = tk.StringVar(value="Frequency")
         self.plot_type_combo = LocalizedCombobox(diagnostic, textvariable=self.plot_type_var, width=16, state="readonly",
                     values=["Frequency", "Growth Rate", "Flux", "Fluctuation 1D", "Fluctuation 2D", "Energy balance", "Zonal ExB Shearing Rate", "Others"])
@@ -621,21 +618,6 @@ class CgyroUiMixin:
             button.pack(side="left", padx=2)
         self._refresh_case_summary()
         self.root.after_idle(self._set_initial_pane_position)
-
-    def _capture_plot_preset(self):
-        state = self._get_workspace_state()
-        for key in ("lock_case_selection_var", "fluc_advanced_var", "fluc_advanced_case_values", "species_var", "linear_gamma_file_var"):
-            state.pop(key, None)
-        return state
-
-    def _apply_plot_preset(self, state):
-        # Merge only known plotting fields; retain selection and per-case data.
-        merged = self._get_workspace_state()
-        allowed = set(self._capture_plot_preset())
-        merged.update({key: value for key, value in state.items() if key in allowed})
-        self._restore_workspace_state(merged)
-        self.update_options()
-        self._sync_time_controls()
 
     def _add_time_display_controls(self):
         tr = self._ui_text

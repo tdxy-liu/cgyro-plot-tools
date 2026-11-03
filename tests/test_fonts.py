@@ -2,6 +2,7 @@
 
 import unittest
 from io import StringIO
+from unittest.mock import patch
 
 import matplotlib as mpl
 from matplotlib import font_manager
@@ -10,7 +11,36 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 
 from cgyro_fonts import (CHINESE_PLOT_FONT_FAMILY, configure_plot_fonts,
-                         plot_font_family, plot_font_style)
+                         gui_font_family, plot_font_family, plot_font_style)
+
+
+class GuiFontTests(unittest.TestCase):
+    def test_legacy_and_lowercase_tk_cjk_names_are_recognized(self):
+        # Hefei's core-X11 Tk lists these legacy fonts, not Fontconfig families.
+        for families, expected in (
+                (("helvetica", "fangsong ti", "song ti"), "song ti"),
+                (("helvetica", "fangsong ti"), "fangsong ti"),
+                (("helvetica", "wenquanyi zen hei"), "wenquanyi zen hei"),
+                (("song ti", "noto sans cjk sc"), "noto sans cjk sc")):
+            with self.subTest(families=families), \
+                    patch("tkinter.font.families", return_value=families), \
+                    patch("cgyro_fonts._register_gui_fonts"), \
+                    patch("cgyro_fonts._register_matplotlib_gui_fonts"):
+                self.assertEqual(gui_font_family(object()), (expected, True))
+
+    def test_bundled_noto_becomes_preferred_after_registration(self):
+        with patch("tkinter.font.families", side_effect=[("song ti",), ("song ti", "Noto Sans CJK SC")]), \
+                patch("cgyro_fonts._register_gui_fonts"), \
+                patch("cgyro_fonts._register_matplotlib_gui_fonts"):
+            self.assertEqual(gui_font_family(object()), ("Noto Sans CJK SC", True))
+
+    def test_missing_cjk_family_keeps_available_default_font(self):
+        with patch("tkinter.font.families", return_value=("helvetica",)), \
+                patch("tkinter.font.Font") as default, \
+                patch("cgyro_fonts._register_gui_fonts"), \
+                patch("cgyro_fonts._register_matplotlib_gui_fonts"):
+            default.return_value.actual.return_value = "helvetica"
+            self.assertEqual(gui_font_family(object()), ("helvetica", False))
 
 
 class FigureFontTests(unittest.TestCase):

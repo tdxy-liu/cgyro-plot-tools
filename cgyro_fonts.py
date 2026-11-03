@@ -17,7 +17,9 @@ PLOT_FONT_FAMILY = "Arial"
 CHINESE_PLOT_FONT_FAMILY = "SimSun"  # 宋体; reserved for Chinese figure text.
 GUI_FONT_FALLBACKS = (GUI_FONT_FAMILY, "Noto Sans SC", "Source Han Sans SC",
                       "Microsoft YaHei UI", "Microsoft YaHei", "微软雅黑",
-                      "WenQuanYi Micro Hei", "WenQuanYi Zen Hei", "SimHei", "SimSun")
+                      "WenQuanYi Micro Hei", "WenQuanYi Zen Hei", "SimHei", "SimSun",
+                      "AR PL UMing CN", "AR PL UKai CN", "Noto Sans Mono CJK SC",
+                      "Song Ti", "Fangsong Ti")
 PLOT_FONT_FALLBACKS = (PLOT_FONT_FAMILY, "Liberation Sans", "DejaVu Sans")
 _FONT_DIR = Path(__file__).resolve().parent / "third_party" / "fonts" / "noto-sans-cjk-sc"
 _GUI_FONT_FILES = tuple(_FONT_DIR / ("NotoSansCJKsc-" + weight + ".otf")
@@ -74,12 +76,15 @@ def _register_matplotlib_gui_fonts():
 
 def gui_font_family(root):
     from tkinter import font as tkfont
-    families = set(tkfont.families(root))
-    if GUI_FONT_FAMILY not in families:
+    # Core-X11 Tk builds expose lowercase legacy names and cannot use the
+    # Fontconfig application fonts. Keep their installed CJK fonts eligible.
+    families = {name.casefold(): name for name in tkfont.families(root)}
+    if GUI_FONT_FAMILY.casefold() not in families:
         _register_gui_fonts()
-        families = set(tkfont.families(root))
+        families = {name.casefold(): name for name in tkfont.families(root)}
     _register_matplotlib_gui_fonts()
-    family = next((name for name in GUI_FONT_FALLBACKS if name in families), None)
+    family = next((families[name.casefold()] for name in GUI_FONT_FALLBACKS
+                   if name.casefold() in families), None)
     return (family or tkfont.Font(root=root, name="TkDefaultFont", exists=True).actual("family"),
             family is not None)
 

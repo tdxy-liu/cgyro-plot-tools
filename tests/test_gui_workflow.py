@@ -1,4 +1,4 @@
-"""Data-only preset tests and opt-in native Tk workflow/language regression checks."""
+"""Opt-in native Tk workflow and language regression checks."""
 
 from contextlib import contextmanager
 from pathlib import Path
@@ -7,32 +7,6 @@ import os
 import tempfile
 import unittest
 from unittest.mock import patch
-
-from cgyro_ui_common import PresetStore
-
-
-class PresetTests(unittest.TestCase):
-    def test_unicode_presets_round_trip_and_preserve_other_entries(self):
-        with tempfile.TemporaryDirectory() as directory:
-            store = PresetStore("test", Path(directory) / "presets.json")
-            store.save("theta 对比", {"kx": "0", "ky": "", "normalize": False})
-            store.save("other", {"kx": "0.2"})
-            self.assertEqual(store.load()["theta 对比"], {"kx": "0", "ky": "", "normalize": False})
-            store.save("other", {"kx": "0.3"})
-            self.assertEqual(len(store.load()), 2)
-
-    def test_malformed_or_unserializable_presets_do_not_destroy_saved_data(self):
-        with tempfile.TemporaryDirectory() as directory:
-            store = PresetStore("test", Path(directory) / "presets.json")
-            store.path.write_text('[]', encoding="utf-8")
-            with self.assertRaises(ValueError):
-                store.save("new", {})
-            self.assertEqual(store.path.read_text(), '[]')
-            store.path.write_text('{"format":"cgyro-presets-1", "presets":{}}', encoding="utf-8")
-            before = store.path.read_bytes()
-            with self.assertRaises(ValueError):
-                store.save("bad", {"number": float("nan")})
-            self.assertEqual(store.path.read_bytes(), before)
 
 
 @unittest.skipUnless(os.environ.get("CGYRO_TEST_TK_LAYOUT") == "1", "optional Tk workflow integration")
@@ -44,7 +18,7 @@ class GuiWorkflowTests(unittest.TestCase):
         from cgyro_fullt_trace_ui import FullTTraceApp
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
                 "CGYRO_UI_LANGUAGE": "en", "CGYRO_AUTO_WORKSPACE": "",
-                "CGYRO_UI_CONFIG": str(Path(directory) / "ui.json"), "CGYRO_PRESET_DIR": directory}), \
+                "CGYRO_UI_CONFIG": str(Path(directory) / "ui.json")}), \
                 patch.object(CGYRO_Comparison, "_check_for_updates_silently", lambda self: None):
             root = tk.Tk()
             root.attributes("-alpha", 0)
@@ -111,9 +85,7 @@ class GuiWorkflowTests(unittest.TestCase):
         for kind in ("main", "trace"):
             with self.subTest(kind=kind), self.app(kind) as app:
                 lang = get_language(app.root)
-                self.assertEqual(tkfont.Font(root=app.root, name="TkDefaultFont", exists=True).actual("family"),
-                                 "Noto Sans CJK SC")
-                self.assertEqual(tkfont.Font(root=app.root, name="TkDefaultFont", exists=True).actual("size"), 11)
+                self.assertEqual(tkfont.Font(root=app.root, name="TkDefaultFont", exists=True).cget("size"), 11)
                 if kind == "main":
                     app.plot_type_var.set("Fluctuation 1D")
                     app.fluc_xaxis_var.set("v.s theta")
@@ -126,7 +98,7 @@ class GuiWorkflowTests(unittest.TestCase):
                 else:
                     app.vars["panel_multipliers"].set("1, 1, 5")
                     app._add_path("case with spaces")
-                    original = app._capture_preset()
+                    original = app._options()
                 with patch.object(tkfont, "families", side_effect=AssertionError("font inventory must be cached")):
                     for code in ("zh", "en", "zh", "en"):
                         lang.variable.set(code)
@@ -139,7 +111,7 @@ class GuiWorkflowTests(unittest.TestCase):
                             for artist, chinese, english in app._empty_plot_labels:
                                 self.assertEqual(artist.get_text(), chinese if lang.chinese else english)
                         else:
-                            self.assertEqual(app._capture_preset(), original)
+                            self.assertEqual(app._options(), original)
                             self.assertEqual(app.case_list.curselection(), (0,))
                             self.assertEqual(app.vars["panel_scaling"].get(), "Custom multipliers")
                             self.assertIn(lang.text("CGYRO Transfer Explorer"), app.root.title())
@@ -149,6 +121,33 @@ class GuiWorkflowTests(unittest.TestCase):
                             self.assertEqual(views.tab(0, "text"), lang.text("Stacked figure"))
                             self.assertEqual(views.tab(1, "text"), lang.text("Trace coordinates and values"))
                 self.assertEqual(json.loads(lang.path.read_text())["language"], "en")
+
+    def test_chinese_switch_and_saved_preference_do_not_depend_on_font_detection(self):
+        from cgyro_ui_language import get_language, UiLanguage
+        for kind in ("main", "trace"):
+            with self.subTest(kind=kind), self.app(kind) as app:
+                # Reproduce a missed CJK font even on machines with Noto installed.
+                app.root._cgyro_theme["cjk"] = False
+                lang = get_language(app.root)
+                lang.variable.set("zh")
+                lang.apply()
+                app.root.update_idletasks()
+                self.assertTrue(lang.chinese)
+                if kind == "main":
+                    self.assertEqual(app.plot_button.cget("text"), "4  绘制")
+                    self.assertEqual(app.plot_type_combo.get(), "频率")
+                else:
+                    self.assertEqual(app.option_tabs.tab(0, "text"), "2  追踪设置")
+                    self.assertIn("CGYRO 转移分析", app.root.title())
+                self.assertEqual(json.loads(lang.path.read_text())["language"], "zh")
+                with patch.dict(os.environ):
+                    os.environ.pop("CGYRO_UI_LANGUAGE", None)
+                    restored = UiLanguage(app.root)
+                    self.assertTrue(restored.chinese)
+                    self.assertEqual(restored.text("File"), "文件")
+                lang.variable.set("en")
+                lang.apply()
+                self.assertFalse(lang.chinese)
 
     def test_language_switch_preserves_rendered_trace_and_selected_result(self):
         from dataclasses import replace
@@ -195,19 +194,6 @@ class GuiWorkflowTests(unittest.TestCase):
             self.assertEqual(app.species_var.get(), "Electron")
             app.plot_type_var.set("Growth Rate")
             self.assertEqual(app.plot_type_combo.get(), lang.text("Growth Rate"))
-
-    def test_plot_preset_preserves_case_selection_and_optional_blanks(self):
-        with self.app() as app:
-            app.fluc_theta_kx_var.set("0.2")
-            app.fluc_theta_ky_var.set("")
-            saved = app._capture_plot_preset()
-            self.assertEqual(saved["fluc_theta_ky_var"], "")
-            self.assertNotIn("fluc_advanced_case_values", saved)
-            app.fluc_theta_kx_var.set("4")
-            app.lock_case_selection_var.set(True)
-            app._apply_plot_preset(saved)
-            self.assertEqual(app.fluc_theta_kx_var.get(), "0.2")
-            self.assertTrue(app.lock_case_selection_var.get())
 
     def test_formula_notes_stay_lazy_until_opened(self):
         with self.app() as app:
