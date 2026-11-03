@@ -89,7 +89,7 @@ class ZfPlotting:
             return None, None, None
 
         arr = np.asarray(rows, dtype=float)
-        ky = arr[:, 0]
+        ky = self._positive_ky_axis(arr[:, 0])
         omega = arr[:, 1]
         gamma = arr[:, 2]
 
@@ -224,7 +224,7 @@ class ZfPlotting:
         try:
             ky_text = str(self.zf_gamma_lin_ky_var.get()).strip()
             if len(ky_text) > 0:
-                ky_target = float(ky_text)
+                ky_target = abs(float(ky_text))
                 if not np.isfinite(ky_target):
                     ky_target = None
         except Exception:

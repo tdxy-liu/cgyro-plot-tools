@@ -21,12 +21,6 @@ class Host(EnergyPlotting, CgyroDataExportMixin):
     def _resolve_case_dir(self, data):
         return data.dir
 
-    def _nearest_source_ky_index(self, axis, target):
-        return int(np.argmin(np.abs(np.abs(axis)-abs(target))))
-
-    def _display_source_ky_value(self, axis, index, requested):
-        return float(axis[index])
-
 
 class CompressedGUIRegression(unittest.TestCase):
     def setUp(self):
@@ -68,6 +62,32 @@ class CompressedGUIRegression(unittest.TestCase):
         self.writer.append(self.arrays[0],4.)
         self.host._load_fullt_if_needed(d,"test",True,.2,0.,[0])
         self.assertNotEqual(old,d.fullt_asym_ftz_signature)
+
+    def test_negative_grid_matches_positive_requests_for_map_and_trace(self):
+        case = self.case / "negative_ky"
+        case.mkdir()
+        layout = Layout(8, 4, 2, 8, 4, .03, -.1)
+        with FTZWriter(case / "bin.cgyro.fullt_asym.ftz", layout) as writer:
+            for t, blocks in enumerate(self.arrays):
+                writer.append(blocks, float(t + 1))
+        (case / "input.cgyro").write_text("FULL_T_ASYM_COMPRESSION=1\n")
+        data = SimpleNamespace(**vars(self.data))
+        data.dir = str(case)
+        data.ky = -data.ky
+        for requested in (.19, -.19):
+            with self.subTest(requested=requested):
+                self.assertTrue(self.host._load_fullt_if_needed(
+                    data, "negative", True, requested, .03, [0, 2]))
+                expected = np.stack([self.arrays[t][2][:, :, :, 5] for t in (0, 2)], axis=-1)
+                np.testing.assert_array_equal(data.fullt_asym[0, 0], expected)
+                np.testing.assert_allclose(data.fullt_asym_source_ky_axis, [.2])
+                trace = self.host._load_fullt_trace_source_slice(data, "negative", True, requested, [0, 2])
+                expected = np.stack([self.arrays[t][2][:, :, 0, :] for t in (0, 2)], axis=-1).transpose(2, 0, 1, 3)
+                np.testing.assert_array_equal(trace["trace"], expected)
+                np.testing.assert_allclose(trace["target_ky_axis"], np.arange(-3, 4) * .1)
+                self.assertAlmostEqual(trace["source_ky"], .2)
+                self.assertEqual(trace["source_ky_idx"], 2)
+        np.testing.assert_array_equal(data.ky, -self.data.ky)
 
     def test_corruption_is_not_synthetic_fallback(self):
         d=self.data

@@ -6,6 +6,8 @@
 
 ### 最新更新
 
+- **v0.2.26 独立 FULLT Trace Studio**：`python cgyro_fullt_trace.py` 启动专门的追踪 GUI，也可从主工具 `Plot -> FULLT Trace Studio...` 打开。逐步追踪最大正 T 或最小负 T，默认四张图上下排列，共用一个色标；提供 PDF/SVG、600 dpi PNG/TIFF 和完整追踪数据导出。支持命令行批量出图，无需 pygacode；详见 [FULLT 追踪说明书](FULLT_TRACE_GUIDE.md)。
+- **v0.2.25 ky 显示约定**：普通谱图和选择器采用正 ky 表示；FULLT 保留正负 partner 分支并统一坐标约定。FULLT 图片移除标题中的 `FULLT asym`、`T` 下标中的 `asym`、色标标题及 source ky index。
 - **v0.2.21 HTTP 代理更新**: 版本检查和 Git 更新支持 HTTP CONNECT；未保存连接配置时默认使用 `http://47.102.120.146:18889`。在 `Help -> Update Connection...` 可选择 HTTP/Direct/SOCKS/SSH；命令行支持 `--http-proxy [URL]`。只影响工具更新，不改系统代理或 Git 全局配置。见 [HTTP 代理说明](UPDATE_PROXY.md)。
 - **v0.2.20 跨机器压缩读取**: 工具自带 FULLT 原格式/FTZ v1 按需读取层，不再要求外部 pygacode 含定制压缩模块。更新后安装 `requirements-compression.txt` 即可读取压缩图、跨 Kx 追踪和导出，无需整文件落盘解压。普通场/通量仍需 pygacode；提供无窗口检查命令 `python cgyro_runtime_check.py`。见 [压缩读取与迁移说明](FULLT_COMPRESSED_READING.md)。
 - **DZ 二维谱图**: 在 `Energy balance -> Single plot` 中选择 `Quantity: DZ`、`X-axis: vs kxky`，绘制所选时间窗内的 $\langle D_r+D_\theta+D_c\rangle_t$。支持主离子、电子或物种求和，保留各谱点的正负值；`ky scan` 不限制二维图的 ky 范围，支持现有图片数据导出。

@@ -1,0 +1,4 @@
+# Standalone FULLT Trace Studio; tkinter is supplied by Python/the OS for GUI use.
+numpy>=1.23
+matplotlib>=3.6
+-r requirements-compression.txt

@@ -137,6 +137,22 @@ class OptionLayoutTests(unittest.TestCase):
             self.assertFalse(app.fluc_advanced_button.winfo_ismapped())
             self.assert_readable(app, self.theta_controls(app))
 
+    def test_fullt_studio_menu_passes_case_paths_as_arguments(self):
+        import sys
+        from types import SimpleNamespace
+
+        with self.application() as app:
+            path = os.path.abspath("case with spaces")
+            app.cases["case A"] = SimpleNamespace(dir=path)
+            with patch.object(app, "_get_selected_case_names", return_value=["case A"]), \
+                    patch("cgyro_comparison_ui.subprocess.Popen") as launch:
+                app.open_fullt_trace_studio()
+            command = launch.call_args.args[0]
+            self.assertEqual(command[0], sys.executable)
+            self.assertEqual(os.path.basename(command[1]), "cgyro_fullt_trace.py")
+            self.assertEqual(command[2:], ["--gui", "--case", path])
+            self.assertNotIn("shell", launch.call_args.kwargs)
+
     def test_time_controls_survive_plot_type_switches_and_clear(self):
         with self.application() as app:
             app.main_pane.sashpos(0, 340)

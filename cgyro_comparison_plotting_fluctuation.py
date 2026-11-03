@@ -205,6 +205,8 @@ class FluctuationPlotting:
     def _resolve_optional_axis_indices(self, axis_values, raw_text, axis_name, label):
         """Return all indices for blank input or the nearest physical value."""
         axis = np.asarray(axis_values, dtype=float).reshape(-1)
+        if str(axis_name).lower() == "ky":
+            axis = self._positive_ky_axis(axis)
         if axis.size <= 0:
             return np.array([], dtype=int), "none"
 

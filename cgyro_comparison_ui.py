@@ -977,6 +977,7 @@ class CgyroUiMixin:
             shortcut="<Control-Return>",
         )
         self._add_menu_command(plot_menu, "Clear Plot", self.clear_plot)
+        self._add_menu_command(plot_menu, "FULLT Trace Studio...", self.open_fullt_trace_studio)
         plot_menu.add_separator()
 
         time_menu = tk.Menu(plot_menu, tearoff=0)
@@ -1077,6 +1078,19 @@ class CgyroUiMixin:
         help_menu.add_command(label="About", command=self.show_about)
         self.help_menu = help_menu
         self._update_check_menu = help_menu
+
+    def open_fullt_trace_studio(self):
+        """Launch the independent tracer with the currently selected case paths."""
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cgyro_fullt_trace.py")
+        command = [sys.executable, script, "--gui"]
+        for name in self._get_selected_case_names():
+            path = self._resolve_case_dir(self.cases[name])
+            if path:
+                command.extend(["--case", os.path.abspath(path)])
+        try:
+            subprocess.Popen(command, cwd=os.path.dirname(script))
+        except OSError as exc:
+            messagebox.showerror("FULLT Trace Studio", str(exc), parent=self.root)
 
     def open_update_connection_settings(self):
         """Configure HTTP CONNECT, direct, SOCKS5, or SSH-forward updates."""
@@ -3924,7 +3938,9 @@ class CgyroUiMixin:
                             display_plot_type = f"{field} vs theta (per-case kx/ky)"
                     else:
                         kx_text = self._get_entry_value("fluc_theta_kx_var") or "average"
-                        ky_text = self._get_entry_value("fluc_theta_ky_var") or "average"
+                        ky_text = self._positive_ky_selection_text(
+                            self._get_entry_value("fluc_theta_ky_var")
+                        ) or "average"
                         if xaxis == "v.s ky":
                             display_plot_type = f"{field} vs ky (kx={kx_text})"
                         elif xaxis == "v.s kx":
@@ -3968,7 +3984,7 @@ class CgyroUiMixin:
                 plot_type = f"Energy Balance Single {qty} {xax_plot}"
                 display_plot_type = f"Energy balance: Single plot ({qty}, {xax})"
             elif mode_key == "fullt":
-                ky = str(self.energy_balance_transfer_ky_var.get()).strip()
+                ky = self._positive_ky_selection_text(self.energy_balance_transfer_ky_var.get())
                 kx = str(self.energy_balance_transfer_kx_var.get()).strip()
                 xax = str(self.energy_balance_transfer_xaxis_var.get()).strip()
                 use_asym = False

@@ -332,11 +332,24 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
 
     @staticmethod
     def _positive_ky_axis(ky_like):
-        """Return ky array for plotting with non-negative convention."""
+        """Return one-sided ky magnitudes without modifying the stored grid."""
         ky = np.asarray(ky_like, dtype=float).reshape(-1)
         if ky.size <= 0:
             return ky
         return np.abs(ky)
+
+    @staticmethod
+    def _positive_ky_selection_text(raw_text):
+        """Format a physical ky request; preserve blank and explicit index inputs."""
+        text = str(raw_text).strip()
+        if not text or text.lower().startswith("idx:"):
+            return text
+        prefix, value = ("val:", text[4:]) if text.lower().startswith("val:") else ("", text)
+        try:
+            number = float(value)
+        except ValueError:
+            return text
+        return f"{prefix}{abs(number):g}" if np.isfinite(number) else text
 
     def _rho_scalar_for_norm(self, data, label=""):
         """Return the rho scalar used by rho-based normalization, with one-time logging."""
@@ -1661,8 +1674,13 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
         - physical value mapped to nearest axis point (e.g. `0.25` or `val:0.25`)
 
         When `prefer_value=True`, plain numeric text is interpreted as value first.
+        ky always uses physical magnitudes; explicit idx:n still selects a bin.
         """
         axis = np.asarray(axis_values, dtype=float).reshape(-1)
+        is_ky = str(axis_name).lower() == "ky"
+        if is_ky:
+            axis = self._positive_ky_axis(axis)
+            prefer_value = True
         n = int(axis.size)
         if n <= 0:
             return 0
@@ -1673,6 +1691,9 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
 
         def _nearest_value_idx(val):
             """Return index of finite axis entry closest to the requested value."""
+            val = abs(float(val)) if is_ky else float(val)
+            if not np.isfinite(val):
+                return None
             finite_mask = np.isfinite(axis)
             if not np.any(finite_mask):
                 return None

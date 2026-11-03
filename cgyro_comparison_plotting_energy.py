@@ -53,7 +53,7 @@ class EnergyPlotting:
     def _parse_energy_balance_ky_scan(self):
         """Read selected physical ky value for single-plot scans."""
         try:
-            return float(str(self.energy_balance_n_var.get()).strip())
+            return abs(float(str(self.energy_balance_n_var.get()).strip()))
         except Exception:
             return 0.0
 
@@ -236,51 +236,31 @@ class EnergyPlotting:
 
     @staticmethod
     def _nearest_ky_index(axis, value):
-        """Return nearest ky index using the physical signed ky value."""
+        """Match a one-sided ky grid by magnitude, regardless of its stored sign."""
+        try:
+            axis = np.abs(np.asarray(axis, dtype=float))
+            value = abs(float(value))
+        except (TypeError, ValueError):
+            return None
         return EnergyPlotting._nearest_finite_index(axis, value)
 
     @staticmethod
     def _nearest_source_ky_index(axis, value):
-        """
-        Return nearest FULLT source-ky storage index.
-
-        CGYRO stores FULLT source ky on the nonnegative toroidal grid, while
-        the GUI lets users type the signed physical source ky used in the
-        transfer-map label.  When the storage axis is nonnegative, use |ky| for
-        index selection but keep the signed request for display/slicing.
-        """
-        try:
-            axis_arr = np.asarray(axis, dtype=float).reshape(-1)
-            target = float(value)
-        except Exception:
-            return None
-        finite = np.isfinite(axis_arr)
-        if not np.any(finite) or not np.isfinite(target):
-            return None
-        if target < 0.0 and np.nanmin(axis_arr[finite]) >= -1.0e-12:
-            target = abs(target)
-        return EnergyPlotting._nearest_finite_index(axis_arr, target)
+        """Match FULLT's one-sided source-mode grid using positive ky values."""
+        return EnergyPlotting._nearest_ky_index(axis, value)
 
     @staticmethod
     def _display_source_ky_value(axis, index, requested):
-        """Return signed source ky for plot labels/markers."""
-        try:
-            req = float(requested)
-            axis_arr = np.asarray(axis, dtype=float).reshape(-1)
-            finite = np.isfinite(axis_arr)
-            if np.isfinite(req) and req < 0.0 and np.any(finite) and np.nanmin(axis_arr[finite]) >= -1.0e-12:
-                return req
-        except Exception:
-            pass
+        """Label the actual matched source mode by its positive magnitude."""
         try:
             axis_arr = np.asarray(axis, dtype=float).reshape(-1)
             idx = int(index)
             if 0 <= idx < axis_arr.size and np.isfinite(axis_arr[idx]):
-                return float(axis_arr[idx])
+                return abs(float(axis_arr[idx]))
         except Exception:
             pass
         try:
-            return float(requested)
+            return abs(float(requested))
         except Exception:
             return 0.0
 
@@ -290,11 +270,11 @@ class EnergyPlotting:
             ky_req = self._parse_energy_balance_ky_scan()
         else:
             try:
-                ky_req = float(ky_scan)
+                ky_req = abs(float(ky_scan))
             except Exception:
                 ky_req = 0.0
 
-        ky_axis = np.asarray(getattr(data, 'kynorm', getattr(data, 'ky', [])), dtype=float).reshape(-1)
+        ky_axis = np.abs(np.asarray(getattr(data, 'kynorm', getattr(data, 'ky', [])), dtype=float).reshape(-1))
         if ky_axis.size >= n_n and np.any(np.isfinite(ky_axis[:n_n])):
             ky_use = self._nearest_ky_index(ky_axis[:n_n], ky_req)
         else:
@@ -689,8 +669,7 @@ class EnergyPlotting:
             return
 
         ky = ky[:n_ky_use]
-        if ky[-1] < 0.0:
-            ky = -ky
+        ky = np.abs(ky)
         row = int(n_radial // 2)
         g_nz = np.asarray(gamma_eff_nz[row, :n_ky_use], dtype=float)
         g_z = np.asarray(gamma_eff_z[row, :n_ky_use], dtype=float)
@@ -715,7 +694,7 @@ class EnergyPlotting:
         # Optional ky marker requested by user.
         ky_target = 0.0
         try:
-            ky_target = float(str(self.energy_balance_n_var.get()).strip())
+            ky_target = abs(float(str(self.energy_balance_n_var.get()).strip()))
         except Exception:
             ky_target = 0.0
 
@@ -1269,8 +1248,7 @@ class EnergyPlotting:
             print(f"No ky axis available for {label}")
             return None, None
         ky = ky[:n_ky]
-        if ky[-1] < 0.0:
-            ky = -ky
+        ky = np.abs(ky)
 
         t_avg = np.mean(self._triad_real_channel(triad, spec, 0, ky_sel=slice(0, n_ky), time_sel=valid_t), axis=2)
         n_avg = np.mean(self._triad_real_channel(triad, spec, 1, ky_sel=slice(0, n_ky), time_sel=valid_t), axis=2)
@@ -1520,8 +1498,7 @@ class EnergyPlotting:
             print(f"No ky axis available for {label}")
             return None
         ky = ky[:n_ky]
-        if ky[-1] < 0.0:
-            ky = -ky
+        ky = np.abs(ky)
         ky = np.asarray(ky, dtype=float).reshape(-1)
 
         kx, radial_idx = self._energy_balance_kx_selection(data, n_radial, label)
@@ -1742,8 +1719,7 @@ class EnergyPlotting:
             print(f"No ky axis available for {label}")
             return
         ky = ky[:n_ky]
-        if ky[-1] < 0.0:
-            ky = -ky
+        ky = np.abs(ky)
         mask_k = np.isfinite(ky) & (ky >= 0.0)
         if not np.any(mask_k):
             return
@@ -2494,7 +2470,7 @@ class EnergyPlotting:
         cache_version_attr = cache_attr + "_cache_version"
         # Bump this whenever the binary precision/shape validation changes so
         # a long-running GUI cannot reuse an array loaded by the old reader.
-        cache_version = 7
+        cache_version = 8
         try:
             case_token = self._resolve_case_dir(data)
         except Exception:
@@ -2546,7 +2522,7 @@ class EnergyPlotting:
                 setattr(data, cache_attr+"_source_kx", float(kx_axis[source_ix]))
                 setattr(data, cache_attr+"_source_kx_index", source_ix)
                 setattr(data, cache_attr+"_n_source_kx", m.ns)
-                used_ky = (ky_axis if source_iy is None else
+                used_ky = (np.abs(ky_axis) if source_iy is None else
                            np.array([self._display_source_ky_value(ky_axis, source_iy, source_ky_value)]))
                 setattr(data, cache_attr+"_source_ky_axis", used_ky)
                 setattr(data, cache_attr+"_source_ky_full_index", 0 if source_iy is None else int(source_iy))
@@ -3229,7 +3205,7 @@ class EnergyPlotting:
                     "source_kx_axis": (np.array([0.0]) if m.ns == 1 else
                                        (np.arange(m.ns)-m.nx//2)*m.dx),
                     "target_kx_axis": (np.arange(m.nx)-m.nx//2)*m.dx,
-                    "target_ky_axis": (np.arange(2*m.ny-1)-(m.ny-1))*m.dy,
+                    "target_ky_axis": (np.arange(2*m.ny-1)-(m.ny-1))*abs(m.dy),
                     "source_ky": float(self._display_source_ky_value(axis, iy, source_ky_value)),
                     "source_ky_idx": int(iy), "time_indices": tids,
                 }
@@ -3354,7 +3330,7 @@ class EnergyPlotting:
             print(f"Cannot infer {diag_name} trace shape for {label}: raw_size={n_elem}.")
             return None
 
-        source_ky_axis = self._fullt_source_ky_axis(data, n_n)
+        source_ky_axis = self._fullt_plot_source_ky_axis(data, n_n)
         source_ky_axis = np.asarray(source_ky_axis, dtype=float).reshape(-1)
         if source_ky_axis.size < n_n:
             source_ky_axis = np.arange(n_n, dtype=float)
@@ -3396,7 +3372,7 @@ class EnergyPlotting:
             return None
 
         target_kx_axis, radial_idx = self._energy_fullt_target_kx_axis(data, n_radial, label)
-        target_ky_axis = self._fullt_target_ky_axis(data, n_n, n_signed)
+        target_ky_axis = self._fullt_plot_target_ky_axis(data, n_n, n_signed)
         source_kx_axis = self._energy_fullt_source_kx_axis(data, n_source_kx)
         if target_kx_axis is None or target_ky_axis is None or source_kx_axis is None:
             print(f"Missing {diag_name} trace axes for {label}.")
@@ -3444,19 +3420,24 @@ class EnergyPlotting:
             )
         return p_index * dkx, np.arange(n_radial, dtype=int)
 
-    def _fullt_target_ky_axis(self, data, n_n, n_signed):
-        """Build signed target-ky axis matching FULLT target_ky storage order."""
+    def _fullt_plot_target_ky_axis(self, data, n_n, n_signed):
+        """Plot signed partner modes with a positive source-ky convention.
+
+        Keep both branches and their storage indices. Taking abs of this axis
+        would fold distinct interaction partners onto each other. This helper
+        is separate from the raw-export mixin, which retains the file's sign.
+        """
         ky_native = np.asarray(getattr(data, 'full_t_target_ky', []), dtype=float).reshape(-1)
         if ky_native.size == n_signed and np.all(np.isfinite(ky_native)):
-            return ky_native
+            step = np.diff(ky_native)
+            return -ky_native if step.size and np.all(step < 0.0) else ky_native
 
-        # Source ky follows the physical sign stored in CGYRO grids.  Target ky
-        # scans signed mode indices, so multiply those indices by the signed
-        # source-ky step rather than forcing ky positive.
+        # Signed mode indices increase in storage order, regardless of dky's
+        # physical sign in out.cgyro.grids.
         ky_source = np.asarray(getattr(data, 'kynorm', getattr(data, 'ky', [])), dtype=float).reshape(-1)
         if ky_source.size >= n_n and n_n > 0:
             ky_source = ky_source[:n_n]
-            dky = float(ky_source[1]) if n_n > 1 else 1.0
+            dky = abs(float(ky_source[1])) if n_n > 1 else 1.0
             ky_axis = np.arange(-(n_n - 1), n_n, dtype=float) * dky
         elif n_n > 1:
             ky_axis = np.arange(-(n_n - 1), n_n, dtype=float)
@@ -3467,8 +3448,8 @@ class EnergyPlotting:
             ky_axis = np.arange(-(n_signed // 2), n_signed - (n_signed // 2), dtype=float)
         return ky_axis
 
-    def _fullt_source_ky_axis(self, data, n_source, preferred_attr=None):
-        """Build signed source-ky axis for FULLT source_ky index selection."""
+    def _fullt_plot_source_ky_axis(self, data, n_source, preferred_attr=None):
+        """Build positive source-mode labels without changing raw-export axes."""
         attrs = []
         if preferred_attr:
             attrs.append(str(preferred_attr))
@@ -3480,15 +3461,15 @@ class EnergyPlotting:
             seen.add(attr)
             ky_slice = np.asarray(getattr(data, attr, []), dtype=float).reshape(-1)
             if ky_slice.size >= n_source and np.all(np.isfinite(ky_slice[:n_source])):
-                return ky_slice[:n_source]
+                return np.abs(ky_slice[:n_source])
         ky_native = np.asarray(getattr(data, 'full_t_source_ky', []), dtype=float).reshape(-1)
         if ky_native.size >= n_source and np.all(np.isfinite(ky_native[:n_source])):
-            return ky_native[:n_source]
+            return np.abs(ky_native[:n_source])
 
         ky = np.asarray(getattr(data, 'kynorm', getattr(data, 'ky', [])), dtype=float).reshape(-1)
         ky = np.asarray(ky, dtype=float).reshape(-1)
         if ky.size >= n_source:
-            return ky[:n_source]
+            return np.abs(ky[:n_source])
         return np.arange(n_source, dtype=float)
 
     def _fullt_asym_pair_symmetry_error(self, full_t_asym, data, source_ky_idx, valid_t):
@@ -3918,10 +3899,6 @@ class EnergyPlotting:
                 **color_limits,
             )
         cbar = self.fig.colorbar(pcm, ax=self.ax, extend='both')
-        if normalize_by_max_t:
-            cbar.set_label(rf"$\langle \Re\,{transfer_symbol}\rangle_t/\max |T|_{{\pm}}$")
-        else:
-            cbar.set_label(rf"$\langle \Re\,{transfer_symbol}\rangle_t$")
         cbar.set_ticks(np.linspace(-vmax, vmax, 9))
 
         self.ax.axhline(0.0, color='0.18', linewidth=0.9, alpha=0.55)
@@ -4010,7 +3987,7 @@ class EnergyPlotting:
         self.ax.set_ylabel(r"$q_x\rho_s$  (target mode $k_x$)")
         norm_title = " normalized by max T" if normalize_by_max_t else ""
         self.ax.set_title(
-            f"{diag_name} trace p_x-q_x{norm_title}: "
+            rf"${transfer_symbol}$ trace p_x-q_x{norm_title}: "
             rf"$p_y\rho_s={fixed_py:.3g},\ q_y\rho_s={fixed_qy:.3g},\ "
             rf"|k_{{zf}}|\rho_s={kzf_mag:.3g}$"
         )
@@ -4028,7 +4005,7 @@ class EnergyPlotting:
         self.ax.text(
             0.015,
             0.985,
-            f"case: {case_label}\nsource ky index: {int(trace_data.get('source_ky_idx', -1))}{time_msg}",
+            f"case: {case_label}{time_msg}",
             transform=self.ax.transAxes,
             ha='left',
             va='top',
@@ -4086,7 +4063,7 @@ class EnergyPlotting:
             normalize_by_max_t = False
         diag_name = "FULLT asym" if use_asym else "FULLT"
         data_attr = "fullt_asym" if use_asym else "fullt"
-        transfer_symbol = r"T_{\mathrm{asym}}^{\Phi}" if use_asym else r"T^{\Phi}"
+        transfer_symbol = r"T^{\Phi}"
         try:
             view_txt = str(self.energy_balance_transfer_xaxis_var.get()).strip().lower()
         except Exception:
@@ -4099,7 +4076,7 @@ class EnergyPlotting:
             view_mode = "vs kxky"
 
         try:
-            ky_sel = float(str(self.energy_balance_transfer_ky_var.get()).strip())
+            ky_sel = abs(float(str(self.energy_balance_transfer_ky_var.get()).strip()))
         except Exception:
             print(f"Invalid {diag_name} fixed source-ky input for {label}")
             return
@@ -4151,14 +4128,11 @@ class EnergyPlotting:
 
         kx_axis, radial_idx = self._energy_fullt_target_kx_axis(data, n_radial, label)
         n_source_for_target_axis = int(getattr(data, data_attr + "_n_source_ky_full", n_source))
-        ky_target_axis = self._fullt_target_ky_axis(data, n_source_for_target_axis, n_signed)
-        # Keep this call compatible with older tool deployments where
-        # _fullt_source_ky_axis only accepts (data, n_source).
-        ky_source_axis = self._fullt_source_ky_axis(data, n_source)
+        ky_target_axis = self._fullt_plot_target_ky_axis(data, n_source_for_target_axis, n_signed)
+        ky_source_axis = self._fullt_plot_source_ky_axis(data, n_source)
         ky_source_preferred = np.asarray(getattr(data, data_attr + "_source_ky_axis", []), dtype=float).reshape(-1)
         if ky_source_preferred.size >= n_source and np.all(np.isfinite(ky_source_preferred[:n_source])):
             ky_source_axis = ky_source_preferred[:n_source]
-        source_ky_idx_cached = getattr(data, data_attr + "_source_ky_full_index", None)
         if kx_axis is None or radial_idx is None or ky_target_axis is None or ky_source_axis is None:
             print(f"Missing {diag_name} axes for {label}")
             return
@@ -4207,12 +4181,6 @@ class EnergyPlotting:
             source_ky_idx,
             ky_sel,
         )
-        if ky_source_preferred.size > 0 and np.isfinite(ky_source_preferred[0]):
-            fixed_ky = float(ky_source_preferred[0])
-        try:
-            source_ky_full_idx_msg = int(source_ky_idx_cached)
-        except Exception:
-            source_ky_full_idx_msg = int(source_ky_idx)
         try:
             fixed_kx = float(getattr(data, data_attr + "_source_kx"))
         except Exception:
@@ -4405,7 +4373,7 @@ class EnergyPlotting:
                 self.ax.set_ylabel(rf"$\langle \Re\,{transfer_symbol}\rangle_t$")
             norm_title = " normalized by max T" if normalize_by_max_t else ""
             self.ax.set_title(
-                f"{diag_name} vs kx{norm_title}: "
+                rf"${transfer_symbol}$ vs kx{norm_title}: "
                 rf"$k_x\rho_s={fixed_kx:.3g},\ k_y\rho_s={fixed_ky:.3g},\ k_y'\rho_s={slice_ky:.3g}$"
             )
             self._apply_fullt_dynamic_x_ticks(self.ax)
@@ -4524,10 +4492,6 @@ class EnergyPlotting:
             colorbar_extend = 'max'
 
         cbar = self.fig.colorbar(pcm, ax=self.ax, extend=colorbar_extend)
-        if normalize_by_max_t:
-            cbar.set_label(rf"$\langle {quantity_label}\,{transfer_symbol}\rangle_t/\max |T|_{{\pm}}$")
-        else:
-            cbar.set_label(rf"$\langle {quantity_label}\,{transfer_symbol}\rangle_t$")
         if use_symmetric_scale and np.isfinite(vmax) and vmax > 0.0:
             cbar.set_ticks(np.linspace(-vmax, vmax, 9))
 
@@ -4583,25 +4547,19 @@ class EnergyPlotting:
         self.ax.axvline(0.0, color='0.16', linewidth=0.9, alpha=0.46, zorder=5)
         self.ax.set_xlabel(r"$k_x'\rho_s$")
         self.ax.set_ylabel(r"$k_y'\rho_s$")
-        if use_asym:
-            title_math = (
-                rf"$T^{{\Phi}}_{{\mathrm{{asym}},\,"
-                rf"k_x\rho_s={fixed_kx:.3g},\ k_y\rho_s={fixed_ky:.3g}}}(k')$"
-            )
-        else:
-            title_math = (
-                rf"$T^{{\Phi}}_{{k_x\rho_s={fixed_kx:.3g},\ "
-                rf"k_y\rho_s={fixed_ky:.3g}}}(k')$"
-            )
+        title_math = (
+            rf"$T^{{\Phi}}_{{k_x\rho_s={fixed_kx:.3g},\ "
+            rf"k_y\rho_s={fixed_ky:.3g}}}(k')$"
+        )
         norm_title = " normalized by max T" if normalize_by_max_t else ""
-        self.ax.set_title(f"{diag_name}{norm_title}: {title_math}")
+        self.ax.set_title(f"{title_math}{norm_title}")
         case_label = str(label)
         if len(case_label) > 56:
             case_label = "..." + case_label[-53:]
         self.ax.text(
             0.015,
             0.985,
-            f"case: {case_label}\nsource ky index: {source_ky_full_idx_msg}",
+            f"case: {case_label}",
             transform=self.ax.transAxes,
             ha='left',
             va='top',

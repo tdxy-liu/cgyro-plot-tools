@@ -99,6 +99,23 @@ class DzMapTests(unittest.TestCase):
             with self.subTest(normalization=mode):
                 np.testing.assert_array_equal(self.map()[2], self.map(normalization=mode)[2])
 
+    def test_negative_unsorted_ky_preserves_modes_and_slice_values(self):
+        expected_x, expected_y, expected_z = self.map()
+        self.data.kynorm = -self.data.kynorm
+        x, y, z = self.map()
+        np.testing.assert_array_equal(x, expected_x)
+        np.testing.assert_array_equal(y, expected_y)
+        np.testing.assert_array_equal(z, expected_z)
+        for requested in (-.11, .11):
+            kx, spectrum, (matched, index, request) = self.plot._compute_energy_balance_single_vs_kx(
+                self.data, "negative", requested, "DZ", self.time_indices,
+            )
+            self.assertEqual(index, 2)
+            self.assertAlmostEqual(matched, .1)
+            self.assertAlmostEqual(request, .11)
+            np.testing.assert_array_equal(kx, x[:, 0])
+            np.testing.assert_allclose(spectrum, z[:, 1])
+
     def test_render_and_export_preserve_physical_axes_and_values(self):
         x, y, z = self.map()
         self.plot._plot_energy_balance_single_mode(

@@ -429,6 +429,8 @@ class FluxPlotting:
             mom_apar_sel = primary_sel  # heat EM proxy (estimated)
         mom_bpar_sel = primary_sel
 
+        # This ky is used in i*ky field derivatives, not plotted as a coordinate.
+        # Keep the native sign so display conventions cannot reverse the flux.
         ky = np.asarray(getattr(data, 'ky', []), dtype=float).reshape(-1)
 
         dims_r = [primary_sel.shape[0], phi.shape[0]]
