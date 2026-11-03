@@ -18,7 +18,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from cgyro_fullt_trace_core import (FullTSource, Mode, TraceCancelled, TraceError,
                                     TraceSettings, _enable_private_decoder, select_peak, trace_case)
 from cgyro_fullt_trace_plot import FigureSettings, build_figure, export_bundle, panel_factors, shared_scale
-from cgyro_fullt_style import FULLT_DIVERGING_CMAP, diamond_lattice
+from cgyro_fullt_style import FULLT_DIVERGING_CMAP, diamond_lattice, smooth_diamond_mesh
 from cgyro_fullt_reader import FTZWriter, Layout
 
 
@@ -206,8 +206,11 @@ class FullTTraceTests(unittest.TestCase):
             self.assertTrue(all(axes[i].get_position().y0 > axes[i + 1].get_position().y0 for i in range(3)))
             for i, panel in enumerate(result.panels):
                 artist = axes[i].collections[0]
-                nodes = artist.get_array().reshape(2 * len(result.ky) + 1, 2 * len(result.kx) + 1)
-                np.testing.assert_allclose(nodes[1::2, 1::2], panel.values * fig._fullt_trace_scale["panel_multipliers"][i])
+                nodes = artist.get_array().reshape(-1, 9)
+                displayed = panel.values.ravel() * fig._fullt_trace_scale["panel_multipliers"][i]
+                for vertex in range(5):
+                    np.testing.assert_allclose(nodes[:, vertex], displayed)
+                np.testing.assert_array_equal(nodes[:, 5:], 0.)
                 self.assertIs(artist.cmap, FULLT_DIVERGING_CMAP)
                 marks = [line for line in axes[i].lines if line.get_marker() == "D"]
                 self.assertEqual(len(marks), 1)
@@ -301,6 +304,50 @@ class FullTTraceTests(unittest.TestCase):
         np.testing.assert_allclose(nodes[1::2, 1::2].filled(np.nan), values)
         np.testing.assert_array_equal(nodes[0::2, :], 0.)
         self.assertTrue(nodes.mask[3, 1])
+
+    def test_smooth_cores_keep_amplitude_and_do_not_bridge_missing_samples(self):
+        values = np.array([[1., -2., np.nan], [0., np.inf, .001]])
+        original = values.copy()
+        # Nonuniform x spacing exercises the actual edges, not an average width.
+        mesh, nodes = smooth_diamond_mesh([0., 2., 5.], [0., .1],
+                                         [-1., 1., 3.5, 6.5], [-.05, .05, .15], values)
+        triangles = mesh.get_masked_triangles()
+        for row, cy in enumerate([0., .1]):
+            for col, cx in enumerate([0., 2., 5.]):
+                source = values[row, col]
+                centre = np.flatnonzero((mesh.x == cx) & (mesh.y == cy))
+                self.assertEqual(len(centre), 1)
+                if np.isfinite(source):
+                    self.assertEqual(nodes[centre[0]], source)
+                    self.assertIn(centre[0], triangles)
+                else:
+                    self.assertNotIn(centre[0], triangles)
+        # Every drawn triangle is local to ONE source sample, so sign and missing
+        # masks cannot leak between neighboring samples through triangulation.
+        ownership = triangles // 9
+        self.assertTrue(np.all(ownership == ownership[:, :1]))
+        self.assertFalse(np.any(np.isin(ownership, [2, 4])))
+        xy = np.stack((mesh.x[triangles], mesh.y[triangles]), axis=-1)
+        u, v = xy[:, 1] - xy[:, 0], xy[:, 2] - xy[:, 0]
+        areas = .5 * (u[:, 0] * v[:, 1] - u[:, 1] * v[:, 0])
+        self.assertTrue(np.all(areas > 0.))
+        # A finite area, rather than just a point, retains the exact sample color.
+        full_color = np.all(nodes[triangles] == 1., axis=1)
+        area_fraction = areas[full_color].sum() / (.5 * 2. * .1)
+        self.assertGreater(area_fraction, .1)
+        self.assertLess(area_fraction, .25)
+        self.assertTrue(np.all(np.abs(nodes) <= 2.))
+        np.testing.assert_array_equal(values, original)
+
+    def test_smooth_rendering_handles_missing_zero_and_single_sample_maps(self):
+        result = trace_case(self.case, replace(self.settings, steps=3))
+        for panel, value in zip(result.panels, [np.nan, 0., -1.]):
+            panel.values = np.array([[value]])
+        result = replace(result, kx=np.array([0.]), ky=np.array([.1]))
+        fig = build_figure(result, FigureSettings(panel_scaling="none"))
+        FigureCanvasAgg(fig).draw()
+        for ax, expected in zip(fig._fullt_trace_axes, [0, 12, 12]):
+            self.assertEqual(len(ax.collections[0]._triangulation.get_masked_triangles()), expected)
 
     @unittest.skipUnless(os.environ.get("CGYRO_TEST_TK_LAYOUT") == "1", "optional Tk integration")
     def test_gui_traces_and_restyles_without_rereading_and_scrolls_options(self):

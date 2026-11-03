@@ -1,6 +1,6 @@
 # FULLT Trace Studio 使用说明
 
-适用版本：v0.2.29。独立 GUI 与命令行共用同一套读取、追踪及绘图逻辑。
+适用版本：v0.2.30。独立 GUI 与命令行共用同一套读取、追踪及绘图逻辑。
 
 ## 1. 启动与依赖
 
@@ -73,7 +73,7 @@ python -m pip install -r requirements-fullt-trace.txt
 | Panel scaling | 默认 Auto：相对最强面板，以 `1、2、5、10、20、50…` 的倍数放大较弱面板；自动倍数不会让其超出自动色标范围。None 关闭逐面板放大，保留原始相对幅度。Custom 使用下方手动倍数。 |
 | Multipliers: 1, 1, 10 | 输入或粘贴倍数时自动切换到 Custom，点击 Apply 后生效。例如 `1, 1, 10` 只将第三张乘 10，共用色标及前两张的颜色保持不变。均须为有限正数。如果提前停止追踪，多余的倍数忽略，已绘制的每一张必须有对应倍数。若想恢复自动/关闭放大，可主动选择 Auto / None。 |
 | Divide every panel by ONE global max | 所有 panel 先同除一个原始全局最大 `|T|`，再应用所选面板倍数。追踪表始终报告原始 T。 |
-| Map rendering | 默认 Smooth (classic FULLT)：沿用旧图的配色和 Gouraud 渐变，谱点颜色向网格单元边缘的中性色渐退。边缘零值节点仅是绘图几何，不作为新的物理样本。Diamonds / Cells 可切回离散菱形/色块。均不对弱值做阈值删除或百分位裁剪。 |
+| Map rendering | 默认 Smooth (classic FULLT)：沿用红—白—蓝配色，每个谱点中心的菱形区域保持完整颜色，再平滑渐退到单元边缘的中性色。中心区占谱点到单元边缘距离的 40%，缩短白色淡出区；全部面板使用同一规则，并采用更淡、更细的网格线。添加的节点仅是绘图几何，不作为新的物理样本，也不改变原始幅值、倍数及色标范围。Diamonds / Cells 可切回离散菱形/色块。均不对弱值做阈值删除或百分位裁剪。 |
 | x / y limits | 设置所有 panel 共同的显示范围；只影响显示，极值搜索仍使用固定 ky 行上的完整 kx 范围。 |
 | Context title | 默认显示 case、实际采用的起止样本时间和追踪方向，可自定义或勾选 Hide case/time title 隐藏。 |
 | Colorbar label | 默认空白，可选填。 |

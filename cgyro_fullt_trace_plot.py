@@ -16,10 +16,10 @@ import numpy as np
 
 try:
     from cgyro_io import write_json_atomic
-    from cgyro_fullt_style import FULLT_DIVERGING_CMAP, diamond_lattice
+    from cgyro_fullt_style import FULLT_DIVERGING_CMAP, SMOOTH_CORE_FRACTION, smooth_diamond_mesh
 except ImportError:
     from .cgyro_io import write_json_atomic
-    from .cgyro_fullt_style import FULLT_DIVERGING_CMAP, diamond_lattice
+    from .cgyro_fullt_style import FULLT_DIVERGING_CMAP, SMOOTH_CORE_FRACTION, smooth_diamond_mesh
 
 
 PUBLICATION_STYLE = {
@@ -171,8 +171,8 @@ def build_figure(result, settings=None):
             axes.append(ax)
             values = np.ma.masked_invalid(panel.values / divisor * factors[i])
             if settings.glyph == "smooth":
-                xx, yy, nodes = diamond_lattice(result.kx, result.ky, xedges, yedges, values)
-                artist = ax.pcolormesh(xx, yy, nodes, cmap=cmap, norm=norm, shading="gouraud",
+                mesh, nodes = smooth_diamond_mesh(result.kx, result.ky, xedges, yedges, values)
+                artist = ax.tripcolor(mesh, nodes, cmap=cmap, norm=norm, shading="gouraud",
                                       edgecolors="none", linewidth=0., antialiased=True, rasterized=True)
             elif settings.glyph == "diamonds":
                 # Each diamond is a mark for ONE saved grid sample. No smoothing,
@@ -187,9 +187,9 @@ def build_figure(result, settings=None):
             else:
                 artist = ax.pcolormesh(xedges, yedges, values, cmap=cmap, norm=norm,
                                       shading="flat", rasterized=True)
-            ax.axhline(0, color=".65", linewidth=.45, zorder=2.7)
-            ax.axvline(0, color=".65", linewidth=.45, zorder=2.7)
-            ax.grid(color=".9", linewidth=.35)
+            ax.axhline(0, color=".45", alpha=.18, linewidth=.35, zorder=2.7)
+            ax.axvline(0, color=".45", alpha=.18, linewidth=.35, zorder=2.7)
+            ax.grid(color=".5", alpha=.10, linewidth=.30)
             ax.set_axisbelow(False)
             ax.plot(panel.mode.kx, panel.mode.ky, "D", mfc="black", mec="white",
                     mew=.7, ms=6.5, zorder=6)
@@ -287,7 +287,8 @@ def export_bundle(result, settings, destination, formats=("pdf", "svg", "png")):
                                           for p, factor in zip(result.panels, factors)]}
     metadata["display"] = {"panel_multipliers": factors, "formula": "display_value = T_mean / divisor * panel_multiplier",
                            "palette": FULLT_DIVERGING_CMAP.name, "rendering": settings.glyph,
-                           "smooth_lattice": "sample-centred Gouraud lobes with neutral cell edges; display only"}
+                           "smooth_lattice": "sample-centred constant-color diamond cores with Gouraud fade to neutral cell edges; display only",
+                           "smooth_core_fraction": SMOOTH_CORE_FRACTION if settings.glyph == "smooth" else None}
     metadata["formats"] = list(formats)
     metadata["version"] = (Path(__file__).resolve().parent / "VERSION").read_text().strip()
     write_json_atomic(target / "trace.json", metadata)
@@ -298,7 +299,8 @@ def export_bundle(result, settings, destination, formats=("pdf", "svg", "png")):
         "Values beyond that range use the endpoint colors; exact values remain in plot_data.csv and maps.npz.\n"
         "display_value = T_mean / global_divisor * panel_multiplier. Multipliers appear before T in each panel header.\n"
         f"Panel multipliers: {', '.join(format(x, 'g') for x in factors)}; global divisor: {divisor:g}.\n"
-        "Smooth rendering uses Gouraud lobes fading to neutral cell edges, as in the classic FULLT plot.\n"
+        "Smooth rendering uses the same full-color diamond core and short Gouraud edge fade in every panel.\n"
+        f"The core extends {SMOOTH_CORE_FRACTION:g} of the sample-to-cell-edge distance; the remaining rim fades to neutral.\n"
         "Those extra nodes are display geometry, not physical data. No weak-signal threshold or percentile clipping is applied.\n"
         "Diamonds and cells show discrete samples; a filled black diamond marks the current diagnosed mode.\n"
         "The initial matched ky stays fixed. Extrema are selected only along ky_prime=ky; only kx changes.\n"
