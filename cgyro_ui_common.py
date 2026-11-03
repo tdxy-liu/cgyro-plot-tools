@@ -19,8 +19,8 @@ def configure_theme(root):
     family, cjk = gui_font_family(root)
     configure_plot_fonts()
     fonts = {}
-    for name, size, weight in (("body", GUI_FONT_SIZE, "normal"), ("small", 10, "normal"),
-                               ("section", GUI_FONT_SIZE, "bold"), ("title", 13, "bold")):
+    for name, size, weight in (("body", GUI_FONT_SIZE, "normal"), ("small", GUI_FONT_SIZE - 1, "normal"),
+                               ("section", GUI_FONT_SIZE, "bold"), ("title", GUI_FONT_SIZE + 2, "bold")):
         fonts[name] = tkfont.Font(root=root, family=family, size=size, weight=weight)
     for name in ("TkDefaultFont", "TkTextFont", "TkFixedFont", "TkMenuFont", "TkHeadingFont", "TkTooltipFont",
                  "TkCaptionFont", "TkSmallCaptionFont", "TkIconFont"):
@@ -41,21 +41,21 @@ def configure_theme(root):
     root.option_add("*Text.foreground", fg)
     style.configure(".", font=fonts["body"], background=bg, foreground=fg,
                     bordercolor=border, lightcolor=bg, darkcolor=border)
-    style.configure("TEntry", padding=(5, 4), fieldbackground="white")
-    style.configure("TCombobox", padding=(5, 4), arrowsize=14)
+    style.configure("TEntry", padding=(5, 3), fieldbackground="white")
+    style.configure("TCombobox", padding=(5, 3), arrowsize=14)
     style.map("TCombobox", fieldbackground=[("readonly", "white"), ("disabled", "#e8ecf1")],
               foreground=[("disabled", muted), ("readonly", fg)])
-    style.configure("TButton", padding=(9, 5))
-    style.configure("Compact.TButton", padding=(7, 4))
+    style.configure("TButton", padding=(9, 4))
+    style.configure("Compact.TButton", padding=(7, 3))
     style.configure("Accent.TButton", font=fonts["section"], background=accent,
-                    foreground="white", padding=(10, 8))
+                    foreground="white", padding=(10, 6))
     style.map("Accent.TButton", background=[("disabled", "#d7dfe9"), ("active", "#174d87")],
               foreground=[("disabled", "#536176"), ("!disabled", "white")])
     for widget in ("TButton", "TCheckbutton", "TEntry", "TRadiobutton"):
         style.map(widget, foreground=[("disabled", muted)])
-    style.configure("TCheckbutton", padding=(0, 3))
+    style.configure("TCheckbutton", padding=(0, 2))
     style.configure("TNotebook", tabmargins=(0, 2, 0, 0))
-    style.configure("TNotebook.Tab", padding=(12, 7))
+    style.configure("TNotebook.Tab", padding=(12, 5))
     style.map("TNotebook.Tab", background=[("selected", "#ffffff")],
               foreground=[("selected", accent)])
     style.configure("Treeview", rowheight=fonts["body"].metrics("linespace") + 10,
@@ -68,7 +68,7 @@ def configure_theme(root):
         style.configure(name, font=fonts["small"], foreground=muted)
     style.configure("Placeholder.TEntry", foreground="#68788f")
     for name in ("Card.TLabelframe", "Inner.TLabelframe"):
-        style.configure(name, padding=10, borderwidth=1, relief="solid")
+        style.configure(name, padding=8, borderwidth=1, relief="solid")
         style.configure(name + ".Label", font=fonts["section"])
     style.configure("Disclosure.TButton", anchor="w", padding=(2, 5), relief="flat",
                     foreground=muted, font=fonts["small"])

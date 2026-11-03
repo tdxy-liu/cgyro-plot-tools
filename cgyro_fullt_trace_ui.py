@@ -87,10 +87,9 @@ class FullTTraceApp:
         self.left_panel = left = ttk.Frame(self.main_pane, width=410)
         self.main_pane.add(left, weight=0)
         left.columnconfigure(0, weight=1)
-        left.rowconfigure(2, weight=1)
-        ttk.Label(left, text="CGYRO Transfer Explorer", style="SidebarTitle.TLabel").grid(row=0, column=0, sticky="w", pady=(2, 10))
+        left.rowconfigure(1, weight=1)
         case_frame = ttk.LabelFrame(left, text=tr("选择算例", "Select cases"), style="Card.TLabelframe")
-        case_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10), padx=(0, 8))
+        case_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10), padx=(0, 8))
         case_frame.columnconfigure(0, weight=1)
         self.case_list = tk.Listbox(case_frame, height=4, width=12, selectmode="extended",
                                     exportselection=False, relief="flat", activestyle="none")
@@ -105,7 +104,7 @@ class FullTTraceApp:
         ttk.Label(case_frame, text=tr("未选择时追踪全部算例", "No selection uses all cases"), style="Hint.TLabel").grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         self.option_tabs = tabs = ttk.Notebook(left)
-        tabs.grid(row=2, column=0, sticky="nsew", padx=(0, 8))
+        tabs.grid(row=1, column=0, sticky="nsew", padx=(0, 8))
         self.option_canvases = []
         self._forms, self.field_widgets = [], {}
         trace_tab = self._scroll_tab(tabs, tr("追踪设置", "Trace settings"))
@@ -170,7 +169,7 @@ class FullTTraceApp:
             bind_local_scroll(frame, canvas)
 
         actions = ttk.Frame(left, padding=(0, 8, 8, 0))
-        actions.grid(row=3, column=0, sticky="ew")
+        actions.grid(row=2, column=0, sticky="ew")
         actions.columnconfigure(0, weight=1)
         self.run_button = self._button(actions, tr("开始追踪", "Trace cases"), self.run_trace)
         self.run_button.configure(style="Accent.TButton")

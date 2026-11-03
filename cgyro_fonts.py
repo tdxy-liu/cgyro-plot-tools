@@ -12,7 +12,7 @@ import matplotlib as mpl
 from matplotlib import font_manager
 
 GUI_FONT_FAMILY = "Noto Sans CJK SC"
-GUI_FONT_SIZE = 11
+GUI_FONT_SIZE = 10
 PLOT_FONT_FAMILY = "Arial"
 CHINESE_PLOT_FONT_FAMILY = "SimSun"  # 宋体; reserved for Chinese figure text.
 GUI_FONT_FALLBACKS = (GUI_FONT_FAMILY, "Noto Sans SC", "Source Han Sans SC",

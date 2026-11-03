@@ -4,7 +4,7 @@ The shared policy lives in `cgyro_fonts.py`.
 
 | Use | Font |
 | --- | --- |
-| GUI Chinese, English, digits | Noto Sans CJK SC, default 11 pt |
+| GUI Chinese, English, digits | Noto Sans CJK SC, default 10 pt |
 | Figure titles, axes, legends, numbers | Arial |
 | Mathematics | Arial regular/italic/bold; missing glyphs from STIX |
 | Optional Chinese figure text | SimSun (宋体) |
@@ -47,7 +47,7 @@ This requires gcc, make, X11/Xft development headers, and the matching Tcl
 headers plus `lib/tclConfig.sh` in the Python prefix. It leaves shared Conda and
 system libraries untouched and refuses to overwrite an existing private runtime.
 The Hefei Python 3.11 / Tcl 8.6.12 installation was verified with Tk 8.6.12:
-Latin, Chinese and digit glyphs all resolve to Noto Sans CJK SC at 11 pt.
+Latin, Chinese and digit glyphs all resolve to Noto Sans CJK SC at the configured GUI size.
 
 Arial and SimSun are system fonts and are **not redistributed** here. STIX is
 provided by Matplotlib. On machines without Arial the Latin fallback is

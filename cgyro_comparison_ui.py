@@ -236,7 +236,7 @@ class CgyroUiMixin:
     def __init__(self, root):
         """Initialize UI state, widgets, and menus."""
         self.root = root
-        self.root.title(DEFAULT_APP_TITLE)
+        self.root.title(f"{DEFAULT_APP_TITLE} — v{APP_VERSION}")
         self.root.geometry(DEFAULT_WINDOW_GEOMETRY)
         self.fluc_average_var = tk.StringVar(value="Root Mean Square")
         self.time_mode_var = tk.StringVar(value="Manual Start/End")
@@ -247,7 +247,6 @@ class CgyroUiMixin:
         self.axis_ky_min_var = tk.StringVar()
         self.axis_ky_max_var = tk.StringVar()
         self.status_var = tk.StringVar(value="Ready")
-        self.case_summary_var = tk.StringVar(value="0 cases loaded")
         self.lock_case_selection_var = tk.BooleanVar(value=False)
 
         self.cases = {}  # Dictionary to store loaded cases: {name: cgyrodata_object}
@@ -454,7 +453,7 @@ class CgyroUiMixin:
             pass
 
     def _refresh_case_summary(self, status_prefix="Ready"):
-        """Refresh the compact case count and status-bar summary."""
+        """Show case and selection counts in the status bar."""
         try:
             count = int(self.case_listbox.size())
             selected = len(self.case_listbox.curselection())
@@ -466,7 +465,6 @@ class CgyroUiMixin:
         summary = self._ui_text(f"已加载 {count} 个算例", f"{count} {case_word} loaded")
         if selected:
             summary += self._ui_text(f" · 已选择 {selected} 个", f" | {selected} selected")
-        self.case_summary_var.set(summary)
 
         plot_var = getattr(self, "plot_type_var", None)
         plot_name = str(plot_var.get()).strip() if plot_var is not None else ""
@@ -493,16 +491,10 @@ class CgyroUiMixin:
         self.left_container = left = ttk.Frame(self.main_pane, width=410)
         self.main_pane.add(left, weight=0)
         left.columnconfigure(0, weight=1)
-        left.rowconfigure(2, weight=1)
-        self.sidebar_header = header = ttk.Frame(left, padding=(2, 2, 10, 8))
-        header.grid(row=0, column=0, sticky="ew")
-        header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="CGYRO Comparison", style="SidebarTitle.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(header, text=f"v{APP_VERSION}", style="Muted.TLabel").grid(row=0, column=1, sticky="e")
-        ttk.Label(header, textvariable=self.case_summary_var, style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(3, 0))
+        left.rowconfigure(1, weight=1)
 
         self.case_section = cases = ttk.LabelFrame(left, text=tr("选择算例", "Select cases"), style="Card.TLabelframe")
-        cases.grid(row=1, column=0, sticky="ew", padx=(0, 8), pady=(0, 10))
+        cases.grid(row=0, column=0, sticky="ew", padx=(0, 8), pady=(0, 10))
         cases.columnconfigure(0, weight=1)
         list_frame = ttk.Frame(cases)
         list_frame.grid(row=0, column=0, sticky="ew")
@@ -545,7 +537,7 @@ class CgyroUiMixin:
         more.configure(menu=more_menu)
 
         self.options_scroll_host = host = ttk.Frame(left)
-        host.grid(row=2, column=0, sticky="nsew")
+        host.grid(row=1, column=0, sticky="nsew")
         self.left_canvas = tk.Canvas(host, height=100, width=330, highlightthickness=0,
                                      background=configure_theme(self.root)["background"])
         self.left_scrollbar = ttk.Scrollbar(host, command=self.left_canvas.yview)
@@ -575,7 +567,7 @@ class CgyroUiMixin:
         bind_local_scroll(self.left_canvas, self.left_canvas)
 
         self.action_footer = footer = ttk.Frame(left, padding=(0, 8, 8, 0))
-        footer.grid(row=3, column=0, sticky="ew")
+        footer.grid(row=2, column=0, sticky="ew")
         self.action_section = footer
         self.plot_button = ttk.Button(footer, text=tr("绘制", "Plot"), style="Accent.TButton", command=self.plot_comparison)
         self.plot_button.pack(fill="x")

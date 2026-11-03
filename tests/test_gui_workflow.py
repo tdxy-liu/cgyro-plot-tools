@@ -111,7 +111,7 @@ class GuiWorkflowTests(unittest.TestCase):
         for kind in ("main", "trace"):
             with self.subTest(kind=kind), self.app(kind) as app:
                 lang = get_language(app.root)
-                self.assertEqual(tkfont.Font(root=app.root, name="TkDefaultFont", exists=True).cget("size"), 11)
+                self.assertEqual(tkfont.Font(root=app.root, name="TkDefaultFont", exists=True).cget("size"), 10)
                 if kind == "main":
                     app.plot_type_var.set("Fluctuation 1D")
                     app.fluc_xaxis_var.set("v.s theta")
