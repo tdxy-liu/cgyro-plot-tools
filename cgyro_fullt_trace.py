@@ -24,9 +24,14 @@ def parser():
     cli.add_argument("--panel-height-mm", type=float, default=32.)
     cli.add_argument("--font-pt", type=float, default=9.)
     cli.add_argument("--dpi", type=int, default=600)
-    cli.add_argument("--color-max", type=float, help="Shared symmetric color bound; blank uses every panel's global max |T|.")
+    cli.add_argument("--color-max", type=float, help="Shared symmetric bound for displayed values, after panel multipliers.")
     cli.add_argument("--normalize", action="store_true", help="Divide ALL panels by one global max |T|.")
-    cli.add_argument("--glyph", choices=("diamonds", "cells"), default="diamonds")
+    cli.add_argument("--glyph", choices=("smooth", "diamonds", "cells"), default="smooth",
+                     help="Smooth: classic FULLT red-white-blue lobes (default).")
+    cli.add_argument("--panel-scaling", choices=("auto", "none", "custom"), default="auto",
+                     help="Auto: amplify weak panels by labelled 1/2/5 decades. None: preserve relative amplitudes.")
+    cli.add_argument("--panel-multipliers", nargs="+", type=float,
+                     help="Custom display factors in panel order, e.g. 1 1 10; selects custom scaling.")
     cli.add_argument("--xlim", nargs=2, type=float)
     cli.add_argument("--ylim", nargs=2, type=float)
     cli.add_argument("--title", help="Custom context line; pass an empty string to hide it.")
@@ -47,7 +52,9 @@ def main(argv=None):
     figure = FigureSettings(width_mm=args.width_mm, panel_height_mm=args.panel_height_mm, font_pt=args.font_pt,
                             color_max=args.color_max, normalize=args.normalize, glyph=args.glyph,
                             xlim=tuple(args.xlim) if args.xlim else None, ylim=tuple(args.ylim) if args.ylim else None,
-                            title=args.title, colorbar_label=args.colorbar_label, dpi=args.dpi)
+                            title=args.title, colorbar_label=args.colorbar_label, dpi=args.dpi,
+                            panel_scaling="custom" if args.panel_multipliers is not None else args.panel_scaling,
+                            panel_multipliers=tuple(args.panel_multipliers) if args.panel_multipliers is not None else None)
     try:
         trace.validate()
         figure.validate()

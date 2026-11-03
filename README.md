@@ -6,6 +6,7 @@
 
 ### 最新更新
 
+- **v0.2.28 FULLT 出图样式与面板放大**：追踪图恢复经典红—白—蓝渐变和实心黑色菱形，移除底部标记图例。弱信号面板默认自动放大并在 T 前标注倍数，也可在 Publication 页指定 `1, 1, 10` 等自定义倍数；全部面板仍共用色标，原始追踪数据保持不变。
 - **v0.2.27 固定 ky 追踪**：FULLT Trace Studio 将最初匹配到的 ky 保持不变，只在 `ky′ = ky` 的分支选取最正/最负 T，沿 kx 逐步追踪；图片仅标注当前 kx、ky，移除 `next kx` 和 T 数值行。
 - **v0.2.26 独立 FULLT Trace Studio**：`python cgyro_fullt_trace.py` 启动专门的追踪 GUI，也可从主工具 `Plot -> FULLT Trace Studio...` 打开。逐步追踪最大正 T 或最小负 T，默认四张图上下排列，共用一个色标；提供 PDF/SVG、600 dpi PNG/TIFF 和完整追踪数据导出。支持命令行批量出图，无需 pygacode；详见 [FULLT 追踪说明书](FULLT_TRACE_GUIDE.md)。
 - **v0.2.25 ky 显示约定**：普通谱图和选择器采用正 ky 表示；FULLT 保留正负 partner 分支并统一坐标约定。FULLT 图片移除标题中的 `FULLT asym`、`T` 下标中的 `asym`、色标标题及 source ky index。

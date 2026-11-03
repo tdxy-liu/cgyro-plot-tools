@@ -1,6 +1,6 @@
 # FULLT Trace Studio 使用说明
 
-适用版本：v0.2.27。独立 GUI 与命令行共用同一套读取、追踪及绘图逻辑。
+适用版本：v0.2.28。独立 GUI 与命令行共用同一套读取、追踪及绘图逻辑。
 
 ## 1. 启动与依赖
 
@@ -35,7 +35,7 @@ python -m pip install -r requirements-fullt-trace.txt
 1. 输入起始物理 `kx` 和固定的 `ky`，匹配最近的已保存模式；`ky` 按绝对值解释。最初匹配得到的 ky 在全部步骤中保持不变。
 2. 仅在 **`ky′ = 固定 ky`** 的一行寻找极值：**Maximum positive T** 选择严格大于零的最大值；**Minimum negative T** 选择严格小于零的最小值。
 3. 将选中谱点的 `kx′` 作为下一步的 kx，ky 仍使用最初匹配值，继续追踪。例如 `(0, 0.2) → (-0.17, 0.2) → (-0.34, 0.2)`。
-4. **Panels / steps = 4** 表示包含起点在内的四张图，即最多三次切换后续起点。最后一张仍会标记其极值。
+4. **Panels / steps = 4** 表示包含起点在内的四张图，即最多三次切换后续起点。每张图的实心黑色菱形标记当前模式，所选极值的详细数值保留在坐标表和导出文件中。
 
 全部 panel 仍显示完整的、有符号的 partner `ky′` 网格，但其他 ky 分支不参与追踪。即使 `ky′=0`、负 ky′ 或其他正 ky′ 上有更大的极值，也不会跳转过去。如果固定行中没有所需符号的有限非零 T，则停止并说明原因，不回退到其他 ky。固定 ky=0 时，全程沿 ky′=0 追踪。
 
@@ -63,21 +63,27 @@ python -m pip install -r requirements-fullt-trace.txt
 
 ## 4. Publication 页与共享色标
 
-每一步一行，上下排列；右侧单一色标贯穿全部 panel。共用横纵坐标范围，只在最下方标注横轴；每张图上方留白仅标注面板编号、T 符号和当前 kx/ky，不显示 `next kx` 或 T 数值行。空心圆为当前模式，空心菱形为固定 ky 行内所选极值。详细数值保留在坐标表和导出文件中。
+每一步一行，上下排列；右侧单一红—白—蓝色标贯穿全部 panel。共用横纵坐标范围，只在最下方标注横轴；每张图上方留白标注面板编号、带放大倍数的 T 符号和当前 kx/ky，不显示 `next kx` 或 T 数值行。当前模式使用带白边的实心黑色菱形，不显示空心圆、所选极值标记或底部标记图例。详细数值保留在坐标表和导出文件中。
 
 | 设置 | 说明 |
 | --- | --- |
 | Width / Panel height | 毫米单位，默认总宽 183 mm、每个数据区高 32 mm；可选择 89 mm 单栏宽度。 |
 | Font | 默认 9 pt；允许 8.5–16 pt。最终投稿时仍应按期刊和插入尺寸核对。 |
-| Shared color max | 默认自动使用全部 panel 的最大 `|T|`，色标范围为 `[-M,+M]`，中心为零。手动填写更小范围时显示越界色标箭头。 |
-| Divide every panel by ONE global max | 所有 panel 同除一个全局最大 `|T|`，保留相对强弱；不对每张图单独放大。追踪表仍报告原始 T。 |
-| Map marks | 默认 Diamonds：每个菱形对应一个原生谱点，颜色为该点均值。Cells 使用网格色块。两者都没有插值平滑或伪造零值节点。 |
+| Shared color max | 控制所有 panel **放大后显示值** 的共同范围 `[-M,+M]`。留空时覆盖全部显示值；手动设得较小会使超范围颜色饱和。色标采用旧图的双端箭头样式。 |
+| Panel scaling | 默认 Auto：相对最强面板，以 `1、2、5、10、20、50…` 的倍数放大较弱面板；自动倍数不会让其超出自动色标范围。None 关闭逐面板放大，保留原始相对幅度。Custom 使用下方手动倍数。 |
+| Multipliers: 1, 1, 10 | Custom 模式下按面板顺序填写，例如 `1, 1, 10` 只将第三张乘 10；均须为有限正数。如果提前停止追踪，多余的倍数忽略，已绘制的每一张必须有对应倍数。 |
+| Divide every panel by ONE global max | 所有 panel 先同除一个原始全局最大 `|T|`，再应用所选面板倍数。追踪表始终报告原始 T。 |
+| Map rendering | 默认 Smooth (classic FULLT)：沿用旧图的配色和 Gouraud 渐变，谱点颜色向网格单元边缘的中性色渐退。边缘零值节点仅是绘图几何，不作为新的物理样本。Diamonds / Cells 可切回离散菱形/色块。均不对弱值做阈值删除或百分位裁剪。 |
 | x / y limits | 设置所有 panel 共同的显示范围；只影响显示，极值搜索仍使用固定 ky 行上的完整 kx 范围。 |
 | Context title | 默认显示 case、实际采用的起止样本时间和追踪方向，可自定义或勾选 Hide case/time title 隐藏。 |
 | Colorbar label | 默认空白，可选填。 |
 | Export DPI | 默认 600；支持 300–1200。 |
 
 点击 **Apply publication style to preview** 即可修改样式，无需重新读取数据。修改初始模式、时间窗等 Trace 参数后，需要重新点击 **Trace selected cases** 才会重新计算。
+
+例如第三张显示 `10 × T`，表示着色值为原始 T 的 10 倍；读取色标后须除以 10 才得到原始量。如果同时勾选全局归一化，还要乘回导出元数据中的 `divisor`。**有面板倍数时不能直接用颜色深浅比较原始强弱**，应结合倍数或查看原始数据。自动倍数依据每张完整谱图的有限最大绝对值计算，不随缩放坐标范围而改变；全零/全非有限值面板不放大。追踪选点始终使用原始值。
+
+加载旧会话会保留原来显式选择的 Diamonds / Cells；若要采用新的渐变风格，在 Map rendering 选择 Smooth (classic FULLT)。
 
 PDF 和 SVG 中的文字、坐标轴、注释可编辑；高密度数据层按选定 DPI 栅格化，以控制文件大小。多 case 分别生成图组，各图组内部共用色标；若希望不同 case 之间也用相同范围，请填写相同的 **Shared color max**。
 
@@ -89,9 +95,9 @@ PDF 和 SVG 中的文字、坐标轴、注释可编辑；高密度数据层按�
 
 - `trace.pdf` / `trace.svg` / `trace.png` / 可选 `trace.tiff`：纵向排列的图片。
 - `trace.csv`：每一步的当前模式、选中 partner、原始平均 T、下一步模式、并列数及排除数。为兼容旧文件格式保留的 `conjugated` 列在固定 ky 追踪中为 false。
-- `plot_data.csv`：全部网格点的原始 `T_mean` 与实际着色使用的 `display_value`。
+- `plot_data.csv`：全部原生网格点的原始 `T_mean`、着色使用的 `display_value` 和该面板的 `display_multiplier`。满足 `display_value = T_mean / divisor × display_multiplier`，不导出绘图用的边缘零值节点。
 - `maps.npz`：所有面板的原始均值矩阵，矩阵维度为 `[ky′, kx′]`，同时保存坐标和采用的时间点。
-- `trace.json`：版本、读取布局、输入文件签名、时间索引、参数、实际固定的 ky、共享色标及停止原因。
+- `trace.json`：版本、读取布局、输入文件签名、时间索引、参数、实际固定的 ky、共享色标、实际面板倍数、渲染方式及停止原因。
 - `README.txt`：数据解释。
 
 **File -> Save session... / Load session...** 保存和恢复 case 路径及选项；会话文件不复制模拟数据，也不保存预览图，加载后重新 Trace 即可。
@@ -116,7 +122,13 @@ python cgyro_fullt_trace.py --case /path/to/case --kx 0 --ky 0.2 --steps 4 --dir
 python cgyro_fullt_trace.py --case /path/to/case_A --case /path/to/case_B --ky 0.2 --steps 4 --color-max 0.02 --width-mm 89 --formats pdf svg png tiff --output ./FULLT_exports
 ```
 
-可追加 `--diagnostic fullt`、`--cycles allow`、`--cycles skip`、`--normalize`、`--glyph cells`、`--xlim -0.6 0.6`、`--ylim -0.3 0.6` 等选项。`--gui` 可带相同参数打开预设好的 GUI。查看完整参数：
+只将第三张放大 10 倍：
+
+```bash
+python cgyro_fullt_trace.py --case /path/to/case --ky 0.2 --steps 3 --direction negative --panel-multipliers 1 1 10 --output ./FULLT_exports
+```
+
+`--panel-multipliers` 自动选择 Custom 模式。默认 `--panel-scaling auto` 自动放大较弱面板；`--panel-scaling none` 保留原始比例。可追加 `--diagnostic fullt`、`--cycles allow`、`--cycles skip`、`--normalize`、`--glyph smooth`、`--glyph cells`、`--xlim -0.6 0.6`、`--ylim -0.3 0.6` 等选项。`--gui` 可带相同参数打开预设好的 GUI。查看完整参数：
 
 ```bash
 python cgyro_fullt_trace.py --help

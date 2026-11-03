@@ -23,7 +23,8 @@ except ImportError:
 DIRECTIONS = {"Maximum positive T": "positive", "Minimum negative T": "negative"}
 DIAGNOSTICS = {"FULLT_ASYM": "asym", "FULLT": "fullt"}
 CYCLES = {"Stop at repeat": "stop", "Allow repeats": "allow", "Skip visited modes": "skip"}
-GLYPHS = {"Diamonds (grid samples)": "diamonds", "Cells": "cells"}
+GLYPHS = {"Smooth (classic FULLT)": "smooth", "Diamonds (grid samples)": "diamonds", "Cells": "cells"}
+PANEL_SCALING = {"Auto (1, 2, 5, 10...)": "auto", "None (original ratios)": "none", "Custom multipliers": "custom"}
 
 
 class FullTTraceApp:
@@ -95,18 +96,21 @@ class FullTTraceApp:
                   wraplength=315, foreground="#586575").grid(row=8, column=0, columnspan=2, sticky="w", pady=12)
         figure_fields = [("width_mm", "Width (mm)", None), ("panel_height_mm", "Panel height (mm)", None),
                          ("font_pt", "Font (pt)", None), ("color_max", "Shared color max", None),
-                         ("glyph", "Map marks", GLYPHS), ("xlim", "x limits: min, max", None),
+                         ("glyph", "Map rendering", GLYPHS),
+                         ("panel_scaling", "Panel scaling", PANEL_SCALING),
+                         ("panel_multipliers", "Multipliers: 1, 1, 10", None),
+                         ("xlim", "x limits: min, max", None),
                          ("ylim", "y limits: min, max", None), ("title", "Context title", None),
                          ("colorbar_label", "Colorbar label", None), ("dpi", "Export DPI", None)]
         for row, (key, label, choices) in enumerate(figure_fields):
             self._entry(figure_tab, row, key, label, choices)
         self.vars["normalize"] = tk.BooleanVar(value=False)
         ttk.Checkbutton(figure_tab, text="Divide every panel by ONE global max |T|", variable=self.vars["normalize"]).grid(
-            row=10, column=0, columnspan=2, sticky="w", pady=6)
+            row=len(figure_fields), column=0, columnspan=2, sticky="w", pady=6)
         self.vars["hide_title"] = tk.BooleanVar(value=False)
-        ttk.Checkbutton(figure_tab, text="Hide case/time title", variable=self.vars["hide_title"]).grid(row=11, column=0, columnspan=2, sticky="w")
-        ttk.Label(figure_tab, text="Blank color max: automatic shared range.\nBlank limits: full grid; tracing uses the full kx row at fixed ky.\nBlank title: case and actual averaging times.",
-                  wraplength=315, foreground="#586575").grid(row=12, column=0, columnspan=2, sticky="w", pady=7)
+        ttk.Checkbutton(figure_tab, text="Hide case/time title", variable=self.vars["hide_title"]).grid(row=len(figure_fields) + 1, column=0, columnspan=2, sticky="w")
+        ttk.Label(figure_tab, text="Auto scaling brightens weaker panels; each multiplier is shown before T.\nFor manual factors select Custom and enter e.g. 1, 1, 10.\nBlank color max: shared range after scaling.\nBlank limits: full grid; tracing keeps the same ky.",
+                  wraplength=315, foreground="#586575").grid(row=len(figure_fields) + 2, column=0, columnspan=2, sticky="w", pady=7)
         for frame, canvas in self.option_canvases:
             self._bind_option_scroll(frame, canvas)
         actions = ttk.Frame(left)
@@ -216,11 +220,12 @@ class FullTTraceApp:
 
     def _set_options(self, trace, figure):
         values = {**asdict(trace), **asdict(figure)}
-        mappings = {"direction": DIRECTIONS, "diagnostic": DIAGNOSTICS, "cycles": CYCLES, "glyph": GLYPHS}
+        mappings = {"direction": DIRECTIONS, "diagnostic": DIAGNOSTICS, "cycles": CYCLES,
+                    "glyph": GLYPHS, "panel_scaling": PANEL_SCALING}
         for key, value in values.items():
             if key in mappings:
                 value = next(label for label, code in mappings[key].items() if code == value)
-            if key in ("xlim", "ylim") and value is not None:
+            if key in ("xlim", "ylim", "panel_multipliers") and value is not None:
                 value = ", ".join(map(str, value))
             self.vars[key].set("" if value is None else value)
         self.vars["hide_title"].set(figure.title == "")
@@ -238,7 +243,9 @@ class FullTTraceApp:
         figure = FigureSettings(width_mm=number("width_mm"), panel_height_mm=number("panel_height_mm"), font_pt=number("font_pt"),
                                 color_max=number("color_max", True), normalize=self.vars["normalize"].get(), glyph=GLYPHS[self.vars["glyph"].get()],
                                 xlim=limits("xlim"), ylim=limits("ylim"), title="" if self.vars["hide_title"].get() else self.vars["title"].get().strip() or None,
-                                colorbar_label=self.vars["colorbar_label"].get(), dpi=int(self.vars["dpi"].get()))
+                                colorbar_label=self.vars["colorbar_label"].get(), dpi=int(self.vars["dpi"].get()),
+                                panel_scaling=PANEL_SCALING[self.vars["panel_scaling"].get()],
+                                panel_multipliers=limits("panel_multipliers"))
         trace.validate()
         figure.validate()
         return trace, figure

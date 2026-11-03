@@ -17,7 +17,8 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 
 from cgyro_fullt_trace_core import (FullTSource, Mode, TraceCancelled, TraceError,
                                     TraceSettings, _enable_private_decoder, select_peak, trace_case)
-from cgyro_fullt_trace_plot import FigureSettings, build_figure, export_bundle
+from cgyro_fullt_trace_plot import FigureSettings, build_figure, export_bundle, panel_factors, shared_scale
+from cgyro_fullt_style import FULLT_DIVERGING_CMAP, diamond_lattice
 from cgyro_fullt_reader import FTZWriter, Layout
 
 
@@ -201,9 +202,19 @@ class FullTTraceTests(unittest.TestCase):
             self.assertTrue(all(a.collections[0].norm is axes[0].collections[0].norm for a in axes))
             self.assertAlmostEqual(axes[0].collections[0].norm.vmax, 20.)
             self.assertEqual(fig.axes[-1].get_ylabel(), "")
+            self.assertFalse(fig.legends)
             self.assertTrue(all(axes[i].get_position().y0 > axes[i + 1].get_position().y0 for i in range(3)))
             for i, panel in enumerate(result.panels):
-                np.testing.assert_array_equal(axes[i].collections[0].get_array(), panel.values.ravel())
+                artist = axes[i].collections[0]
+                nodes = artist.get_array().reshape(2 * len(result.ky) + 1, 2 * len(result.kx) + 1)
+                np.testing.assert_allclose(nodes[1::2, 1::2], panel.values * fig._fullt_trace_scale["panel_multipliers"][i])
+                self.assertIs(artist.cmap, FULLT_DIVERGING_CMAP)
+                marks = [line for line in axes[i].lines if line.get_marker() == "D"]
+                self.assertEqual(len(marks), 1)
+                self.assertEqual(marks[0].get_markerfacecolor(), "black")
+                self.assertEqual(marks[0].get_markeredgecolor(), "white")
+                np.testing.assert_allclose(marks[0].get_xydata(), [[panel.mode.kx, panel.mode.ky]])
+                self.assertFalse(any(line.get_marker() == "o" for line in axes[i].lines))
             # All header text remains inside the physical figure.
             renderer = fig.canvas.get_renderer()
             for ax in fig.axes:
@@ -219,6 +230,59 @@ class FullTTraceTests(unittest.TestCase):
                 for label in (ax.xaxis.label, ax.yaxis.label):
                     if label.get_text():
                         self.assertGreaterEqual(label.get_window_extent(renderer).x0, 0)
+
+    def test_panel_scaling_uses_labelled_nice_factors_and_preserves_raw_maps(self):
+        result = trace_case(self.case, self.settings)
+        for panel, amplitude in zip(result.panels, [20., 9., 1.5, .3]):
+            panel.values = panel.values * (amplitude / np.max(np.abs(panel.values)))
+        raw = [p.values.copy() for p in result.panels]
+        factors = panel_factors(result, FigureSettings())
+        np.testing.assert_allclose(factors, [1, 2, 10, 50])
+        fig = build_figure(result)
+        labels = [text.get_text() for ax in fig.axes for text in ax.texts]
+        for factor in (2, 10, 50):
+            self.assertTrue(any(str(factor) + r"\times T" in text for text in labels))
+        self.assertEqual(shared_scale(result, FigureSettings())[1], 20.)
+        for panel, original in zip(result.panels, raw):
+            np.testing.assert_array_equal(panel.values, original)
+        np.testing.assert_allclose(panel_factors(result, FigureSettings(normalize=True)), factors)
+        np.testing.assert_allclose(panel_factors(result, FigureSettings(panel_scaling="none")), np.ones(4))
+        result.panels[-1].values[:] = np.nan
+        result.panels[-2].values[:] = 0.
+        np.testing.assert_allclose(panel_factors(result, FigureSettings()), [1, 2, 1, 1])
+        result.panels[1].values[:] = 20. / np.nextafter(1000., 0.)
+        factor = panel_factors(result, FigureSettings())[1]
+        self.assertLessEqual(factor * np.max(result.panels[1].values), 20.)
+
+    def test_custom_scaling_export_is_reversible_and_does_not_modify_trace(self):
+        result = trace_case(self.case, self.settings)
+        style = FigureSettings(panel_scaling="custom", panel_multipliers=(1, 1, 10, 5), normalize=True, dpi=300)
+        output = export_bundle(result, style, self.folder / "scaled", formats=("svg",))
+        metadata = json.loads((output / "trace.json").read_text(encoding="utf-8"))
+        self.assertEqual(metadata["shared_color_scale"]["limit"], 6.)
+        self.assertEqual(metadata["display"]["panel_multipliers"], [1, 1, 10, 5])
+        self.assertEqual(metadata["panels"], result.metadata()["panels"])
+        table = np.loadtxt(output / "plot_data.csv", delimiter=",", skiprows=1)
+        np.testing.assert_allclose(table[:, 4] / table[:, 5] * 20., table[:, 3])
+        with np.load(output / "maps.npz") as data:
+            for i, panel in enumerate(result.panels, 1):
+                np.testing.assert_array_equal(data[f"step_{i:02d}"], panel.values)
+        for factors in ((0,), (-1,), (np.nan,), (), (np.inf,)):
+            with self.assertRaisesRegex(ValueError, "multipliers"):
+                FigureSettings(panel_scaling="custom", panel_multipliers=factors).validate()
+        with self.assertRaisesRegex(ValueError, "at least 4"):
+            build_figure(result, replace(style, panel_multipliers=(1, 10)))
+        # Extra factors are allowed when a trace stops before the requested step count.
+        np.testing.assert_allclose(panel_factors(result, replace(style, panel_multipliers=(1, 1, 10, 5, 2))), [1, 1, 10, 5])
+
+    def test_classic_lattice_retains_sample_centres_and_masks_missing_values(self):
+        values = np.array([[1., -2.], [np.nan, .001]])
+        xx, yy, nodes = diamond_lattice([0., 2.], [0., .1], [-1., 1., 3.], [-.05, .05, .15], values)
+        np.testing.assert_allclose(xx[1, 1::2], [0., 2.])
+        np.testing.assert_allclose(yy[1::2, 1], [0., .1])
+        np.testing.assert_allclose(nodes[1::2, 1::2].filled(np.nan), values)
+        np.testing.assert_array_equal(nodes[0::2, :], 0.)
+        self.assertTrue(nodes.mask[3, 1])
 
     @unittest.skipUnless(os.environ.get("CGYRO_TEST_TK_LAYOUT") == "1", "optional Tk integration")
     def test_gui_traces_and_restyles_without_rereading_and_scrolls_options(self):
@@ -246,9 +310,19 @@ class FullTTraceTests(unittest.TestCase):
             self.assertEqual(len(app.results[0].panels), 4)
             self.assertEqual(len(app.table.get_children()), 4)
             app.vars["normalize"].set(True)
+            app.vars["panel_scaling"].set("Custom multipliers")
+            app.vars["panel_multipliers"].set("1, 1, 10, 5")
             with patch("cgyro_fullt_trace_ui.trace_case", side_effect=AssertionError("style must use cached maps")):
                 app.redraw()
-            self.assertEqual(app.canvas.figure._fullt_trace_scale["limit"], 1.)
+            self.assertEqual(app.canvas.figure._fullt_trace_scale["limit"], 6.)
+            self.assertEqual(app.canvas.figure._fullt_trace_scale["panel_multipliers"], [1, 1, 10, 5])
+            session = self.folder / "session.json"
+            with patch("cgyro_fullt_trace_ui.filedialog.asksaveasfilename", return_value=str(session)):
+                app.save_session()
+            app.vars["panel_multipliers"].set("2, 2, 2, 2")
+            with patch("cgyro_fullt_trace_ui.filedialog.askopenfilename", return_value=str(session)):
+                app.load_session()
+            self.assertEqual(app._options()[1].panel_multipliers, (1, 1, 10, 5))
             errors.assert_not_called()
             warnings.assert_not_called()
             app.option_tabs.select(1)
@@ -276,7 +350,7 @@ class FullTTraceTests(unittest.TestCase):
 
     def test_export_keeps_raw_values_and_never_overwrites(self):
         result = trace_case(self.case, self.settings)
-        settings = FigureSettings(dpi=300, normalize=True)
+        settings = FigureSettings(dpi=300, normalize=True, panel_scaling="none")
         output = export_bundle(result, settings, self.folder / "out", formats=("svg", "png"))
         second = export_bundle(result, settings, self.folder / "out", formats=("svg",))
         self.assertNotEqual(output, second)
@@ -291,10 +365,13 @@ class FullTTraceTests(unittest.TestCase):
     def test_cli_batch_and_bad_case_failure(self):
         script = str(Path(__file__).resolve().parents[1] / "cgyro_fullt_trace.py")
         completed = subprocess.run([sys.executable, script, "--case", str(self.case), "--ky", ".1", "--steps", "3",
+                                    "--panel-multipliers", "1", "1", "10", "--glyph", "smooth",
                                     "--output", str(self.folder / "cli"), "--formats", "svg"],
                                    capture_output=True, text=True, timeout=45)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("Exported 3 panels", completed.stdout)
+        metadata_path = next((self.folder / "cli").glob("*/trace.json"))
+        self.assertEqual(json.loads(metadata_path.read_text(encoding="utf-8"))["display"]["panel_multipliers"], [1, 1, 10])
         failed = subprocess.run([sys.executable, script, "--case", str(self.folder / "missing"), "--output", str(self.folder / "cli")],
                                 capture_output=True, text=True, timeout=30)
         self.assertNotEqual(failed.returncode, 0)
