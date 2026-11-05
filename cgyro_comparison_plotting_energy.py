@@ -4016,7 +4016,7 @@ class EnergyPlotting:
             normalize_by_max_t = False
         diag_name = "FULLT asym" if use_asym else "FULLT"
         data_attr = "fullt_asym" if use_asym else "fullt"
-        transfer_symbol = r"T^{\Phi}"
+        transfer_symbol = "T"
         try:
             view_txt = str(self.energy_balance_transfer_xaxis_var.get()).strip().lower()
         except Exception:
@@ -4501,7 +4501,7 @@ class EnergyPlotting:
         self.ax.set_xlabel(r"$k_x'\rho_s$")
         self.ax.set_ylabel(r"$k_y'\rho_s$")
         title_math = (
-            rf"$T^{{\Phi}}_{{k_x\rho_s={fixed_kx:.3g},\ "
+            rf"${transfer_symbol}_{{k_x\rho_s={fixed_kx:.3g},\ "
             rf"k_y\rho_s={fixed_ky:.3g}}}(k')$"
         )
         norm_title = " normalized by max T" if normalize_by_max_t else ""

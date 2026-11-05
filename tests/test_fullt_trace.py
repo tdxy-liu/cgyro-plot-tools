@@ -225,6 +225,7 @@ class FullTTraceTests(unittest.TestCase):
                 for text in ax.texts:
                     self.assertNotIn("next", text.get_text().lower())
                     self.assertNotIn("T =", text.get_text())
+                    self.assertNotIn(r"\Phi", text.get_text())
                     bounds = text.get_window_extent(renderer)
                     self.assertGreaterEqual(bounds.x0, 0)
                     self.assertLessEqual(bounds.x1, fig.bbox.width)

@@ -82,6 +82,7 @@ class KyPlotConventionTests(unittest.TestCase):
                         plot.fig.canvas.draw()
                         self.assertNotIn("FULLT", plot.ax.get_title())
                         self.assertNotIn("asym", plot.ax.get_title())
+                        self.assertTrue(plot.ax.get_title().startswith(r"$T_{k_x\rho_s="))
                         self.assertIn(r"k_y\rho_s=0.2", plot.ax.get_title())
                         self.assertEqual(plot.fig.axes[1].get_ylabel(), "")
                         self.assertEqual(plot.fig.axes[1].get_title(), "")

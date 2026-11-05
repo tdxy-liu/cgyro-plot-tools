@@ -185,7 +185,7 @@ class CollapsibleSection(ttk.Frame):
         self._sync()
 
     def _sync(self):
-        self.button.configure(text=("−  " if self.expanded else "+  ") + self.title)
+        self.button.configure(text=("▾  " if self.expanded else "▸  ") + self.title)
         if self.expanded:
             self.body.grid(row=1, column=0, sticky="ew")
             if self.on_open:

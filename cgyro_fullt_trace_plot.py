@@ -203,7 +203,7 @@ def build_figure(result, settings=None):
             ax.tick_params(labelbottom=i == n - 1)
             if i == n - 1:
                 ax.set_xlabel(r"$k_x'\rho_s$", fontsize=settings.font_pt, labelpad=2)
-            quantity = r"T^\Phi(k,k')/\max|T|" if settings.normalize else r"T^\Phi(k,k')"
+            quantity = r"T(k,k')/\max|T|" if settings.normalize else r"T(k,k')"
             multiplier = rf"{factors[i]:g}\times " if factors[i] != 1. else ""
             label = f"({chr(97 + i)}) $" + multiplier + quantity + "$"
             header.text(0, .77 if narrow else .5, label, fontsize=settings.font_pt, va="center")
