@@ -90,13 +90,17 @@ class CompressedGUIRegression(unittest.TestCase):
         np.testing.assert_array_equal(data.ky, -self.data.ky)
 
     def test_corruption_is_not_synthetic_fallback(self):
+        self.writer.close()
+        initial = self.path.stat()
         d=self.data
         self.host._load_fullt_if_needed(d,"test",True,.2,0.,[0])
         r=FTZReader(self.path)
         off=r.records[0][4][2][0]+64
         with self.path.open("r+b") as f:
             f.seek(off); b=f.read(1); f.seek(off); f.write(bytes([b[0]^1]))
-        with self.assertRaises(FTZError):
+        # A same-size edit within one filesystem clock tick can reuse the cached slice.
+        os.utime(self.path, ns=(initial.st_atime_ns, initial.st_mtime_ns + 2_000_000_000))
+        with self.assertRaisesRegex(FTZError, "checksum"):
             self.host._load_fullt_if_needed(d,"test",True,.2,0.,[0])
 
     def test_lazy_verifier_view(self):
