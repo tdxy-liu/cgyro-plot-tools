@@ -21,12 +21,12 @@ SMOOTH_CORE_FRACTION = .2
 
 
 def apply_fullt_grid(ax):
-    """Keep readable gridlines above the opaque FULLT data mesh."""
+    """Apply the light major-tick guides used in stacked trace panels."""
     ax._cgyro_custom_grid = True
     ax.set_axisbelow(False)
-    ax.grid(True, which="major", color=".65", linewidth=.45, alpha=.55)
-    ax.axhline(0, color=".45", linewidth=.6, alpha=.35, zorder=2.7)
-    ax.axvline(0, color=".45", linewidth=.6, alpha=.35, zorder=2.7)
+    ax.grid(True, which="major", color=".5", linewidth=.30, alpha=.10)
+    ax.axhline(0, color=".45", linewidth=.35, alpha=.18, zorder=2.7)
+    ax.axvline(0, color=".45", linewidth=.35, alpha=.18, zorder=2.7)
 
 
 def fullt_color_scale(values, *, normalize=False, color_max=None, logarithmic=False):

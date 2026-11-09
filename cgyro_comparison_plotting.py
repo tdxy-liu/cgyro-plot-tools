@@ -181,6 +181,11 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
                     pass
             try:
                 ax.tick_params(axis='both', which='both', labelsize=TICK_LABEL_FONTSIZE)
+                if self._is_colorbar_axis(ax):
+                    for axis in (ax.xaxis, ax.yaxis):
+                        offset = axis.get_offset_text()
+                        offset.set_fontsize(TICK_LABEL_FONTSIZE)
+                        offset.set_fontfamily(FONT_FALLBACKS)
             except Exception:
                 pass
             for tick in list(getattr(ax, 'get_xticklabels', lambda: [])()) + list(getattr(ax, 'get_yticklabels', lambda: [])()):

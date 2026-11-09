@@ -168,7 +168,7 @@ class KyPlotConventionTests(unittest.TestCase):
         result = TraceResult("fixture", "synthetic", TraceSettings(ky=.2, steps=1),
                              data.p * .1, np.arange(-2, 3) * .1, data.t, np.arange(2), {}, "fixture",
                              panels=[TracePanel(Mode(0., .2), raw, None)])
-        for normalize, limit in ((False, None), (True, None), (False, 9.), (True, .5), (False, 1.e-4)):
+        for normalize, limit in ((False, None), (True, None), (False, 9.), (True, .5), (False, 2.4e-4)):
             with self.subTest(normalize=normalize, limit=limit):
                 plot = PlotHarness(normalize=normalize)
                 plot.energy_balance_transfer_color_max_var = variable("" if limit is None else str(limit))
@@ -180,11 +180,10 @@ class KyPlotConventionTests(unittest.TestCase):
                 FigureCanvasAgg(traced).draw()
                 left = plot.ax.collections[0]
                 right = traced._fullt_trace_axes[0].collections[0]
-                for ax in (plot.ax, traced._fullt_trace_axes[0]):
-                    self.assertIs(ax.get_axisbelow(), False)
-                    self.assertGreater(ax.xaxis.get_zorder(), ax.collections[0].get_zorder())
-                    self.assertTrue(all(line.get_visible() for line in ax.get_xgridlines()))
-                    self.assertTrue(all(line.get_visible() for line in ax.get_ygridlines()))
+                trace_ax = traced._fullt_trace_axes[0]
+                self.assertGreater(trace_ax.xaxis.get_zorder(), right.get_zorder())
+                self.assertTrue(all(line.get_visible() for line in trace_ax.get_xgridlines()))
+                self.assertTrue(all(line.get_visible() for line in trace_ax.get_ygridlines()))
                 self.assertEqual(left.get_clim(), right.get_clim())
                 np.testing.assert_allclose(left.get_array(), right.get_array())
                 np.testing.assert_allclose(left.to_rgba(left.get_array()), right.to_rgba(right.get_array()))
@@ -193,7 +192,12 @@ class KyPlotConventionTests(unittest.TestCase):
                 np.testing.assert_allclose(plot.fig.axes[-1].get_yticks(), traced.axes[-1].get_yticks())
                 self.assertEqual(plot.fig.axes[-1].yaxis.get_offset_text().get_text(),
                                  traced.axes[-1].yaxis.get_offset_text().get_text())
-                self.assertEqual(plot.fig.axes[-1].yaxis.get_offset_text().get_ha(), "left")
+                if limit == 2.4e-4:
+                    for cax in (plot.fig.axes[-1], traced.axes[-1]):
+                        multiplier = cax.yaxis.get_offset_text()
+                        self.assertIn("10^{-4}", multiplier.get_text().replace("−", "-"))
+                        self.assertEqual(multiplier.get_ha(), "left")
+                        self.assertEqual(multiplier.get_fontsize(), cax.get_yticklabels()[0].get_fontsize())
 
     def test_fullt_scale_handles_invalid_limits_and_zero_or_missing_maps(self):
         for limit in ("invalid", 0, -1, np.nan, np.inf):

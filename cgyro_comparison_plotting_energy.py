@@ -12,13 +12,11 @@ from matplotlib.colors import TwoSlopeNorm
 try:
     from cgyro_fullt_compressed_bridge import open_fullt
     from cgyro_fullt_style import (FULLT_DIVERGING_CMAP, diamond_lattice,
-                                  smooth_diamond_mesh, fullt_color_scale, format_fullt_colorbar,
-                                  apply_fullt_grid)
+                                  smooth_diamond_mesh, fullt_color_scale, format_fullt_colorbar)
 except ImportError:
     from .cgyro_fullt_compressed_bridge import open_fullt
     from .cgyro_fullt_style import (FULLT_DIVERGING_CMAP, diamond_lattice,
-                                   smooth_diamond_mesh, fullt_color_scale, format_fullt_colorbar,
-                                   apply_fullt_grid)
+                                   smooth_diamond_mesh, fullt_color_scale, format_fullt_colorbar)
 
 class EnergyPlotting:
     def _fullt_display_norm(self, values):
@@ -4324,7 +4322,15 @@ class EnergyPlotting:
         self.ax.tick_params(axis='x', labelrotation=0, labelsize=8)
         self.ax.tick_params(axis='y', labelsize=8)
         self.ax.tick_params(axis='x', which='minor', length=3.0, width=0.75)
-        apply_fullt_grid(self.ax)
+        # The guides mark the saved modes even when zooming changes the tick spacing.
+        self.ax._cgyro_custom_grid = True
+        self.ax.grid(False, which='both')
+        self.ax.vlines(kx_axis, ky_edges[0], ky_edges[-1], color='0.26', linewidth=0.48,
+                       alpha=0.42, linestyles=':', zorder=4)
+        self.ax.hlines(ky_target_axis, kx_edges[0], kx_edges[-1], color='0.26', linewidth=0.48,
+                       alpha=0.32, linestyles=':', zorder=4)
+        self.ax.axhline(0.0, color='0.16', linewidth=0.9, alpha=0.46, zorder=5)
+        self.ax.axvline(0.0, color='0.16', linewidth=0.9, alpha=0.46, zorder=5)
         self.ax.set_xlabel(r"$k_x'\rho_s$")
         self.ax.set_ylabel(r"$k_y'\rho_s$")
         title_math = (

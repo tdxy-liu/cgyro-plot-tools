@@ -11,10 +11,14 @@ from unittest.mock import patch
 
 @unittest.skipUnless(os.environ.get("CGYRO_TEST_TK_LAYOUT") == "1", "optional Tk workflow integration")
 class GuiWorkflowTests(unittest.TestCase):
-    def test_fullt_plot_button_keeps_grid_above_mesh_after_final_styling(self):
+    def test_fullt_plot_button_keeps_grid_on_saved_modes_after_zoom(self):
+        from matplotlib.collections import LineCollection
+        import numpy as np
         from test_ky_plot_convention import fullt_case
+
         with self.app() as app:
-            app.cases = {"fixture": fullt_case()}
+            data = fullt_case()
+            app.cases = {"fixture": data}
             app.case_listbox.insert("end", "fixture")
             app.plot_type_var.set("Energy balance")
             app.energy_balance_mode_var.set("FULLT transfer map")
@@ -24,10 +28,22 @@ class GuiWorkflowTests(unittest.TestCase):
                     patch("cgyro_comparison_plotting.messagebox.showwarning") as warning:
                 app.plot_button.invoke()
                 warning.assert_not_called()
-            self.assertIs(app.ax.get_axisbelow(), False)
-            self.assertGreater(app.ax.xaxis.get_zorder(), app.ax.collections[0].get_zorder())
-            self.assertTrue(all(line.get_visible() for line in app.ax.get_xgridlines()))
-            self.assertTrue(all(line.get_visible() for line in app.ax.get_ygridlines()))
+            vertical, horizontal = [c for c in app.ax.collections if isinstance(c, LineCollection)]
+            dotted = LineCollection([], linestyles=':', linewidth=0.48).get_linestyles()
+            for grid in (vertical, horizontal):
+                self.assertGreater(grid.get_zorder(), app.ax.collections[0].get_zorder())
+                self.assertEqual(grid.get_linestyles(), dotted)
+            for zoom in (False, True):
+                if zoom:
+                    app.ax.set_xlim(-.12, .08)
+                    app.ax.set_ylim(-.08, .14)
+                    app.canvas.draw()
+                np.testing.assert_allclose(np.asarray(vertical.get_segments())[:, :, 0].T,
+                                           [data.p * .1, data.p * .1])
+                ky = np.arange(-2, 3) * .1
+                np.testing.assert_allclose(np.asarray(horizontal.get_segments())[:, :, 1].T, [ky, ky])
+                self.assertFalse(any(line.get_visible() for line in app.ax.get_xgridlines()))
+                self.assertFalse(any(line.get_visible() for line in app.ax.get_ygridlines()))
 
     def test_frequency_action_plots_fast_case_and_shows_missing_case_warning(self):
         from types import SimpleNamespace
