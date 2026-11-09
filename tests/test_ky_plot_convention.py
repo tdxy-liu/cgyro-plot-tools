@@ -173,12 +173,18 @@ class KyPlotConventionTests(unittest.TestCase):
                 plot = PlotHarness(normalize=normalize)
                 plot.energy_balance_transfer_color_max_var = variable("" if limit is None else str(limit))
                 plot._plot_energy_balance_fullt(data, "fixture", [0, 1], 1., 2.)
+                plot._apply_unified_visual_style_to_figure()
                 traced = build_figure(result, FigureSettings(normalize=normalize, color_max=limit,
                                                              panel_scaling="none"))
                 plot.fig.canvas.draw()
                 FigureCanvasAgg(traced).draw()
                 left = plot.ax.collections[0]
                 right = traced._fullt_trace_axes[0].collections[0]
+                for ax in (plot.ax, traced._fullt_trace_axes[0]):
+                    self.assertIs(ax.get_axisbelow(), False)
+                    self.assertGreater(ax.xaxis.get_zorder(), ax.collections[0].get_zorder())
+                    self.assertTrue(all(line.get_visible() for line in ax.get_xgridlines()))
+                    self.assertTrue(all(line.get_visible() for line in ax.get_ygridlines()))
                 self.assertEqual(left.get_clim(), right.get_clim())
                 np.testing.assert_allclose(left.get_array(), right.get_array())
                 np.testing.assert_allclose(left.to_rgba(left.get_array()), right.to_rgba(right.get_array()))

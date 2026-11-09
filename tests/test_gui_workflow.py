@@ -11,6 +11,24 @@ from unittest.mock import patch
 
 @unittest.skipUnless(os.environ.get("CGYRO_TEST_TK_LAYOUT") == "1", "optional Tk workflow integration")
 class GuiWorkflowTests(unittest.TestCase):
+    def test_fullt_plot_button_keeps_grid_above_mesh_after_final_styling(self):
+        from test_ky_plot_convention import fullt_case
+        with self.app() as app:
+            app.cases = {"fixture": fullt_case()}
+            app.case_listbox.insert("end", "fixture")
+            app.plot_type_var.set("Energy balance")
+            app.energy_balance_mode_var.set("FULLT transfer map")
+            app.energy_balance_transfer_ky_var.set("0.2")
+            app.update_options()
+            with patch.object(app, "_load_fullt_if_needed", return_value=True), \
+                    patch("cgyro_comparison_plotting.messagebox.showwarning") as warning:
+                app.plot_button.invoke()
+                warning.assert_not_called()
+            self.assertIs(app.ax.get_axisbelow(), False)
+            self.assertGreater(app.ax.xaxis.get_zorder(), app.ax.collections[0].get_zorder())
+            self.assertTrue(all(line.get_visible() for line in app.ax.get_xgridlines()))
+            self.assertTrue(all(line.get_visible() for line in app.ax.get_ygridlines()))
+
     def test_frequency_action_plots_fast_case_and_shows_missing_case_warning(self):
         from types import SimpleNamespace
         from unittest.mock import Mock

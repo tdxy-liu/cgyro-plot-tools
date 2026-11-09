@@ -165,11 +165,11 @@ class Plotting(FrequencyPlotting, FftPlotting, FluctuationPlotting, FluxPlotting
         except Exception:
             axes_all = []
         for ax in axes_all:
-            try:
-                ax.set_axisbelow(True)
-            except Exception:
-                pass
             if not getattr(ax, "_cgyro_custom_grid", False):
+                try:
+                    ax.set_axisbelow(True)
+                except Exception:
+                    pass
                 try:
                     ax.grid(True, color=GRID_COLOR, linewidth=GRID_LINEWIDTH, alpha=GRID_ALPHA)
                 except Exception:

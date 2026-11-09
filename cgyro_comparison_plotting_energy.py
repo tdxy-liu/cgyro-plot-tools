@@ -12,11 +12,13 @@ from matplotlib.colors import TwoSlopeNorm
 try:
     from cgyro_fullt_compressed_bridge import open_fullt
     from cgyro_fullt_style import (FULLT_DIVERGING_CMAP, diamond_lattice,
-                                  smooth_diamond_mesh, fullt_color_scale, format_fullt_colorbar)
+                                  smooth_diamond_mesh, fullt_color_scale, format_fullt_colorbar,
+                                  apply_fullt_grid)
 except ImportError:
     from .cgyro_fullt_compressed_bridge import open_fullt
     from .cgyro_fullt_style import (FULLT_DIVERGING_CMAP, diamond_lattice,
-                                   smooth_diamond_mesh, fullt_color_scale, format_fullt_colorbar)
+                                   smooth_diamond_mesh, fullt_color_scale, format_fullt_colorbar,
+                                   apply_fullt_grid)
 
 class EnergyPlotting:
     def _fullt_display_norm(self, values):
@@ -4277,10 +4279,6 @@ class EnergyPlotting:
             pass
         self.ax = self.fig.add_subplot(111)
         try:
-            self.ax._cgyro_custom_grid = True
-        except Exception:
-            pass
-        try:
             self.ax.set_facecolor('white')
         except Exception:
             pass
@@ -4326,10 +4324,7 @@ class EnergyPlotting:
         self.ax.tick_params(axis='x', labelrotation=0, labelsize=8)
         self.ax.tick_params(axis='y', labelsize=8)
         self.ax.tick_params(axis='x', which='minor', length=3.0, width=0.75)
-        self.ax.grid(False)
-        self.ax.grid(True, color='.5', alpha=.10, linewidth=.30)
-        self.ax.axhline(0.0, color='.45', linewidth=.35, alpha=.18, zorder=2.7)
-        self.ax.axvline(0.0, color='.45', linewidth=.35, alpha=.18, zorder=2.7)
+        apply_fullt_grid(self.ax)
         self.ax.set_xlabel(r"$k_x'\rho_s$")
         self.ax.set_ylabel(r"$k_y'\rho_s$")
         title_math = (

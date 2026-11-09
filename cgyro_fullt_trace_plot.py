@@ -17,12 +17,14 @@ import numpy as np
 try:
     from cgyro_io import write_json_atomic
     from cgyro_fullt_style import (FULLT_DIVERGING_CMAP, SMOOTH_CORE_FRACTION,
-                                  smooth_diamond_mesh, fullt_color_scale, format_fullt_colorbar)
+                                  smooth_diamond_mesh, fullt_color_scale, format_fullt_colorbar,
+                                  apply_fullt_grid)
     from cgyro_fonts import plot_font_style, configure_plot_fonts
 except ImportError:
     from .cgyro_io import write_json_atomic
     from .cgyro_fullt_style import (FULLT_DIVERGING_CMAP, SMOOTH_CORE_FRACTION,
-                                   smooth_diamond_mesh, fullt_color_scale, format_fullt_colorbar)
+                                   smooth_diamond_mesh, fullt_color_scale, format_fullt_colorbar,
+                                   apply_fullt_grid)
     from .cgyro_fonts import plot_font_style, configure_plot_fonts
 
 
@@ -188,10 +190,7 @@ def build_figure(result, settings=None):
             else:
                 artist = ax.pcolormesh(xedges, yedges, values, cmap=cmap, norm=norm,
                                       shading="flat", rasterized=True)
-            ax.axhline(0, color=".45", alpha=.18, linewidth=.35, zorder=2.7)
-            ax.axvline(0, color=".45", alpha=.18, linewidth=.35, zorder=2.7)
-            ax.grid(color=".5", alpha=.10, linewidth=.30)
-            ax.set_axisbelow(False)
+            apply_fullt_grid(ax)
             ax.plot(panel.mode.kx, panel.mode.ky, "D", mfc="black", mec="white",
                     mew=.7, ms=6.5, zorder=6)
             ax.set_xlim(settings.xlim or (xedges[0], xedges[-1]))

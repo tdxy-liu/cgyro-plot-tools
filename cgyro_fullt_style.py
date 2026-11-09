@@ -8,16 +8,25 @@ from matplotlib.transforms import ScaledTranslation
 
 
 FULLT_DIVERGING_CMAP = LinearSegmentedColormap.from_list(
-    "fullt_blue_white_red_suppressed_weak",
-    [(0.00, "#053061"), (0.18, "#2166ac"), (0.34, "#92c5de"),
-     (0.46, "#f7fbff"), (0.50, "#ffffff"), (0.54, "#fff5f0"),
-     (0.66, "#f4a582"), (0.82, "#b2182b"), (1.00, "#67001f")],
-    N=512,
+    "fullt_blue_white_red",
+    [(0.00, "#053061"), (0.22, "#2166ac"), (0.40, "#92c5de"),
+     (0.48, "#edf5fa"), (0.50, "#ffffff"), (0.52, "#fceee8"),
+     (0.60, "#f4a582"), (0.78, "#b2182b"), (1.00, "#67001f")],
+    N=2048,
 )
 
 # Fraction of each sample-to-cell-edge distance retaining the sample's color.
 # This is shared display geometry, not an amplitude adjustment or a data kernel.
 SMOOTH_CORE_FRACTION = .2
+
+
+def apply_fullt_grid(ax):
+    """Keep readable gridlines above the opaque FULLT data mesh."""
+    ax._cgyro_custom_grid = True
+    ax.set_axisbelow(False)
+    ax.grid(True, which="major", color=".65", linewidth=.45, alpha=.55)
+    ax.axhline(0, color=".45", linewidth=.6, alpha=.35, zorder=2.7)
+    ax.axvline(0, color=".45", linewidth=.6, alpha=.35, zorder=2.7)
 
 
 def fullt_color_scale(values, *, normalize=False, color_max=None, logarithmic=False):
