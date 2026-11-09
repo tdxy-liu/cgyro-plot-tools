@@ -18,12 +18,14 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 
 try:
     from cgyro_fullt_trace_core import TraceCancelled, TraceSettings, trace_case
+    from cgyro_fullt_style import FULLT_COLOR_SCALES
     from cgyro_fullt_trace_plot import FigureSettings, build_figure, export_bundle, suggested_bundle_name
     from cgyro_io import write_json_atomic
     from cgyro_ui_language import get_language, LocalizedCombobox
     from cgyro_ui_common import configure_theme, ui_text, FormLayout, CollapsibleSection, bind_local_scroll, show_interface_guide
 except ImportError:
     from .cgyro_fullt_trace_core import TraceCancelled, TraceSettings, trace_case
+    from .cgyro_fullt_style import FULLT_COLOR_SCALES
     from .cgyro_fullt_trace_plot import FigureSettings, build_figure, export_bundle, suggested_bundle_name
     from .cgyro_io import write_json_atomic
     from .cgyro_ui_language import get_language, LocalizedCombobox
@@ -145,15 +147,16 @@ class FullTTraceApp:
         colors = group(figure_tab, tr("渲染与共用色标", "Rendering and shared color scale"))
         for row, (key, label, choices) in enumerate([
             ("glyph", tr("渲染", "Rendering"), GLYPHS),
+            ("color_scale", tr("色标映射", "Color scale"), FULLT_COLOR_SCALES),
             ("color_max", tr("色标上限", "Color max"), None),
             ("panel_scaling", tr("面板倍率", "Panel scaling"), PANEL_SCALING),
             ("panel_multipliers", tr("自定义倍率", "Multipliers"), None)]):
             self._entry(colors, row, key, label, choices)
         self.vars["panel_multipliers"].trace_add("write", self._multipliers_changed)
         self.vars["normalize"] = tk.BooleanVar(value=False)
-        ttk.Checkbutton(colors, text=tr("除以全局 max |T|", "Divide by global max |T|"), variable=self.vars["normalize"]).grid(row=4, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(colors, text=tr("除以全局 max |T|", "Divide by global max |T|"), variable=self.vars["normalize"]).grid(row=5, column=0, columnspan=2, sticky="w")
         ttk.Label(colors, text=tr("色标留空时由原始数据确定；倍率不改变色标范围。", "Blank color max uses raw maps; multipliers keep that range."),
-                  style="Hint.TLabel", wraplength=265).grid(row=5, column=0, columnspan=2, sticky="w", pady=4)
+                  style="Hint.TLabel", wraplength=265).grid(row=6, column=0, columnspan=2, sticky="w", pady=4)
         limits = group(figure_tab, tr("坐标范围", "Axis limits"))
         self._entry(limits, 0, "xlim", "kx′ min, max")
         self._entry(limits, 1, "ylim", "ky′ min, max")
@@ -333,7 +336,7 @@ class FullTTraceApp:
     def _set_options(self, trace, figure):
         values = {**asdict(trace), **asdict(figure)}
         mappings = {"direction": DIRECTIONS, "diagnostic": DIAGNOSTICS, "cycles": CYCLES,
-                    "glyph": GLYPHS, "panel_scaling": PANEL_SCALING}
+                    "glyph": GLYPHS, "panel_scaling": PANEL_SCALING, "color_scale": FULLT_COLOR_SCALES}
         self._setting_options = True
         try:
             for key, value in values.items():
@@ -363,6 +366,7 @@ class FullTTraceApp:
                               direction=DIRECTIONS[self.vars["direction"].get()], diagnostic=DIAGNOSTICS[self.vars["diagnostic"].get()],
                               t_start=number("t_start", True), t_end=number("t_end", True), cycles=CYCLES[self.vars["cycles"].get()])
         figure = FigureSettings(width_mm=number("width_mm"), panel_height_mm=number("panel_height_mm"), font_pt=number("font_pt"),
+                                color_scale=FULLT_COLOR_SCALES[self.vars["color_scale"].get()],
                                 color_max=number("color_max", True), normalize=self.vars["normalize"].get(), glyph=GLYPHS[self.vars["glyph"].get()],
                                 xlim=limits("xlim"), ylim=limits("ylim"), title="" if self.vars["hide_title"].get() else self.vars["title"].get().strip() or None,
                                 colorbar_label=self.vars["colorbar_label"].get(), dpi=int(self.vars["dpi"].get()),
@@ -534,7 +538,8 @@ class FullTTraceApp:
             config = json.loads(Path(path).read_text(encoding="utf-8-sig"))
             if not isinstance(config, dict) or config.get("format") != "fullt-trace-1":
                 raise ValueError("This is not a FULLT Trace session.")
-            trace, figure = TraceSettings(**config["trace"]), FigureSettings(**config["figure"])
+            trace = TraceSettings(**config["trace"])
+            figure = FigureSettings(**{"color_scale": "linear", **config["figure"]})
             trace.validate()
             figure.validate()
             cases = config["cases"]

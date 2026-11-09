@@ -11,20 +11,20 @@ from matplotlib.colors import TwoSlopeNorm
 
 try:
     from cgyro_fullt_compressed_bridge import open_fullt
-    from cgyro_fullt_style import (FULLT_DIVERGING_CMAP, diamond_lattice,
+    from cgyro_fullt_style import (FULLT_COLOR_SCALES, FULLT_DIVERGING_CMAP, FulltModeMarker, diamond_lattice,
                                   smooth_diamond_mesh, fullt_color_scale, format_fullt_colorbar)
 except ImportError:
     from .cgyro_fullt_compressed_bridge import open_fullt
-    from .cgyro_fullt_style import (FULLT_DIVERGING_CMAP, diamond_lattice,
+    from .cgyro_fullt_style import (FULLT_COLOR_SCALES, FULLT_DIVERGING_CMAP, FulltModeMarker, diamond_lattice,
                                    smooth_diamond_mesh, fullt_color_scale, format_fullt_colorbar)
 
 class EnergyPlotting:
     def _fullt_display_norm(self, values):
         color_max_var = getattr(self, "energy_balance_transfer_color_max_var", None)
         color_max = color_max_var.get().strip() if color_max_var is not None else ""
-        log_var = getattr(self, "log_y_var", None)
-        logarithmic = bool(log_var.get()) if log_var is not None else False
-        _, norm, _ = fullt_color_scale(values, color_max=color_max or None, logarithmic=logarithmic)
+        scale_var = getattr(self, "energy_balance_transfer_color_scale_var", None)
+        scale = FULLT_COLOR_SCALES[scale_var.get()] if scale_var is not None else "asinh"
+        _, norm, _ = fullt_color_scale(values, color_max=color_max or None, scale=scale)
         return norm
 
     def _parse_energy_balance_species(self):
@@ -4295,21 +4295,11 @@ class EnergyPlotting:
         cbar = self.fig.colorbar(pcm, ax=self.ax, extend='both', extendfrac=.025)
         format_fullt_colorbar(cbar)
 
-        kx_mark_idx = target_kx_mark_idx
-        if kx_mark_idx is not None and target_ky_mark_idx is not None:
-            kx_mark = float(kx_axis[kx_mark_idx])
+        if target_kx_mark_idx is not None and target_ky_mark_idx is not None:
+            kx_mark = float(kx_axis[target_kx_mark_idx])
             ky_mark = float(ky_target_axis[target_ky_mark_idx])
             if np.isfinite(kx_mark) and np.isfinite(ky_mark):
-                self.ax.scatter(
-                    [kx_mark],
-                    [ky_mark],
-                    marker='D',
-                    s=150,
-                    facecolor='k',
-                    edgecolor='white',
-                    linewidth=1.1,
-                    zorder=6,
-                )
+                self.ax.add_artist(FulltModeMarker(kx_mark, ky_mark, kx_edges, ky_edges))
             else:
                 print(f"Could not map finite {diag_name} marker point for {label}")
         else:

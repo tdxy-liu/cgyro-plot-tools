@@ -25,6 +25,8 @@ def parser():
     cli.add_argument("--font-pt", type=float, default=9.)
     cli.add_argument("--dpi", type=int, default=600)
     cli.add_argument("--color-max", type=float, help="Fixed shared symmetric bound; blank uses the unmultiplied global max |T|.")
+    cli.add_argument("--color-scale", choices=("asinh", "linear", "symlog"), default="asinh",
+                     help="Color mapping for all panels (default: asinh, transition at 25%% of the shared bound).")
     cli.add_argument("--normalize", action="store_true", help="Divide ALL panels by one global max |T|.")
     cli.add_argument("--glyph", choices=("smooth", "diamonds", "cells"), default="smooth",
                      help="Smooth: classic FULLT red-white-blue lobes (default).")
@@ -50,6 +52,7 @@ def main(argv=None):
         from .cgyro_fullt_trace_plot import FigureSettings, export_bundle, suggested_bundle_name
     trace = TraceSettings(args.kx, args.ky, args.steps, args.direction, args.diagnostic, args.start, args.end, args.cycles)
     figure = FigureSettings(width_mm=args.width_mm, panel_height_mm=args.panel_height_mm, font_pt=args.font_pt,
+                            color_scale=args.color_scale,
                             color_max=args.color_max, normalize=args.normalize, glyph=args.glyph,
                             xlim=tuple(args.xlim) if args.xlim else None, ylim=tuple(args.ylim) if args.ylim else None,
                             title=args.title, colorbar_label=args.colorbar_label, dpi=args.dpi,

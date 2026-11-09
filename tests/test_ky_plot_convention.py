@@ -9,14 +9,13 @@ import matplotlib
 matplotlib.use("Agg")
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
-from matplotlib.collections import PathCollection
 import numpy as np
 
 from cgyro_comparison_plotting import Plotting
 from cgyro_data_export import CgyroDataExportMixin
 from cgyro_fullt_trace_core import Mode, TracePanel, TraceResult, TraceSettings
 from cgyro_fullt_trace_plot import FigureSettings, build_figure
-from cgyro_fullt_style import fullt_color_scale
+from cgyro_fullt_style import FulltModeMarker, fullt_color_scale
 
 
 def variable(value):
@@ -92,8 +91,9 @@ class KyPlotConventionTests(unittest.TestCase):
                         texts = [text.get_text() for text in plot.ax.texts]
                         self.assertIn("case: case-A", texts)
                         self.assertFalse(any("source ky index" in text for text in texts))
-                        marker = next(item for item in plot.ax.collections if isinstance(item, PathCollection))
-                        np.testing.assert_allclose(marker.get_offsets(), [[0., .2]])
+                        marker = next(p for p in plot.ax.patches if isinstance(p, FulltModeMarker))
+                        np.testing.assert_allclose(marker.get_window_extent().get_points().mean(axis=0),
+                                                   plot.ax.transData.transform((0., .2)))
                         payload = data.fullt_asym if asym else data.fullt
                         expected_z = payload[0, 2, :, :, 0, :].mean(axis=-1).T
                         datasets = [item for item in plot._collect_current_plot_xyz_datasets()
@@ -209,6 +209,22 @@ class KyPlotConventionTests(unittest.TestCase):
         divisor, norm, maximum = fullt_color_scale([0., -2., 1., np.nan], normalize=True, logarithmic=True)
         self.assertEqual((divisor, norm.vmin, norm.vmax, maximum), (2., -1., 1., 2.))
         self.assertAlmostEqual(float(norm(0)), .5)
+
+    def test_weak_signal_scale_resolves_both_signs_and_retains_order_near_peaks(self):
+        limit = 2.4e-4
+        levels = np.array([0., .05, .5, .8, .95, 1.])
+        selected = PlotHarness()
+        enhanced = selected._fullt_display_norm([-limit, limit])
+        selected.energy_balance_transfer_color_scale_var = variable("Linear")
+        linear = selected._fullt_display_norm([-limit, limit])
+        for norm in (enhanced, linear):
+            colors = norm(levels * limit)
+            np.testing.assert_allclose(norm(-levels * limit), 1. - colors, atol=1e-15)
+            np.testing.assert_allclose(norm.inverse(colors), levels * limit, atol=1e-18)
+            self.assertTrue(np.all(np.diff(colors) > 0))
+            np.testing.assert_allclose(colors[[0, -1]], [.5, 1.])
+        np.testing.assert_allclose(2 * linear(levels * limit) - 1, levels)
+        np.testing.assert_allclose(2 * enhanced(levels * limit) - 1, np.arcsinh(4 * levels) / np.arcsinh(4))
 
     def test_negative_linear_spectrum_sorts_coordinates_with_values(self):
         plot = Plotting()

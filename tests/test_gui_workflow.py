@@ -13,6 +13,7 @@ from unittest.mock import patch
 class GuiWorkflowTests(unittest.TestCase):
     def test_fullt_plot_button_keeps_grid_on_saved_modes_after_zoom(self):
         from matplotlib.collections import LineCollection
+        from cgyro_fullt_style import FulltModeMarker
         import numpy as np
         from test_ky_plot_convention import fullt_case
 
@@ -24,10 +25,19 @@ class GuiWorkflowTests(unittest.TestCase):
             app.energy_balance_mode_var.set("FULLT transfer map")
             app.energy_balance_transfer_ky_var.set("0.2")
             app.update_options()
+            self.assertEqual(app.energy_balance_transfer_color_scale_combo.get(), "Weak signals (asinh)")
+            self.assertFalse(app.log_y_check.winfo_manager())
             with patch.object(app, "_load_fullt_if_needed", return_value=True), \
                     patch("cgyro_comparison_plotting.messagebox.showwarning") as warning:
                 app.plot_button.invoke()
                 warning.assert_not_called()
+            app.canvas.draw()
+            marker = next(p for p in app.ax.patches if isinstance(p, FulltModeMarker))
+            full_width = marker.get_window_extent().width
+            x0, x1 = app.ax.get_xlim()
+            y0, y1 = app.ax.get_ylim()
+            app.toolbar.update()
+            app.toolbar.push_current()
             vertical, horizontal = [c for c in app.ax.collections if isinstance(c, LineCollection)]
             dotted = LineCollection([], linestyles=':', linewidth=0.48).get_linestyles()
             for grid in (vertical, horizontal):
@@ -35,15 +45,29 @@ class GuiWorkflowTests(unittest.TestCase):
                 self.assertEqual(grid.get_linestyles(), dotted)
             for zoom in (False, True):
                 if zoom:
-                    app.ax.set_xlim(-.12, .08)
-                    app.ax.set_ylim(-.08, .14)
+                    app.ax.set_xlim(-(x1 - x0) / 8, (x1 - x0) / 8)
+                    app.ax.set_ylim(.2 - (y1 - y0) / 8, .2 + (y1 - y0) / 8)
                     app.canvas.draw()
+                    self.assertAlmostEqual(marker.get_window_extent().width, 4 * full_width)
+                    app.toolbar.push_current()
                 np.testing.assert_allclose(np.asarray(vertical.get_segments())[:, :, 0].T,
                                            [data.p * .1, data.p * .1])
                 ky = np.arange(-2, 3) * .1
                 np.testing.assert_allclose(np.asarray(horizontal.get_segments())[:, :, 1].T, [ky, ky])
                 self.assertFalse(any(line.get_visible() for line in app.ax.get_xgridlines()))
                 self.assertFalse(any(line.get_visible() for line in app.ax.get_ygridlines()))
+            app.toolbar.home()
+            app.canvas.draw()
+            self.assertAlmostEqual(marker.get_window_extent().width, full_width)
+            np.testing.assert_allclose(marker.get_window_extent().get_points().mean(axis=0),
+                                       app.ax.transData.transform((0., .2)))
+            app._restore_workspace_state({"log_y_var": True})
+            self.assertEqual(app.energy_balance_transfer_color_scale_var.get(), "Symmetric log")
+            app._restore_workspace_state({"log_y_var": False})
+            self.assertEqual(app.energy_balance_transfer_color_scale_var.get(), "Linear")
+            app.plot_type_var.set("Frequency")
+            app.update_options()
+            self.assertEqual(app.log_y_check.winfo_manager(), "grid")
 
     def test_frequency_action_plots_fast_case_and_shows_missing_case_warning(self):
         from types import SimpleNamespace

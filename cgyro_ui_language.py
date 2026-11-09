@@ -55,6 +55,7 @@ ZH = {
     "Electron-scale spatial axes": "空间坐标按电子尺度归一化", "Log X": "X 对数", "Log Y": "Y 对数", "Log z": "Z 对数",
     "Advanced: per-case kx/ky": "逐算例选择 kx/ky", "Edit per-case kx/ky...": "设置各算例 kx/ky…",
     "FFT Settings": "FFT 设置", "Nonlinear": "非线性", "Linear": "线性", "Amplitude": "振幅", "Power": "功率",
+    "Weak signals (asinh)": "弱结构增强 (asinh)", "Symmetric log": "对称对数",
     "Overlay Linear Freq": "叠加线性频率", "Linear File:": "线性数据：", "2D X Param:": "扫描参数：",
     "Entropy balance": "熵平衡", "ZF energy balance": "带状流能量平衡", "Effective growth rate": "有效增长率",
     "Single plot": "单项绘图", "FULLT transfer map": "FULLT 转移图", "2D scan": "二维扫描",

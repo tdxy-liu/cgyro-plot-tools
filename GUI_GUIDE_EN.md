@@ -14,7 +14,9 @@ Start **CGYRO Transfer Explorer** with `python cgyro_fullt_trace.py`, or use **P
 
 Definitions and calculation notes are collapsed by default and typeset only when opened. Editing a diagnostic does not reload all cases.
 
-Both tools use the same red–white–blue palette, default symmetric linear color scale, and moderate smooth rendering for FULLT. With Color max blank, the comparison tool uses the current map's maximum absolute value and Transfer Explorer uses the maximum across its original panels. Enter the same Color max in both tools to share a numeric range, and use matching time windows, normalization and panel multipliers for comparisons. The comparison tool divides both positive and negative values by one max |T| when normalization is enabled.
+New FULLT maps use **Weak signals (asinh)**. Positive transfer is red, negative transfer is blue and zero is white. The transition scale is 25% of the color limit. Ticks show values in the displayed units. Choose Linear, Weak signals or Symmetric log in the comparison tool’s 2D FULLT options or Transfer Explorer’s Figure style tab. The black diamond marks the current mode and scales with the spectral grid as you zoom.
+
+With Color max blank, the comparison tool uses the current map’s maximum absolute value and Transfer Explorer uses the maximum across its original panels. To compare figures, use the same color limit, mapping, time window and normalization. Select **None (original ratios)** under Panel scaling to compare the original amplitudes across trace steps.
 
 ## Language
 

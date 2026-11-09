@@ -9,22 +9,21 @@ import textwrap
 
 import matplotlib as mpl
 from matplotlib.collections import PolyCollection
-from matplotlib.colors import TwoSlopeNorm
 from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator
 import numpy as np
 
 try:
     from cgyro_io import write_json_atomic
-    from cgyro_fullt_style import (FULLT_DIVERGING_CMAP, SMOOTH_CORE_FRACTION,
+    from cgyro_fullt_style import (ASINH_WIDTH_FRACTION, FULLT_COLOR_SCALES, FULLT_DIVERGING_CMAP, SMOOTH_CORE_FRACTION,
                                   smooth_diamond_mesh, fullt_color_scale, format_fullt_colorbar,
-                                  apply_fullt_grid)
+                                  apply_fullt_grid, FulltModeMarker, fullt_color_norm)
     from cgyro_fonts import plot_font_style, configure_plot_fonts
 except ImportError:
     from .cgyro_io import write_json_atomic
-    from .cgyro_fullt_style import (FULLT_DIVERGING_CMAP, SMOOTH_CORE_FRACTION,
+    from .cgyro_fullt_style import (ASINH_WIDTH_FRACTION, FULLT_COLOR_SCALES, FULLT_DIVERGING_CMAP, SMOOTH_CORE_FRACTION,
                                    smooth_diamond_mesh, fullt_color_scale, format_fullt_colorbar,
-                                   apply_fullt_grid)
+                                   apply_fullt_grid, FulltModeMarker, fullt_color_norm)
     from .cgyro_fonts import plot_font_style, configure_plot_fonts
 
 
@@ -49,6 +48,7 @@ class FigureSettings:
     dpi: int = 600
     panel_scaling: str = "auto"
     panel_multipliers: Optional[Tuple[float, ...]] = None
+    color_scale: str = "asinh"
 
     def validate(self):
         for name, low, high in (("width_mm", 89, 300), ("panel_height_mm", 22, 100),
@@ -60,6 +60,8 @@ class FigureSettings:
             raise ValueError("The shared color maximum must be finite and positive.")
         if self.glyph not in ("smooth", "diamonds", "cells"):
             raise ValueError("Choose smooth, diamonds or cells.")
+        if self.color_scale not in FULLT_COLOR_SCALES.values():
+            raise ValueError("Choose asinh, linear or symlog for the color scale.")
         if self.panel_scaling not in ("auto", "none", "custom"):
             raise ValueError("Panel scaling must be auto, none or custom.")
         if self.panel_multipliers is not None:
@@ -142,7 +144,7 @@ def build_figure(result, settings=None):
         raise ValueError("There are no trace panels to draw.")
     divisor, limit, maximum = shared_scale(result, settings)
     factors = panel_factors(result, settings)
-    norm = TwoSlopeNorm(vmin=-limit, vcenter=0., vmax=limit)
+    norm = fullt_color_norm(limit, settings.color_scale)
     n = len(result.panels)
     # Reserve physical space for panel headers and the common bottom x label.
     narrow = settings.width_mm / (settings.font_pt / 9.) < 130
@@ -191,8 +193,7 @@ def build_figure(result, settings=None):
                 artist = ax.pcolormesh(xedges, yedges, values, cmap=cmap, norm=norm,
                                       shading="flat", rasterized=True)
             apply_fullt_grid(ax)
-            ax.plot(panel.mode.kx, panel.mode.ky, "D", mfc="black", mec="white",
-                    mew=.7, ms=6.5, zorder=6)
+            ax.add_artist(FulltModeMarker(panel.mode.kx, panel.mode.ky, xedges, yedges))
             ax.set_xlim(settings.xlim or (xedges[0], xedges[-1]))
             ax.set_ylim(settings.ylim or (yedges[0], yedges[-1]))
             ax.set_ylabel(r"$k_y'\rho_s$", fontsize=settings.font_pt)
@@ -275,10 +276,13 @@ def export_bundle(result, settings, destination, formats=("pdf", "svg", "png")):
     metadata = result.metadata()
     metadata["figure"] = asdict(settings)
     metadata["shared_color_scale"] = {"divisor": divisor, "limit": limit, "raw_max_abs": maximum,
+                                      "mapping": settings.color_scale,
                                       "reference": "explicit_color_max" if settings.color_max is not None else "unscaled_global_max_abs",
                                       "saturated_points": [int(np.count_nonzero(
                                           np.isfinite(p.values) & (np.abs(p.values / divisor * factor) > limit)))
                                           for p, factor in zip(result.panels, factors)]}
+    if settings.color_scale == "asinh":
+        metadata["shared_color_scale"]["linear_width"] = max(limit * ASINH_WIDTH_FRACTION, np.finfo(float).tiny)
     metadata["display"] = {"panel_multipliers": factors, "formula": "display_value = T_mean / divisor * panel_multiplier",
                            "palette": FULLT_DIVERGING_CMAP.name, "rendering": settings.glyph,
                            "smooth_lattice": "sample-centred constant-color diamond cores with Gouraud fade to neutral cell edges; display only",
@@ -288,7 +292,7 @@ def export_bundle(result, settings, destination, formats=("pdf", "svg", "png")):
     write_json_atomic(target / "trace.json", metadata)
     (target / "README.txt").write_text(
         "Each panel is a successive extremum of the same time-averaged native Re(T) diagnostic.\n"
-        "All panels share one zero-centred linear color scale for the DISPLAYED values.\n"
+        f"All panels share one zero-centred {settings.color_scale} color scale. Ticks give displayed values.\n"
         "The automatic color range is fixed by the UNMULTIPLIED maps, not recomputed after panel amplification.\n"
         "Values beyond that range use the endpoint colors; exact values remain in plot_data.csv and maps.npz.\n"
         "display_value = T_mean / global_divisor * panel_multiplier. Multipliers appear before T in each panel header.\n"

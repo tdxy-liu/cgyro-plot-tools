@@ -21,12 +21,14 @@ try:
     from cgyro_io import write_json_atomic
     from cgyro_ui_language import get_language, LocalizedCombobox
     from cgyro_fonts import interface_plot_font_family
+    from cgyro_fullt_style import FULLT_COLOR_SCALES
     from cgyro_ui_common import (configure_theme, ui_text, FormLayout,
                                  CollapsibleSection, bind_local_scroll, show_interface_guide)
 except ImportError:
     from .cgyro_io import write_json_atomic
     from .cgyro_ui_language import get_language, LocalizedCombobox
     from .cgyro_fonts import interface_plot_font_family
+    from .cgyro_fullt_style import FULLT_COLOR_SCALES
     from .cgyro_ui_common import (configure_theme, ui_text, FormLayout,
                                   CollapsibleSection, bind_local_scroll, show_interface_guide)
 
@@ -197,6 +199,7 @@ class CgyroUiMixin:
         "energy_balance_transfer_asym_var",
         "energy_balance_transfer_norm_max_var",
         "energy_balance_transfer_color_max_var",
+        "energy_balance_transfer_color_scale_var",
         "others_plot_var",
         "others_rcorr_field_var",
         "others_rcorr_theta_var",
@@ -2136,6 +2139,12 @@ class CgyroUiMixin:
             self.energy_balance_options_frame, text=self._ui_text("色标上限", "Color max"))
         self.energy_balance_transfer_color_max_entry = ttk.Entry(
             self.energy_balance_options_frame, textvariable=self.energy_balance_transfer_color_max_var, width=10)
+        self.energy_balance_transfer_color_scale_var = tk.StringVar(value="Weak signals (asinh)")
+        self.energy_balance_transfer_color_scale_label = ttk.Label(
+            self.energy_balance_options_frame, text=self._ui_text("色标映射", "Color scale"))
+        self.energy_balance_transfer_color_scale_combo = LocalizedCombobox(
+            self.energy_balance_options_frame, textvariable=self.energy_balance_transfer_color_scale_var,
+            values=list(FULLT_COLOR_SCALES), state="readonly", width=16)
         (
             self.energy_balance_formula_frame,
             self.energy_balance_formula_fig,
@@ -2611,6 +2620,7 @@ class CgyroUiMixin:
             self.energy_balance_transfer_asym_check,
             self.energy_balance_transfer_norm_max_check,
             self.energy_balance_transfer_color_max_label, self.energy_balance_transfer_color_max_entry,
+            self.energy_balance_transfer_color_scale_label, self.energy_balance_transfer_color_scale_combo,
             self.energy_balance_formula_frame,
             self.others_plot_label, self.others_plot_combo,
             self.others_rcorr_field_label, self.others_rcorr_field_combo,
@@ -3220,6 +3230,7 @@ class CgyroUiMixin:
         )
         self._refresh_case_summary()
         self._hide_dynamic_options()
+        self.log_y_check.grid()
         plot_type = self.plot_type_var.get()
         row = 3 # Start below the shared Time Start/End and log-scale controls.
 
@@ -3439,6 +3450,10 @@ class CgyroUiMixin:
                 )
                 erow += 1
                 if transfer_view != "vs kx":
+                    self.log_y_check.grid_remove()
+                    self.energy_balance_transfer_color_scale_label.grid(row=erow, column=0, sticky=tk.W, pady=2)
+                    self.energy_balance_transfer_color_scale_combo.grid(row=erow, column=1, sticky=tk.EW, pady=2)
+                    erow += 1
                     self.energy_balance_transfer_color_max_label.grid(row=erow, column=0, sticky=tk.W, pady=2)
                     self.energy_balance_transfer_color_max_entry.grid(row=erow, column=1, sticky=tk.EW, pady=2)
                     erow += 1
@@ -4091,6 +4106,10 @@ class CgyroUiMixin:
                 var.set(state[attr])
             except Exception:
                 pass
+
+        # Older FULLT maps used the global Log Y switch for color.
+        if "energy_balance_transfer_color_scale_var" not in state and "log_y_var" in state:
+            self.energy_balance_transfer_color_scale_var.set("Symmetric log" if self.log_y_var.get() else "Linear")
 
         self._refresh_entry_placeholders()
 

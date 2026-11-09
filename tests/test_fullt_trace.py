@@ -18,7 +18,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from cgyro_fullt_trace_core import (FullTSource, Mode, TraceCancelled, TraceError,
                                     TraceSettings, _enable_private_decoder, select_peak, trace_case)
 from cgyro_fullt_trace_plot import FigureSettings, build_figure, export_bundle, panel_factors, shared_scale
-from cgyro_fullt_style import FULLT_DIVERGING_CMAP, diamond_lattice, smooth_diamond_mesh
+from cgyro_fullt_style import FULLT_DIVERGING_CMAP, FulltModeMarker, diamond_lattice, smooth_diamond_mesh
 from cgyro_fullt_reader import FTZWriter, Layout
 
 
@@ -212,11 +212,14 @@ class FullTTraceTests(unittest.TestCase):
                     np.testing.assert_allclose(nodes[:, vertex], displayed)
                 np.testing.assert_array_equal(nodes[:, 5:], 0.)
                 self.assertIs(artist.cmap, FULLT_DIVERGING_CMAP)
-                marks = [line for line in axes[i].lines if line.get_marker() == "D"]
+                marks = [p for p in axes[i].patches if isinstance(p, FulltModeMarker)]
                 self.assertEqual(len(marks), 1)
-                self.assertEqual(marks[0].get_markerfacecolor(), "black")
-                self.assertEqual(marks[0].get_markeredgecolor(), "white")
-                np.testing.assert_allclose(marks[0].get_xydata(), [[panel.mode.kx, panel.mode.ky]])
+                self.assertEqual(marks[0].get_facecolor(), (0., 0., 0., 1.))
+                self.assertEqual(marks[0].get_edgecolor(), (1., 1., 1., 1.))
+                bounds = marks[0].get_window_extent()
+                self.assertAlmostEqual(bounds.width, bounds.height)
+                np.testing.assert_allclose(bounds.get_points().mean(axis=0),
+                                           axes[i].transData.transform((panel.mode.kx, panel.mode.ky)))
                 self.assertFalse(any(line.get_marker() == "o" for line in axes[i].lines))
             # All header text remains inside the physical figure.
             renderer = fig.canvas.get_renderer()
@@ -378,6 +381,8 @@ class FullTTraceTests(unittest.TestCase):
             self.assertEqual(len(app.table.get_children()), 4)
             app.vars["normalize"].set(True)
             self.assertEqual(app._options()[1].panel_scaling, "auto")
+            self.assertEqual(app._options()[1].color_scale, "asinh")
+            app.vars["color_scale"].set("Symmetric log")
             app.vars["panel_multipliers"].set("1, 1, 10, 5")
             self.assertEqual(app._options()[1].panel_scaling, "custom")
             with patch("cgyro_fullt_trace_ui.trace_case", side_effect=AssertionError("style must use cached maps")):
@@ -393,6 +398,13 @@ class FullTTraceTests(unittest.TestCase):
             with patch("cgyro_fullt_trace_ui.filedialog.askopenfilename", return_value=str(session)):
                 app.load_session()
             self.assertEqual(app._options()[1].panel_multipliers, (1, 1, 10, 5))
+            self.assertEqual(app._options()[1].color_scale, "symlog")
+            legacy = json.loads(session.read_text(encoding="utf-8"))
+            del legacy["figure"]["color_scale"]
+            session.write_text(json.dumps(legacy), encoding="utf-8")
+            with patch("cgyro_fullt_trace_ui.filedialog.askopenfilename", return_value=str(session)):
+                app.load_session()
+            self.assertEqual(app._options()[1].color_scale, "linear")
             # Explicit Auto/None in a saved session remains intentional even
             # when that session remembers a previously typed custom list.
             saved_figure = app._options()[1]
@@ -434,6 +446,8 @@ class FullTTraceTests(unittest.TestCase):
         self.assertIn("<text", (output / "trace.svg").read_text(encoding="utf-8"))
         metadata = json.loads((output / "trace.json").read_text(encoding="utf-8"))
         self.assertEqual(metadata["shared_color_scale"]["divisor"], 20.)
+        self.assertEqual(metadata["shared_color_scale"]["mapping"], "asinh")
+        self.assertEqual(metadata["shared_color_scale"]["linear_width"], .25)
         with np.load(output / "maps.npz") as data:
             np.testing.assert_array_equal(data["step_01"], result.panels[0].values)
         table = np.loadtxt(output / "plot_data.csv", delimiter=",", skiprows=1)
@@ -442,13 +456,15 @@ class FullTTraceTests(unittest.TestCase):
     def test_cli_batch_and_bad_case_failure(self):
         script = str(Path(__file__).resolve().parents[1] / "cgyro_fullt_trace.py")
         completed = subprocess.run([sys.executable, script, "--case", str(self.case), "--ky", ".1", "--steps", "3",
-                                    "--panel-multipliers", "1", "1", "10", "--glyph", "smooth",
+                                    "--panel-multipliers", "1", "1", "10", "--glyph", "smooth", "--color-scale", "linear",
                                     "--output", str(self.folder / "cli"), "--formats", "svg"],
                                    capture_output=True, text=True, timeout=45)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("Exported 3 panels", completed.stdout)
         metadata_path = next((self.folder / "cli").glob("*/trace.json"))
-        self.assertEqual(json.loads(metadata_path.read_text(encoding="utf-8"))["display"]["panel_multipliers"], [1, 1, 10])
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        self.assertEqual(metadata["display"]["panel_multipliers"], [1, 1, 10])
+        self.assertEqual(metadata["shared_color_scale"]["mapping"], "linear")
         failed = subprocess.run([sys.executable, script, "--case", str(self.folder / "missing"), "--output", str(self.folder / "cli")],
                                 capture_output=True, text=True, timeout=30)
         self.assertNotEqual(failed.returncode, 0)
