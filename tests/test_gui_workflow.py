@@ -114,6 +114,7 @@ class GuiWorkflowTests(unittest.TestCase):
                 self.assertEqual(tkfont.Font(root=app.root, name="TkDefaultFont", exists=True).cget("size"), 10)
                 if kind == "main":
                     app.plot_type_var.set("Fluctuation 1D")
+                    app.energy_balance_transfer_color_max_var.set("0.002")
                     app.fluc_xaxis_var.set("v.s theta")
                     app.t_start_var.set("300")
                     app.t_end_var.set("600")

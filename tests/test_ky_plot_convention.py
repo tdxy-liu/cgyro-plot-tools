@@ -14,6 +14,9 @@ import numpy as np
 
 from cgyro_comparison_plotting import Plotting
 from cgyro_data_export import CgyroDataExportMixin
+from cgyro_fullt_trace_core import Mode, TracePanel, TraceResult, TraceSettings
+from cgyro_fullt_trace_plot import FigureSettings, build_figure
+from cgyro_fullt_style import fullt_color_scale
 
 
 def variable(value):
@@ -153,10 +156,49 @@ class KyPlotConventionTests(unittest.TestCase):
         data = fullt_case()
         plot._plot_energy_balance_fullt(data, "normalized", [0, 1], 1., 2.)
         z = plot._collect_current_plot_xyz_datasets()[0][3]
-        self.assertAlmostEqual(float(np.nanmax(z)), 1.)
+        raw = data.fullt[0, 2, :, :, 0, :].mean(axis=-1).T
+        np.testing.assert_allclose(z, (raw / np.max(np.abs(raw))).ravel())
         self.assertAlmostEqual(float(np.nanmin(z)), -1.)
         self.assertEqual(plot.fig.axes[1].get_ylabel(), "")
         self.assertNotIn("FULLT", plot.ax.get_title())
+
+    def test_tools_share_fullt_colors_and_ticks_for_the_same_map(self):
+        data = fullt_case()
+        raw = data.fullt[0, 2, :, :, 0, :].mean(axis=-1).T
+        result = TraceResult("fixture", "synthetic", TraceSettings(ky=.2, steps=1),
+                             data.p * .1, np.arange(-2, 3) * .1, data.t, np.arange(2), {}, "fixture",
+                             panels=[TracePanel(Mode(0., .2), raw, None)])
+        for normalize, limit in ((False, None), (True, None), (False, 9.), (True, .5), (False, 1.e-4)):
+            with self.subTest(normalize=normalize, limit=limit):
+                plot = PlotHarness(normalize=normalize)
+                plot.energy_balance_transfer_color_max_var = variable("" if limit is None else str(limit))
+                plot._plot_energy_balance_fullt(data, "fixture", [0, 1], 1., 2.)
+                traced = build_figure(result, FigureSettings(normalize=normalize, color_max=limit,
+                                                             panel_scaling="none"))
+                plot.fig.canvas.draw()
+                FigureCanvasAgg(traced).draw()
+                left = plot.ax.collections[0]
+                right = traced._fullt_trace_axes[0].collections[0]
+                self.assertEqual(left.get_clim(), right.get_clim())
+                np.testing.assert_allclose(left.get_array(), right.get_array())
+                np.testing.assert_allclose(left.to_rgba(left.get_array()), right.to_rgba(right.get_array()))
+                expected = raw / np.max(np.abs(raw)) if normalize else raw
+                np.testing.assert_allclose(left.get_array().reshape(-1, 9)[:, 0], expected.ravel())
+                np.testing.assert_allclose(plot.fig.axes[-1].get_yticks(), traced.axes[-1].get_yticks())
+                self.assertEqual(plot.fig.axes[-1].yaxis.get_offset_text().get_text(),
+                                 traced.axes[-1].yaxis.get_offset_text().get_text())
+                self.assertEqual(plot.fig.axes[-1].yaxis.get_offset_text().get_ha(), "left")
+
+    def test_fullt_scale_handles_invalid_limits_and_zero_or_missing_maps(self):
+        for limit in ("invalid", 0, -1, np.nan, np.inf):
+            with self.subTest(limit=limit), self.assertRaisesRegex(ValueError, "finite and positive"):
+                fullt_color_scale([1., -2.], color_max=limit)
+        for values in (np.zeros((2, 3)), np.full((2, 3), np.nan)):
+            divisor, norm, maximum = fullt_color_scale(values, normalize=True)
+            self.assertEqual((divisor, norm.vmin, norm.vmax, maximum), (1., -1., 1., 0.))
+        divisor, norm, maximum = fullt_color_scale([0., -2., 1., np.nan], normalize=True, logarithmic=True)
+        self.assertEqual((divisor, norm.vmin, norm.vmax, maximum), (2., -1., 1., 2.))
+        self.assertAlmostEqual(float(norm(0)), .5)
 
     def test_negative_linear_spectrum_sorts_coordinates_with_values(self):
         plot = Plotting()

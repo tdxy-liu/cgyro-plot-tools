@@ -7,16 +7,26 @@ import numpy as np
 import os
 import sys
 from tkinter import messagebox
-from matplotlib.colors import SymLogNorm, TwoSlopeNorm
+from matplotlib.colors import TwoSlopeNorm
 
 try:
     from cgyro_fullt_compressed_bridge import open_fullt
-    from cgyro_fullt_style import FULLT_DIVERGING_CMAP, diamond_lattice
+    from cgyro_fullt_style import (FULLT_DIVERGING_CMAP, diamond_lattice,
+                                  smooth_diamond_mesh, fullt_color_scale, format_fullt_colorbar)
 except ImportError:
     from .cgyro_fullt_compressed_bridge import open_fullt
-    from .cgyro_fullt_style import FULLT_DIVERGING_CMAP, diamond_lattice
+    from .cgyro_fullt_style import (FULLT_DIVERGING_CMAP, diamond_lattice,
+                                   smooth_diamond_mesh, fullt_color_scale, format_fullt_colorbar)
 
 class EnergyPlotting:
+    def _fullt_display_norm(self, values):
+        color_max_var = getattr(self, "energy_balance_transfer_color_max_var", None)
+        color_max = color_max_var.get().strip() if color_max_var is not None else ""
+        log_var = getattr(self, "log_y_var", None)
+        logarithmic = bool(log_var.get()) if log_var is not None else False
+        _, norm, _ = fullt_color_scale(values, color_max=color_max or None, logarithmic=logarithmic)
+        return norm
+
     def _parse_energy_balance_species(self):
         """Map energy-balance species combo to triad_v2 species index."""
         try:
@@ -3746,32 +3756,9 @@ class EnergyPlotting:
             + (("; chain " + "; ".join(chain_logs)) if chain_logs else "")
         )
 
-        norm_pos = np.nan
-        norm_neg = np.nan
         if normalize_by_max_t:
-            finite_norm = z_plot[np.isfinite(z_plot)]
-            if finite_norm.size > 0:
-                positive = finite_norm[finite_norm > 0.0]
-                negative = finite_norm[finite_norm < 0.0]
-                norm_pos = float(np.nanmax(positive)) if positive.size > 0 else np.nan
-                norm_neg = float(abs(np.nanmin(negative))) if negative.size > 0 else np.nan
-                z_norm = np.zeros_like(z_plot, dtype=float)
-                valid_pos = np.isfinite(norm_pos) and norm_pos > 0.0
-                valid_neg = np.isfinite(norm_neg) and norm_neg > 0.0
-                if valid_pos:
-                    pos_mask = np.isfinite(z_plot) & (z_plot > 0.0)
-                    z_norm[pos_mask] = z_plot[pos_mask] / norm_pos
-                if valid_neg:
-                    neg_mask = np.isfinite(z_plot) & (z_plot < 0.0)
-                    z_norm[neg_mask] = z_plot[neg_mask] / norm_neg
-                z_norm[~np.isfinite(z_plot)] = np.nan
-                z_plot = z_norm
-                print(
-                    f"{diag_name} trace normalization for {label}: "
-                    f"positive max T={norm_pos:.6e}, negative max |T|={norm_neg:.6e}."
-                )
-            else:
-                print(f"{diag_name} trace normalization for {label}: no finite T values.")
+            divisor, _, _ = fullt_color_scale(z_plot, normalize=True)
+            z_plot = z_plot / divisor
 
         p_edges = self._axis_cell_edges_from_centers(source_kx_axis)
         q_edges = self._axis_cell_edges_from_centers(target_kx_axis)
@@ -3779,34 +3766,7 @@ class EnergyPlotting:
             print(f"Invalid {diag_name} trace plot grid for {label}")
             return
 
-        finite = z_plot[np.isfinite(z_plot)]
-        if finite.size > 0:
-            vmax = float(np.nanmax(np.abs(finite)))
-        else:
-            vmax = 1.0
-        if normalize_by_max_t:
-            vmax = 1.0
-        elif finite.size > 0:
-            clip = float(np.nanpercentile(np.abs(finite), 99.7))
-            if np.isfinite(clip) and clip > 0.0:
-                vmax = clip
-        if (not np.isfinite(vmax)) or vmax <= 0.0:
-            vmax = 1.0
-
-        use_symlog_color = False
-        try:
-            use_symlog_color = bool(self.log_y_var.get())
-        except Exception:
-            use_symlog_color = False
-        color_limits = dict(vmin=-vmax, vmax=vmax)
-        if use_symlog_color:
-            color_limits = dict(norm=SymLogNorm(
-                linthresh=max(vmax * 2.0e-2, np.finfo(float).tiny),
-                linscale=1.0,
-                vmin=-vmax,
-                vmax=vmax,
-                base=10,
-            ))
+        norm = self._fullt_display_norm(z_plot)
 
         self.fig.clear()
         self._reset_figure_layout_defaults()
@@ -3830,29 +3790,18 @@ class EnergyPlotting:
             float(q_edges[0]),
             float(q_edges[-1]),
         ]
-        if use_symlog_color:
-            pcm = self.ax.imshow(
-                masked_z_plot,
-                origin='lower',
-                extent=extent,
-                interpolation='nearest',
-                aspect='auto',
-                cmap=FULLT_DIVERGING_CMAP,
-                **color_limits,
-            )
-        else:
-            pcm = self.ax.imshow(
-                masked_z_plot,
-                origin='lower',
-                extent=extent,
-                interpolation='nearest',
-                aspect='auto',
-                cmap=FULLT_DIVERGING_CMAP,
-                resample=False,
-                **color_limits,
-            )
-        cbar = self.fig.colorbar(pcm, ax=self.ax, extend='both')
-        cbar.set_ticks(np.linspace(-vmax, vmax, 9))
+        pcm = self.ax.imshow(
+            masked_z_plot,
+            origin='lower',
+            extent=extent,
+            interpolation='nearest',
+            aspect='auto',
+            cmap=FULLT_DIVERGING_CMAP,
+            resample=False,
+            norm=norm,
+        )
+        cbar = self.fig.colorbar(pcm, ax=self.ax, extend='both', extendfrac=.025)
+        format_fullt_colorbar(cbar)
 
         self.ax.axhline(0.0, color='0.18', linewidth=0.9, alpha=0.55)
         self.ax.axvline(0.0, color='0.18', linewidth=0.9, alpha=0.55)
@@ -3938,7 +3887,7 @@ class EnergyPlotting:
         self.ax.set_ylim(float(q_edges[0]), float(q_edges[-1]))
         self.ax.set_xlabel(r"$p_x\rho_s$  (source mode $k_x$)")
         self.ax.set_ylabel(r"$q_x\rho_s$  (target mode $k_x$)")
-        norm_title = " normalized by max T" if normalize_by_max_t else ""
+        norm_title = " normalized by max |T|" if normalize_by_max_t else ""
         self.ax.set_title(
             rf"${transfer_symbol}$ trace p_x-q_x{norm_title}: "
             rf"$p_y\rho_s={fixed_py:.3g},\ q_y\rho_s={fixed_qy:.3g},\ "
@@ -3989,7 +3938,7 @@ class EnergyPlotting:
         coord_q = np.asarray(target_kx_axis, dtype=float).copy()
         coord_z = np.asarray(z_plot, dtype=float).copy()
         if hasattr(self, "_record_current_plot_xyz_dataset"):
-            dataset_norm = " normalized_by_max_T" if normalize_by_max_t else ""
+            dataset_norm = " normalized_by_max_abs_T" if normalize_by_max_t else ""
             self._record_current_plot_xyz_dataset(
                 f"{diag_name} trace Re{dataset_norm} {label}",
                 coord_p,
@@ -4195,7 +4144,6 @@ class EnergyPlotting:
 
         z_map = np.asarray(fullt[0, source_ky_idx, radial_idx[:, None], ky_idx[None, :], 0, :], dtype=float)
         quantity_label = "Re"
-        use_symmetric_scale = True
 
         # z_map is indexed explicitly as [target_kx, target_ky, time].
         # The plotted array must be [target_ky, target_kx].  Do not infer this
@@ -4220,32 +4168,9 @@ class EnergyPlotting:
         ky_target_axis = ky_target_axis[ky_order]
         z_plot = np.asarray(z_plot, dtype=float)[np.ix_(ky_order, kx_order)]
 
-        norm_pos = np.nan
-        norm_neg = np.nan
         if normalize_by_max_t:
-            finite_norm = z_plot[np.isfinite(z_plot)]
-            if finite_norm.size > 0:
-                positive = finite_norm[finite_norm > 0.0]
-                negative = finite_norm[finite_norm < 0.0]
-                norm_pos = float(np.nanmax(positive)) if positive.size > 0 else np.nan
-                norm_neg = float(abs(np.nanmin(negative))) if negative.size > 0 else np.nan
-                z_norm = np.zeros_like(z_plot, dtype=float)
-                valid_pos = np.isfinite(norm_pos) and norm_pos > 0.0
-                valid_neg = np.isfinite(norm_neg) and norm_neg > 0.0
-                if valid_pos:
-                    pos_mask = np.isfinite(z_plot) & (z_plot > 0.0)
-                    z_norm[pos_mask] = z_plot[pos_mask] / norm_pos
-                if valid_neg:
-                    neg_mask = np.isfinite(z_plot) & (z_plot < 0.0)
-                    z_norm[neg_mask] = z_plot[neg_mask] / norm_neg
-                z_norm[~np.isfinite(z_plot)] = np.nan
-                z_plot = z_norm
-                print(
-                    f"{diag_name} normalization for {label}: "
-                    f"positive max T={norm_pos:.6e}, negative max |T|={norm_neg:.6e}."
-                )
-            else:
-                print(f"{diag_name} normalization for {label}: no finite T values.")
+            divisor, _, _ = fullt_color_scale(z_plot, normalize=True)
+            z_plot = z_plot / divisor
 
         try:
             abs_z = np.abs(np.asarray(z_plot, dtype=float))
@@ -4321,10 +4246,10 @@ class EnergyPlotting:
                 self.ax._cgyro_fullt_vs_kx_reference_drawn = True
             self.ax.set_xlabel(r"$k_x'\rho_s$")
             if normalize_by_max_t:
-                self.ax.set_ylabel(rf"$\langle \Re\,{transfer_symbol}\rangle_t/\max |T|_{{\pm}}$")
+                self.ax.set_ylabel(rf"$\langle \Re\,{transfer_symbol}\rangle_t/\max |T|$")
             else:
                 self.ax.set_ylabel(rf"$\langle \Re\,{transfer_symbol}\rangle_t$")
-            norm_title = " normalized by max T" if normalize_by_max_t else ""
+            norm_title = " normalized by max |T|" if normalize_by_max_t else ""
             self.ax.set_title(
                 rf"${transfer_symbol}$ vs kx{norm_title}: "
                 rf"$k_x\rho_s={fixed_kx:.3g},\ k_y\rho_s={fixed_ky:.3g},\ k_y'\rho_s={slice_ky:.3g}$"
@@ -4338,17 +4263,8 @@ class EnergyPlotting:
         if kx_edges is None or ky_edges is None:
             print(f"Invalid {diag_name} plot grid for {label}")
             return
-        # Mark the diagonal target-ky == source-ky location as a visual anchor.
-        diamond_x, diamond_y, z_diamond = self._diamond_lattice_from_centers(
-            kx_axis,
-            ky_target_axis,
-            kx_edges,
-            ky_edges,
-            z_plot,
-        )
-        if z_diamond is None:
-            print(f"Invalid {diag_name} diamond plot grid for {label}")
-            return
+        norm = self._fullt_display_norm(z_plot)
+        mesh, nodes = smooth_diamond_mesh(kx_axis, ky_target_axis, kx_edges, ky_edges, z_plot)
 
         self.fig.clear()
         self._reset_figure_layout_defaults()
@@ -4369,84 +4285,19 @@ class EnergyPlotting:
         except Exception:
             pass
 
-        finite = z_plot[np.isfinite(z_plot)]
-        if finite.size > 0:
-            vmax = float(np.nanmax(np.abs(finite)))
-            zmax = float(np.nanmax(finite))
-            zmin = float(np.nanmin(finite))
-        else:
-            vmax, zmin, zmax = 1.0, 0.0, 1.0
-        if (not np.isfinite(vmax)) or vmax <= 0.0:
-            vmax = 1.0
-
-        if normalize_by_max_t:
-            vmax = 1.0
-            zmin = -1.0 if use_symmetric_scale else 0.0
-            zmax = 1.0
-        elif finite.size > 0:
-            clip = float(np.nanpercentile(np.abs(finite), 99.7))
-            if np.isfinite(clip) and clip > 0.0:
-                vmax = clip
-        if use_symmetric_scale and finite.size > 0 and np.isfinite(vmax) and vmax > 0.0:
-            weak_cut = 0.18 * vmax
-            z_diamond = np.ma.masked_array(
-                np.where(np.abs(np.asarray(z_diamond, dtype=float)) < weak_cut, 0.0, z_diamond),
-                mask=np.ma.getmaskarray(z_diamond),
-            )
-
-        use_symlog_color = False
-        try:
-            use_symlog_color = bool(self.log_y_var.get())
-        except Exception:
-            use_symlog_color = False
-
-        if use_symmetric_scale:
-            norm = None
-            color_limits = dict(vmin=-vmax, vmax=vmax)
-            if use_symlog_color:
-                linthresh = max(vmax * 2.0e-2, np.finfo(float).tiny)
-                norm = SymLogNorm(
-                    linthresh=linthresh,
-                    linscale=1.0,
-                    vmin=-vmax,
-                    vmax=vmax,
-                    base=10,
-                )
-                color_limits = dict(norm=norm)
-            pcm = self.ax.pcolormesh(
-                diamond_x,
-                diamond_y,
-                z_diamond,
-                cmap=FULLT_DIVERGING_CMAP,
-                shading='gouraud',
-                edgecolors='none',
-                linewidth=0.0,
-                antialiased=True,
-                rasterized=True,
-                **color_limits,
-            )
-            colorbar_extend = 'both'
-        else:
-            if (not np.isfinite(zmin)) or (not np.isfinite(zmax)) or zmax <= zmin:
-                zmin, zmax = 0.0, vmax
-            pcm = self.ax.pcolormesh(
-                diamond_x,
-                diamond_y,
-                z_diamond,
-                cmap='viridis',
-                shading='gouraud',
-                edgecolors='none',
-                linewidth=0.0,
-                antialiased=True,
-                rasterized=True,
-                vmin=zmin,
-                vmax=zmax,
-            )
-            colorbar_extend = 'max'
-
-        cbar = self.fig.colorbar(pcm, ax=self.ax, extend=colorbar_extend)
-        if use_symmetric_scale and np.isfinite(vmax) and vmax > 0.0:
-            cbar.set_ticks(np.linspace(-vmax, vmax, 9))
+        pcm = self.ax.tripcolor(
+            mesh,
+            nodes,
+            cmap=FULLT_DIVERGING_CMAP,
+            norm=norm,
+            shading='gouraud',
+            edgecolors='none',
+            linewidth=0.0,
+            antialiased=True,
+            rasterized=True,
+        )
+        cbar = self.fig.colorbar(pcm, ax=self.ax, extend='both', extendfrac=.025)
+        format_fullt_colorbar(cbar)
 
         kx_mark_idx = target_kx_mark_idx
         if kx_mark_idx is not None and target_ky_mark_idx is not None:
@@ -4476,35 +4327,16 @@ class EnergyPlotting:
         self.ax.tick_params(axis='y', labelsize=8)
         self.ax.tick_params(axis='x', which='minor', length=3.0, width=0.75)
         self.ax.grid(False)
-        self.ax.vlines(
-            kx_axis,
-            float(ky_edges[0]),
-            float(ky_edges[-1]),
-            color='0.26',
-            linewidth=0.48,
-            alpha=0.42,
-            linestyles=':',
-            zorder=4,
-        )
-        self.ax.hlines(
-            ky_target_axis,
-            float(kx_edges[0]),
-            float(kx_edges[-1]),
-            color='0.26',
-            linewidth=0.48,
-            alpha=0.32,
-            linestyles=':',
-            zorder=4,
-        )
-        self.ax.axhline(0.0, color='0.16', linewidth=0.9, alpha=0.46, zorder=5)
-        self.ax.axvline(0.0, color='0.16', linewidth=0.9, alpha=0.46, zorder=5)
+        self.ax.grid(True, color='.5', alpha=.10, linewidth=.30)
+        self.ax.axhline(0.0, color='.45', linewidth=.35, alpha=.18, zorder=2.7)
+        self.ax.axvline(0.0, color='.45', linewidth=.35, alpha=.18, zorder=2.7)
         self.ax.set_xlabel(r"$k_x'\rho_s$")
         self.ax.set_ylabel(r"$k_y'\rho_s$")
         title_math = (
             rf"${transfer_symbol}_{{k_x\rho_s={fixed_kx:.3g},\ "
             rf"k_y\rho_s={fixed_ky:.3g}}}(k')$"
         )
-        norm_title = " normalized by max T" if normalize_by_max_t else ""
+        norm_title = " normalized by max |T|" if normalize_by_max_t else ""
         self.ax.set_title(f"{title_math}{norm_title}")
         case_label = str(label)
         if len(case_label) > 56:
@@ -4524,7 +4356,7 @@ class EnergyPlotting:
         coord_ky = np.asarray(ky_target_axis, dtype=float).copy()
         coord_z = np.asarray(z_plot, dtype=float).copy()
         if hasattr(self, "_record_current_plot_xyz_dataset"):
-            dataset_norm = " normalized_by_max_T" if normalize_by_max_t else ""
+            dataset_norm = " normalized_by_max_abs_T" if normalize_by_max_t else ""
             self._record_current_plot_xyz_dataset(
                 f"{diag_name} {quantity_label}{dataset_norm} {label}",
                 coord_kx,

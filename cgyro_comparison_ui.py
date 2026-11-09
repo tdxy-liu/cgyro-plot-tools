@@ -196,6 +196,7 @@ class CgyroUiMixin:
         "energy_balance_transfer_kx_var",
         "energy_balance_transfer_asym_var",
         "energy_balance_transfer_norm_max_var",
+        "energy_balance_transfer_color_max_var",
         "others_plot_var",
         "others_rcorr_field_var",
         "others_rcorr_theta_var",
@@ -2126,10 +2127,15 @@ class CgyroUiMixin:
         self.energy_balance_transfer_norm_max_var = tk.BooleanVar(value=False)
         self.energy_balance_transfer_norm_max_check = ttk.Checkbutton(
             self.energy_balance_options_frame,
-            text="Normalized by max T",
+            text=self._ui_text("按 max |T| 归一化", "Divide by max |T|"),
             variable=self.energy_balance_transfer_norm_max_var,
             command=self.update_options,
         )
+        self.energy_balance_transfer_color_max_var = tk.StringVar(value="")
+        self.energy_balance_transfer_color_max_label = ttk.Label(
+            self.energy_balance_options_frame, text=self._ui_text("色标上限", "Color max"))
+        self.energy_balance_transfer_color_max_entry = ttk.Entry(
+            self.energy_balance_options_frame, textvariable=self.energy_balance_transfer_color_max_var, width=10)
         (
             self.energy_balance_formula_frame,
             self.energy_balance_formula_fig,
@@ -2604,6 +2610,7 @@ class CgyroUiMixin:
             self.energy_balance_transfer_kx_label, self.energy_balance_transfer_kx_entry,
             self.energy_balance_transfer_asym_check,
             self.energy_balance_transfer_norm_max_check,
+            self.energy_balance_transfer_color_max_label, self.energy_balance_transfer_color_max_entry,
             self.energy_balance_formula_frame,
             self.others_plot_label, self.others_plot_combo,
             self.others_rcorr_field_label, self.others_rcorr_field_combo,
@@ -3106,7 +3113,7 @@ class CgyroUiMixin:
                 r"$\mathrm{vs}\ k_x:\ \mathrm{take\ the}\ k_y^{\prime}=k_y^{\mathrm{target}}\ \mathrm{slice\ through\ the\ marker.}$",
                 r"$\mathrm{trace}\ p_xq_x:\ \mathrm{fix}\ k_y^{source}=k_y^{target},\ \mathrm{plot}\ T(p_x,q_x).$",
                 r"$\mathrm{zonal\ chain:}\ q_x=p_x\pm k_{zf};\ \ q_x\ \mathrm{becomes\ the\ next}\ p_x.$",
-                r"$\mathrm{Optional\ display:}\ T>0\ \mathrm{divided\ by}\ \max(T),\quad T<0\ \mathrm{divided\ by}\ |\min(T)|$",
+                r"$\mathrm{Optional\ display:}\ T/\max|T|\quad\mathrm{(one\ divisor\ for\ both\ signs)}$",
                 sum_note,
                 r"$T_k^\Phi>0:\ k^{\prime}\rightarrow k;\ \ \ T_k^\Phi<0:\ k\rightarrow k^{\prime}.$",
                 r"$\mathrm{marker:}\ k=(0,k_y^{\mathrm{target}})$",
@@ -3431,6 +3438,10 @@ class CgyroUiMixin:
                     row=erow, column=1, sticky=tk.W, padx=(8, 0), pady=2
                 )
                 erow += 1
+                if transfer_view != "vs kx":
+                    self.energy_balance_transfer_color_max_label.grid(row=erow, column=0, sticky=tk.W, pady=2)
+                    self.energy_balance_transfer_color_max_entry.grid(row=erow, column=1, sticky=tk.EW, pady=2)
+                    erow += 1
             if is_gamma_eff_mode:
                 self.linear_gamma_file_label.grid(row=row, column=0, sticky=tk.W)
                 self.linear_gamma_file_entry.grid(row=row, column=1, columnspan=2, sticky=tk.W + tk.E)

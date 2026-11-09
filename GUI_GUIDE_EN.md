@@ -14,6 +14,8 @@ Start **CGYRO Transfer Explorer** with `python cgyro_fullt_trace.py`, or use **P
 
 Definitions and calculation notes are collapsed by default and typeset only when opened. Editing a diagnostic does not reload all cases.
 
+Both tools use the same red–white–blue palette, default symmetric linear color scale, and moderate smooth rendering for FULLT. With Color max blank, the comparison tool uses the current map's maximum absolute value and Transfer Explorer uses the maximum across its original panels. Enter the same Color max in both tools to share a numeric range, and use matching time windows, normalization and panel multipliers for comparisons. The comparison tool divides both positive and negative values by one max |T| when normalization is enabled.
+
 ## Language
 
 Use **Settings → Language → English / 中文** in either app. Changes apply immediately, preserving parameters, case selection and existing figures. The preference is saved in `~/.cgyro_comparison_tool/ui.json` and used the next time either app starts. Another already-open window can be switched independently.

@@ -11,17 +11,18 @@ import matplotlib as mpl
 from matplotlib.collections import PolyCollection
 from matplotlib.colors import TwoSlopeNorm
 from matplotlib.figure import Figure
-from matplotlib.ticker import MaxNLocator, ScalarFormatter
-from matplotlib.transforms import ScaledTranslation
+from matplotlib.ticker import MaxNLocator
 import numpy as np
 
 try:
     from cgyro_io import write_json_atomic
-    from cgyro_fullt_style import FULLT_DIVERGING_CMAP, SMOOTH_CORE_FRACTION, smooth_diamond_mesh
+    from cgyro_fullt_style import (FULLT_DIVERGING_CMAP, SMOOTH_CORE_FRACTION,
+                                  smooth_diamond_mesh, fullt_color_scale, format_fullt_colorbar)
     from cgyro_fonts import plot_font_style, configure_plot_fonts
 except ImportError:
     from .cgyro_io import write_json_atomic
-    from .cgyro_fullt_style import FULLT_DIVERGING_CMAP, SMOOTH_CORE_FRACTION, smooth_diamond_mesh
+    from .cgyro_fullt_style import (FULLT_DIVERGING_CMAP, SMOOTH_CORE_FRACTION,
+                                   smooth_diamond_mesh, fullt_color_scale, format_fullt_colorbar)
     from .cgyro_fonts import plot_font_style, configure_plot_fonts
 
 
@@ -122,13 +123,12 @@ def shared_scale(result, settings):
     the unchanged panels. Explicit color_max still overrides the raw reference.
     """
     maxima = _panel_maxima(result)
-    maximum = max(maxima, default=0.)
-    divisor = maximum if settings.normalize and maximum > 0 else 1.
+    divisor, norm, maximum = fullt_color_scale(maxima, normalize=settings.normalize,
+                                              color_max=settings.color_max)
     displayed = [peak / divisor * factor for peak, factor in zip(maxima, panel_factors(result, settings))]
     if not np.all(np.isfinite(displayed)):
         raise ValueError("Panel multipliers overflow the displayed values; use smaller factors.")
-    limit = settings.color_max if settings.color_max is not None else maximum / divisor
-    return divisor, (limit if limit > 0 else 1.), maximum
+    return divisor, norm.vmax, maximum
 
 
 def build_figure(result, settings=None):
@@ -218,20 +218,7 @@ def build_figure(result, settings=None):
                           axes[0].get_position().y1 - axes[-1].get_position().y0])
         cbar = fig.colorbar(artist, cax=cax, extend="both", extendfrac=.025)
         cbar.set_label(settings.colorbar_label, fontsize=settings.font_pt)
-        cbar.locator = MaxNLocator(nbins=6)
-        formatter = ScalarFormatter(useMathText=True)
-        formatter.set_powerlimits((-3, 3))
-        cbar.formatter = formatter
-        cbar.update_ticks()
-        cbar.ax.tick_params(labelsize=settings.font_pt - 1, length=2.5)
-        # Grow the scientific multiplier into the colorbar's right margin,
-        # rather than left over the first panel's kx/ky header. Point padding
-        # stays consistent when the preview resizes or export DPI changes.
-        cbar.ax.yaxis.set_offset_position("right")
-        offset = cbar.ax.yaxis.get_offset_text()
-        offset.set_fontsize(settings.font_pt - 1)
-        offset.set_ha("left")
-        offset.set_transform(offset.get_transform() + ScaledTranslation(3 / 72, 0, fig.dpi_scale_trans))
+        format_fullt_colorbar(cbar, settings.font_pt - 1)
         fig.text(left_mm / settings.width_mm, 1 - 2 / height_mm, title,
                  ha="left", va="top", fontsize=settings.font_pt)
         fig._fullt_trace_axes = axes

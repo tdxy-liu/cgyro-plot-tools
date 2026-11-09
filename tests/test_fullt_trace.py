@@ -335,8 +335,8 @@ class FullTTraceTests(unittest.TestCase):
         # A finite area, rather than just a point, retains the exact sample color.
         full_color = np.all(nodes[triangles] == 1., axis=1)
         area_fraction = areas[full_color].sum() / (.5 * 2. * .1)
-        self.assertGreater(area_fraction, .1)
-        self.assertLess(area_fraction, .25)
+        self.assertGreater(area_fraction, .03)
+        self.assertLess(area_fraction, .06)
         self.assertTrue(np.all(np.abs(nodes) <= 2.))
         np.testing.assert_array_equal(values, original)
 

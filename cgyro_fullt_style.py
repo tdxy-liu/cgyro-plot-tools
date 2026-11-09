@@ -1,8 +1,10 @@
 """Shared FULLT palette and display lattice, independent of the GUI/readers."""
 
 import numpy as np
-from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.colors import LinearSegmentedColormap, SymLogNorm, TwoSlopeNorm
+from matplotlib.ticker import MaxNLocator, ScalarFormatter
 from matplotlib.tri import Triangulation
+from matplotlib.transforms import ScaledTranslation
 
 
 FULLT_DIVERGING_CMAP = LinearSegmentedColormap.from_list(
@@ -15,7 +17,45 @@ FULLT_DIVERGING_CMAP = LinearSegmentedColormap.from_list(
 
 # Fraction of each sample-to-cell-edge distance retaining the sample's color.
 # This is shared display geometry, not an amplitude adjustment or a data kernel.
-SMOOTH_CORE_FRACTION = .4
+SMOOTH_CORE_FRACTION = .2
+
+
+def fullt_color_scale(values, *, normalize=False, color_max=None, logarithmic=False):
+    """Use one absolute maximum for both signs and a symmetric color range."""
+    values = np.ma.asarray(values, dtype=float).filled(np.nan)
+    finite = values[np.isfinite(values)]
+    maximum = float(np.max(np.abs(finite))) if finite.size else 0.
+    divisor = maximum if normalize and maximum > 0 else 1.
+    limit = maximum / divisor if maximum > 0 else 1.
+    if color_max is not None:
+        try:
+            limit = float(color_max)
+        except (TypeError, ValueError):
+            raise ValueError("FULLT color max must be finite and positive.") from None
+        if not np.isfinite(limit) or limit <= 0:
+            raise ValueError("FULLT color max must be finite and positive.")
+    if logarithmic:
+        norm = SymLogNorm(linthresh=max(limit * .02, np.finfo(float).tiny),
+                          linscale=1., vmin=-limit, vmax=limit, base=10)
+    else:
+        norm = TwoSlopeNorm(vmin=-limit, vcenter=0., vmax=limit)
+    return divisor, norm, maximum
+
+
+def format_fullt_colorbar(colorbar, font_size=8.):
+    """Share ticks and place the scientific multiplier above the right edge."""
+    colorbar.locator = MaxNLocator(nbins=6)
+    formatter = ScalarFormatter(useMathText=True)
+    formatter.set_powerlimits((-3, 3))
+    colorbar.formatter = formatter
+    colorbar.update_ticks()
+    colorbar.ax.tick_params(labelsize=font_size, length=2.5)
+    colorbar.ax.yaxis.set_offset_position("right")
+    offset = colorbar.ax.yaxis.get_offset_text()
+    offset.set_fontsize(font_size)
+    offset.set_ha("left")
+    offset.set_transform(offset.get_transform() +
+                         ScaledTranslation(3 / 72, 0, colorbar.ax.figure.dpi_scale_trans))
 
 
 def smooth_diamond_mesh(x_axis, y_axis, x_edges, y_edges, values):
